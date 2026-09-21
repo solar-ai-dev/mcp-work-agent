@@ -6,7 +6,7 @@ from typing import TypedDict
 from google_work_agent.adapters.langgraph.main.state import _require_state_value, request_from_state
 from google_work_agent.adapters.langgraph.subgraphs.tool_routing.state import ToolRouteStateV1
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.use_cases.run.guard_run_budget import (
     RunBudgetV2,
@@ -19,7 +19,7 @@ from google_work_agent.ports.system.contracts.workflow_execution import Workflow
 
 
 class DetermineIOResourcesInput(TypedDict):
-    request_intent: RequestIntentV2
+    request_intent: RequestIntentV3
     request: WorkflowStartRequest
     retry_budget: RunBudgetV2
     confirmation_response: ConfirmationResponseProjectionV1 | None

@@ -26,6 +26,10 @@ from google_work_agent.application.agents.planning.materialize_task_calendar_dra
 from google_work_agent.application.agents.planning.materialize_task_create_payload import (
     materialize_task_create_payload,
 )
+from google_work_agent.application.agents.planning.project_request_intent_for_work_units import (
+    evidence_refs_for_work_units,
+    project_request_intent_for_work_units,
+)
 from google_work_agent.application.agents.planning.resolve_default_container import (
     BoundSelectedToolSchemaV1,
     PlanningArgumentBindingError,
@@ -142,6 +146,7 @@ def compose_arguments_per_output_route(
     request_intent: Mapping[str, object] | None = None,
     work_analysis: Mapping[str, object] | None = None,
     evidence: Sequence[Mapping[str, object]] = (),
+    retrieval_result: Mapping[str, object] | None = None,
     source_snapshots: Mapping[str, Mapping[str, object]] | None = None,
     selected_resources: Sequence[SelectedResourceRef] = (),
     invoke: PlanningSemanticInvoker,
@@ -158,12 +163,6 @@ def compose_arguments_per_output_route(
     schema_by_route = {item["route_id"]: item for item in bound_tool_schemas}
     if len(schema_by_route) != len(bound_tool_schemas):
         raise ValueError("duplicate selected Tool schema route")
-    allowed_refs = {
-        ref
-        for item in evidence
-        for ref in (item.get("evidence_ref") or item.get("evidence_id") or item.get("id"),)
-        if isinstance(ref, str) and ref
-    }
     candidates: list[ToolArgumentCandidateV1] = []
     seen: set[str] = set()
     for route in output_routes:
@@ -171,6 +170,44 @@ def compose_arguments_per_output_route(
         if not isinstance(route_id, str) or not route_id or route_id in seen:
             raise ValueError("output route_id must be unique and non-empty")
         seen.add(route_id)
+        route_work_unit_ids = route.get("work_unit_ids")
+        if route_work_unit_ids is None and modification is not None:
+            # Action modification reuses argument materialization after the
+            # original Planning route has already been persisted. It does not
+            # re-project RequestIntent or Retrieval ownership.
+            route_work_unit_ids = []
+        elif (
+            not isinstance(route_work_unit_ids, list)
+            or not route_work_unit_ids
+            or not all(isinstance(item, str) and item for item in route_work_unit_ids)
+        ):
+            raise ValueError("output route requires work_unit_ids")
+        route_intent = (
+            None
+            if request_intent is None
+            else project_request_intent_for_work_units(
+                request_intent,
+                work_unit_ids=cast(list[str], route_work_unit_ids),
+            )
+        )
+        bound_refs = evidence_refs_for_work_units(
+            retrieval_result,
+            work_unit_ids=cast(list[str], route_work_unit_ids),
+        )
+        route_evidence = [
+            item
+            for item in evidence
+            if retrieval_result is None
+            or (
+                item.get("evidence_ref") or item.get("evidence_id") or item.get("id")
+            ) in bound_refs
+        ]
+        allowed_refs = {
+            ref
+            for item in route_evidence
+            for ref in (item.get("evidence_ref") or item.get("evidence_id") or item.get("id"),)
+            if isinstance(ref, str) and ref
+        }
         objective = objective_by_route.get(route_id)
         bound_schema = schema_by_route.get(route_id)
         if objective is None or bound_schema is None:
@@ -187,10 +224,10 @@ def compose_arguments_per_output_route(
             if modification is not None
             else _deterministic_argument_candidate(
                 route=route,
-                request_intent=request_intent,
+                request_intent=route_intent,
                 allowed_refs=allowed_refs,
                 objective=objective,
-                evidence=evidence,
+                evidence=route_evidence,
             )
         )
         if candidate is None:
@@ -198,10 +235,10 @@ def compose_arguments_per_output_route(
                 "output_route": dict(route),
                 "action_objective": dict(objective),
                 "tool_schema": dict(bound_schema["argument_schema"]),
-                "evidence": [dict(item) for item in evidence],
+                "evidence": [dict(item) for item in route_evidence],
             }
-            if request_intent is not None:
-                prompt_input["request_intent"] = dict(request_intent)
+            if route_intent is not None:
+                prompt_input["request_intent"] = route_intent
             if work_analysis is not None:
                 prompt_input["work_analysis"] = dict(work_analysis)
             if confirmation_response is not None:
@@ -212,7 +249,7 @@ def compose_arguments_per_output_route(
                 prompt_input["modification"] = dict(modification)
             editable_source = project_gmail_draft_editable_source(
                 route=route,
-                evidence=evidence,
+                evidence=route_evidence,
                 source_snapshots=source_snapshots or {},
                 preferred_evidence_refs=objective.get("evidence_refs", []),
                 selected_resources=selected_resources,
@@ -234,7 +271,7 @@ def compose_arguments_per_output_route(
             dict[str, object],
             _restore_exact_argument_literals(
                 dict(arguments),
-                source_texts=_original_request_texts(request_intent),
+                source_texts=_original_request_texts(route_intent),
             ),
         )
         for name, expected in bound_schema["immutable_arguments"].items():
@@ -248,17 +285,17 @@ def compose_arguments_per_output_route(
             route=route,
             action_objective=objective,
             arguments=arguments,
-            evidence=evidence,
+            evidence=route_evidence,
         )
         arguments, gmail_draft_evidence_refs = bind_gmail_draft_update_identity(
             route=route,
             action_objective=objective,
             arguments=arguments,
-            evidence=evidence,
+            evidence=route_evidence,
             source_snapshots=source_snapshots or {},
             selected_evidence_refs=refs,
             selected_resources=selected_resources,
-            request_intent=request_intent,
+            request_intent=route_intent,
         )
         validation = ValidateActionArgumentsHandler()(
             ValidateActionArgumentsQueryV1(arguments, bound_schema["argument_schema"])
@@ -285,7 +322,7 @@ def compose_arguments_per_output_route(
                     *refs,
                     *_selected_github_target_evidence_refs(
                         route,
-                        request_intent,
+                        route_intent,
                         bound_schema,
                         arguments,
                         evidence,

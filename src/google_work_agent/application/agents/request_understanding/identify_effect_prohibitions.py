@@ -19,6 +19,7 @@ from .contracts.effect_prohibition_decision import (
 )
 from .contracts.output_responsibility_decision import OutputResponsibilityCandidateV1
 from .contracts.request_intent import WriteEffectValue
+from .contracts.work_unit_binding import work_unit_id_schema
 
 _WRITE_EFFECT_ORDER: tuple[WriteEffectValue, ...] = (
     "CREATE",
@@ -50,6 +51,8 @@ def build_effect_prohibition_candidates(
 
 def build_effect_prohibition_output_schema(
     candidates: Sequence[EffectProhibitionCandidateV1],
+    *,
+    work_unit_ids: Sequence[str],
 ) -> OutputSchemaDefinition:
     """Build the exact-set schema for explicit prohibition decisions."""
 
@@ -71,10 +74,11 @@ def build_effect_prohibition_output_schema(
                     "items": {
                         "type": "object",
                         "additionalProperties": False,
-                        "required": ["effect", "prohibition"],
+                        "required": ["effect", "prohibition", "work_unit_ids"],
                         "properties": {
                             "effect": {"enum": effects},
                             "prohibition": {"enum": ["FORBIDDEN", "NOT_FORBIDDEN"]},
+                            "work_unit_ids": work_unit_id_schema(work_unit_ids),
                         },
                     },
                     "allOf": [
@@ -103,6 +107,7 @@ def identify_effect_prohibitions(
     prompt_input: Mapping[str, object],
     goal_candidate: Mapping[str, object],
     effect_candidates: Sequence[EffectProhibitionCandidateV1],
+    work_unit_ids: Sequence[str],
     candidate_output: object | None = None,
     failure_record: Mapping[str, object] | None = None,
 ) -> EffectProhibitionDecisionCandidateV1:
@@ -126,11 +131,15 @@ def identify_effect_prohibitions(
         requested_mode,
         prompt_ref,
         inference_input,
-        build_effect_prohibition_output_schema(effect_candidates),
+        build_effect_prohibition_output_schema(
+            effect_candidates,
+            work_unit_ids=work_unit_ids,
+        ),
     )
     return validate_effect_prohibition_candidate(
         result.structured_output,
         effect_candidates=effect_candidates,
+        work_unit_ids=work_unit_ids,
     )
 
 
@@ -138,8 +147,12 @@ def validate_effect_prohibition_candidate(
     value: object,
     *,
     effect_candidates: Sequence[EffectProhibitionCandidateV1],
+    work_unit_ids: Sequence[str],
 ) -> EffectProhibitionDecisionCandidateV1:
-    schema = build_effect_prohibition_output_schema(effect_candidates)
+    schema = build_effect_prohibition_output_schema(
+        effect_candidates,
+        work_unit_ids=work_unit_ids,
+    )
     errors = validate_output_schema(value, schema.json_schema)
     if errors:
         raise ValueError(f"effect prohibition candidate is invalid: {'; '.join(errors)}")

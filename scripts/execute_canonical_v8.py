@@ -474,7 +474,7 @@ def _frozen_metadata(
         "dataset_sha256": normalized_sha256(DEFAULT_DATASET_PATH),
         "prompt_manifest_sha256": normalized_sha256(PROMPT_MANIFEST),
         "prompt_bundle_version": prompt.get("prompt_bundle_version"),
-        "graph_version": "resume-contract-v2",
+        "graph_version": "resume-contract-v3",
         "model_id": "qwen3.5:9b",
         "model_digest": model_digest,
         "temperature": 0.0,

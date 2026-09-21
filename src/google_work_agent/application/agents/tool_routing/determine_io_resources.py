@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
     RequestUnderstandingValidationError,
     validated_gmail_draft_anchor,
 )
@@ -89,7 +89,7 @@ def determine_io_resources(
     *,
     llm_runtime: StructuredInferencePort,
     tool_catalog: SignedToolRegistry,
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     request: WorkflowStartRequest,
     retry_budget: RunBudgetV2,
     prompt_ref: PromptReference | None = None,
@@ -170,7 +170,7 @@ def determine_io_resources(
 
 
 def _output_schema_for_request_intent(
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
 ) -> OutputSchemaDefinition:
     """Bind Tool Routing output effects to the validated request contract."""
 
@@ -204,14 +204,14 @@ def _output_schema_for_request_intent(
 
 
 def requires_io_resource_inference(
-    *, request_intent: RequestIntentV2, request: WorkflowStartRequest
+    *, request_intent: RequestIntentV3, request: WorkflowStartRequest
 ) -> bool:
     """Return whether Tool Routing still has a semantic choice for the LLM."""
     return _deterministic_candidate(request_intent=request_intent, request=request) is None
 
 
 def _deterministic_candidate(
-    *, request_intent: RequestIntentV2, request: WorkflowStartRequest
+    *, request_intent: RequestIntentV3, request: WorkflowStartRequest
 ) -> SemanticRouteCandidate | None:
     return (
         _selected_read_candidate(request_intent=request_intent, request=request)
@@ -221,7 +221,7 @@ def _deterministic_candidate(
 
 
 def _exact_intent_candidate(
-    *, request_intent: RequestIntentV2, request: WorkflowStartRequest
+    *, request_intent: RequestIntentV3, request: WorkflowStartRequest
 ) -> SemanticRouteCandidate | None:
     if request_intent["ambiguity"]["requires_confirmation"]:
         return None
@@ -231,6 +231,7 @@ def _exact_intent_candidate(
     resource_types = tuple(dict.fromkeys(request_intent["requested_resource_hints"]))
     effect_values = tuple(dict.fromkeys(request_intent["requested_effect_hints"]))
     selected_types = _selected_input_resource_types(request)
+    all_unit_ids = _all_work_unit_ids(request_intent)
     if selected_types:
         writes = tuple(effect for effect in effect_values if effect != "READ")
         if (
@@ -246,6 +247,10 @@ def _exact_intent_candidate(
             output_mode="ACTION",
             analysis_requirement=request_intent["analysis_requirement"],
             input_reason_codes=((resource_types[0], "RESOURCE_SELECTED"),),
+            input_work_unit_bindings=((resource_types[0], all_unit_ids),),
+            output_work_unit_bindings=(
+                (resource_types[0], EffectType(writes[0]), all_unit_ids),
+            ),
         )
     if request.selected_resources:
         return None
@@ -261,6 +266,10 @@ def _exact_intent_candidate(
             output_mode="ACTION",
             analysis_requirement=request_intent["analysis_requirement"],
             input_reason_codes=(("GMAIL_THREAD", "REQUESTED_INPUT"),),
+            input_work_unit_bindings=(("GMAIL_THREAD", all_unit_ids),),
+            output_work_unit_bindings=(
+                ("GMAIL_MESSAGE", EffectType.SEND, all_unit_ids),
+            ),
         )
     if set(effect_values) == {"READ"}:
         resource_types = _collapse_gmail_search_inputs(resource_types)
@@ -273,6 +282,7 @@ def _exact_intent_candidate(
             output_pairs=(),
             output_mode="ANSWER",
             analysis_requirement=request_intent["analysis_requirement"],
+            input_work_unit_bindings=((resource_type, all_unit_ids),),
         )
     write_effects = tuple(effect for effect in effect_values if effect != "READ")
     if len(write_effects) != 1:
@@ -312,20 +322,38 @@ def _exact_intent_candidate(
         output_mode="ACTION",
         analysis_requirement=request_intent["analysis_requirement"],
         input_reason_codes=input_reason_codes,
+        input_work_unit_bindings=tuple(
+            (item[0], all_unit_ids) for item in input_reason_codes
+        ),
+        output_work_unit_bindings=((
+            _normalize_output_resource_type(coarse_resource_category(resource_type), effect),
+            effect,
+            all_unit_ids,
+        ),),
     )
 
 
 def _resource_responsibility_candidate(
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
 ) -> SemanticRouteCandidate | None:
     responsibilities = request_intent.get("resource_responsibilities")
     if not responsibilities:
         return None
-    input_resources = _collapse_gmail_search_inputs(tuple(
-        item["resource_type"] for item in responsibilities["source_reads"]
+    input_bindings = _collapse_gmail_search_bindings(tuple(
+        (item["resource_type"], tuple(item["work_unit_ids"]))
+        for item in responsibilities["source_reads"]
     ))
+    input_resources = tuple(item[0] for item in input_bindings)
     output_pairs = tuple(
         (item["resource_type"], EffectType(item["effect"]))
+        for item in responsibilities["outputs"]
+    )
+    output_bindings = tuple(
+        (
+            item["resource_type"],
+            EffectType(item["effect"]),
+            tuple(item["work_unit_ids"]),
+        )
         for item in responsibilities["outputs"]
     )
     return SemanticRouteCandidate(
@@ -336,6 +364,8 @@ def _resource_responsibility_candidate(
         input_reason_codes=tuple(
             (resource_type, "REQUESTED_INPUT") for resource_type in input_resources
         ),
+        input_work_unit_bindings=input_bindings,
+        output_work_unit_bindings=output_bindings,
     )
 
 
@@ -348,9 +378,29 @@ def _collapse_gmail_search_inputs(resource_types: tuple[str, ...]) -> tuple[str,
     return unique
 
 
+def _collapse_gmail_search_bindings(
+    bindings: tuple[tuple[str, tuple[str, ...]], ...],
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    ordered_resources = _collapse_gmail_search_inputs(tuple(item[0] for item in bindings))
+    by_resource: dict[str, list[str]] = {}
+    for resource_type, unit_ids in bindings:
+        effective_resource = (
+            "GMAIL_THREAD"
+            if resource_type in {"GMAIL_THREAD", "GMAIL_MESSAGE"}
+            and "GMAIL_THREAD" in ordered_resources
+            else resource_type
+        )
+        refs = by_resource.setdefault(effective_resource, [])
+        refs.extend(unit_id for unit_id in unit_ids if unit_id not in refs)
+    return tuple(
+        (resource_type, tuple(by_resource[resource_type]))
+        for resource_type in ordered_resources
+    )
+
+
 def _selected_read_candidate(
     *,
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     request: WorkflowStartRequest,
 ) -> SemanticRouteCandidate | None:
     selected_input_resources = _selected_input_resource_types(request)
@@ -364,11 +414,15 @@ def _selected_read_candidate(
         input_reason_codes=tuple(
             (resource_type, "RESOURCE_SELECTED") for resource_type in selected_input_resources
         ),
+        input_work_unit_bindings=tuple(
+            (resource_type, _all_work_unit_ids(request_intent))
+            for resource_type in selected_input_resources
+        ),
     )
 
 
 def _no_tool_candidate(
-    *, request_intent: RequestIntentV2, request: WorkflowStartRequest
+    *, request_intent: RequestIntentV3, request: WorkflowStartRequest
 ) -> SemanticRouteCandidate | None:
     if (
         request.selected_resources
@@ -387,7 +441,7 @@ def _no_tool_candidate(
 def _validated_semantic_candidate(
     value: object,
     *,
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     request: WorkflowStartRequest,
 ) -> SemanticRouteCandidate:
     raw = _validate_candidate(value)
@@ -403,7 +457,7 @@ def _validated_semantic_candidate(
 def _semantic_candidate(
     raw: Mapping[str, object],
     *,
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     request: WorkflowStartRequest,
 ) -> SemanticRouteCandidate:
     inferred_input_resources = tuple(
@@ -518,7 +572,24 @@ def _semantic_candidate(
         input_reason_codes=tuple(
             (resource_type, "RESOURCE_SELECTED") for resource_type in selected_input_resources
         ),
+        input_work_unit_bindings=tuple(
+            (resource_type, _all_work_unit_ids(request_intent))
+            for resource_type in input_resources
+        ),
+        output_work_unit_bindings=tuple(
+            (resource_type, effect, _all_work_unit_ids(request_intent))
+            for resource_type, effect in output_pairs
+        ),
     )
+
+
+def _all_work_unit_ids(request_intent: RequestIntentV3) -> tuple[str, ...]:
+    unit_ids = tuple(
+        unit["unit_id"] for unit in request_intent["requested_work"]["work_units"]
+    )
+    if not unit_ids or len(unit_ids) != len(set(unit_ids)):
+        raise ToolRouteValidationError("RequestIntentV3 WorkUnit IDs are invalid")
+    return unit_ids
 
 
 def _selected_input_resource_types(request: WorkflowStartRequest) -> tuple[str, ...]:

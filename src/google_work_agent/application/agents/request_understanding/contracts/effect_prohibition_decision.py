@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
 from .request_intent import WriteEffectValue
 
@@ -14,6 +14,7 @@ class EffectProhibitionCandidateV1(TypedDict):
 class EffectProhibitionDecisionV1(TypedDict):
     effect: WriteEffectValue
     prohibition: EffectProhibitionValue
+    work_unit_ids: NotRequired[list[str]]
 
 
 class EffectProhibitionDecisionCandidateV1(TypedDict):

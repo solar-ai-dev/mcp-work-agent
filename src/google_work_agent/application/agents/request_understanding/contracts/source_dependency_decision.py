@@ -20,6 +20,7 @@ class SourceDependencyDecisionV1(TypedDict):
     dependency: SourceDependencyValue
     required_information: NotRequired[list[str]]
     target_scope: NotRequired[TargetScopeValue]
+    work_unit_ids: NotRequired[list[str]]
 
 
 class SourceDependencyDecisionCandidateV1(TypedDict):

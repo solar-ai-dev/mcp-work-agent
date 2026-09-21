@@ -11,7 +11,7 @@ from evaluation.dataset_v8 import load_cases
 from scripts.evaluate_retrieval_plan_query_node import _load_latest_state
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.tool_routing.determine_io_resources import (
     determine_io_resources,
@@ -55,7 +55,7 @@ def main() -> None:
         if not isinstance(request, WorkflowStartRequest) or not isinstance(intent, dict):
             records.append({"case_id": case_id, "outcome": "NO_INTENT"})
             continue
-        typed_intent = cast(RequestIntentV2, intent)
+        typed_intent = cast(RequestIntentV3, intent)
         if requires_io_resource_inference(request_intent=typed_intent, request=request):
             records.append({"case_id": case_id, "outcome": "LLM_REQUIRED"})
             continue

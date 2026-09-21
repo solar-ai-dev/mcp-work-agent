@@ -24,7 +24,7 @@ from google_work_agent.application.agents.planning.contracts.planning_semantics 
     ToolArgumentCandidateV1,
 )
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     RetrievalResultV1,
@@ -48,7 +48,7 @@ from google_work_agent.ports.system.contracts.confirmation import UserInterruptV
 class PlanningInputState(AgentSubgraphInputEnvelope, total=False):
     """Parent projection owned by Planning."""
 
-    request_intent: RequestIntentV2 | None
+    request_intent: RequestIntentV3 | None
     tool_route_plan: ToolRoutePlanV2 | None
     retrieval_result: RetrievalResultV1 | None
     work_analysis_result: WorkAnalysisResultV2 | None
@@ -88,7 +88,7 @@ class PlanningLocalState(GraphState):
 
 class PlanningStateV2(TypedDict, total=False):
     user_request: str
-    request_intent: RequestIntentV2
+    request_intent: RequestIntentV3
     output_plan: OutputPlanV1
     work_analysis: WorkAnalysisResultV2
     evidence_refs: list[str]

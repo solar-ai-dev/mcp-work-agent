@@ -7,7 +7,7 @@ from copy import deepcopy
 from typing import cast
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_candidates import (
     InformationGapAssessmentV1,
@@ -98,7 +98,7 @@ ASSESS_INFORMATION_GAPS_OUTPUT_SCHEMA = OutputSchemaDefinition(
 
 def assess_information_gaps(
     *,
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     work_facts: Sequence[WorkFactV1],
     evidence: list[dict[str, object]],
     llm_runtime: StructuredInferencePort,

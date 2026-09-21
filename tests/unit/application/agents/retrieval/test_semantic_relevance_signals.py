@@ -5,7 +5,7 @@ from typing import cast
 import pytest
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
     SourceFetchPlanV1,
@@ -76,7 +76,7 @@ def test_person_match__abbreviated_name__remains_candidate(
 
 
 def test_relevance_signals__plan_and_provider_metadata__retains_binding() -> None:
-    intent = cast(RequestIntentV2, {
+    intent = cast(RequestIntentV3, {
         "goal": "조회", "constraints": [{"kind": "PERSON", "field": "person", "value": "김대리"}],
     })
     plans = [cast(SourceFetchPlanV1, {
@@ -109,7 +109,7 @@ def test_relevance_signals__plan_and_provider_metadata__retains_binding() -> Non
 
 
 def test_relevance_signals__calendar_window_and_gmail__does_not_confuse_date_or_sender() -> None:
-    intent = cast(RequestIntentV2, {"goal": "조회", "constraints": []})
+    intent = cast(RequestIntentV3, {"goal": "조회", "constraints": []})
     plan = cast(SourceFetchPlanV1, {
         "resource_type": "CALENDAR_EVENT", "effective_constraints": [WINDOW],
     })

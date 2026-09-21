@@ -80,7 +80,44 @@ class FakeStructuredInferencePort:
             }
         )
         output: object
-        if (
+        if output_schema_ref.schema_version == "requested-work-boundaries-v1":
+            if (
+                self.outputs
+                and isinstance(self.outputs[0], Mapping)
+                and "work_units" in self.outputs[0]
+            ):
+                output = self.outputs.pop(0)
+            else:
+                user_request = input_projection.get("user_request")
+                if not isinstance(user_request, str) or not user_request:
+                    raise AssertionError("requested work fake requires user_request")
+                output = {
+                    "schema_version": 1,
+                    "work_units": [{"request_spans": [user_request]}],
+                }
+        elif output_schema_ref.schema_version == "requested-work-relation-decisions-v1":
+            if (
+                self.outputs
+                and isinstance(self.outputs[0], Mapping)
+                and "relation_decisions" in self.outputs[0]
+            ):
+                output = self.outputs.pop(0)
+            else:
+                candidate_pairs = cast(
+                    Sequence[Mapping[str, object]], input_projection["candidate_pairs"]
+                )
+                output = {
+                    "schema_version": 1,
+                    "relation_decisions": [
+                        {
+                            "source_work_unit_id": pair["source_work_unit_id"],
+                            "target_work_unit_id": pair["target_work_unit_id"],
+                            "disposition": "NONE",
+                        }
+                        for pair in candidate_pairs
+                    ],
+                }
+        elif (
             output_schema_ref.schema_version == "request-source-dependency-decision-v3"
             and self._pending_resource_responsibilities is not None
         ):
@@ -97,7 +134,10 @@ class FakeStructuredInferencePort:
                 input_projection=input_projection,
             )
             self._pending_resource_responsibilities = None
-        elif output_schema_ref.schema_version == "request-effect-prohibition-decision-v1":
+        elif output_schema_ref.schema_version in {
+            "request-effect-prohibition-decision-v1",
+            "request-effect-prohibition-decision-v2",
+        }:
             if (
                 self.outputs
                 and isinstance(self.outputs[0], Mapping)
@@ -111,11 +151,17 @@ class FakeStructuredInferencePort:
                     if isinstance(base_projection, Mapping)
                     else input_projection
                 )
+                requested_work = cast(Mapping[str, object], base["requested_work"])
+                work_units = cast(
+                    Sequence[Mapping[str, object]], requested_work["work_units"]
+                )
+                work_unit_ids = [cast(str, unit["unit_id"]) for unit in work_units]
                 output = {
                     "effect_prohibitions": [
                         {
                             "effect": candidate["effect"],
                             "prohibition": "NOT_FORBIDDEN",
+                            "work_unit_ids": work_unit_ids,
                         }
                         for raw_candidate in cast(Sequence[object], base["effect_candidates"])
                         if isinstance(raw_candidate, Mapping)
@@ -140,12 +186,16 @@ class FakeStructuredInferencePort:
         else:
             output = self.outputs.pop(0)
             if isinstance(output, Mapping) and "resource_responsibilities" in output:
-                responsibilities = output["resource_responsibilities"]
+                responsibilities = _ensure_work_unit_bindings(
+                    output["resource_responsibilities"],
+                    input_projection=input_projection,
+                )
                 if output_schema_ref.schema_version in {
                     "request-goal-candidate-v13",
                     "request-goal-candidate-v14",
                     "request-goal-candidate-v15",
                     "request-goal-candidate-v16",
+                    "request-goal-candidate-v17",
                 }:
                     self._pending_resource_responsibilities = responsibilities
                     output = {
@@ -159,9 +209,12 @@ class FakeStructuredInferencePort:
                 and "source_reads" in output
                 and "outputs" in output
             ):
-                self._pending_resource_responsibilities = output
-                output = _source_dependency_decisions_from_responsibilities(
+                self._pending_resource_responsibilities = _ensure_work_unit_bindings(
                     output,
+                    input_projection=input_projection,
+                )
+                output = _source_dependency_decisions_from_responsibilities(
+                    self._pending_resource_responsibilities,
                     input_projection=input_projection,
                 )
             elif (
@@ -171,7 +224,10 @@ class FakeStructuredInferencePort:
                 and "outputs" in output
             ):
                 output = _output_responsibility_decisions_from_responsibilities(
-                    output,
+                    _ensure_work_unit_bindings(
+                        output,
+                        input_projection=input_projection,
+                    ),
                     input_projection=input_projection,
                 )
             if (
@@ -180,6 +236,7 @@ class FakeStructuredInferencePort:
                     "request-goal-candidate-v14",
                     "request-goal-candidate-v15",
                     "request-goal-candidate-v16",
+                    "request-goal-candidate-v17",
                 }
                 and isinstance(output, Mapping)
                 and isinstance(output.get("constraints"), Mapping)
@@ -210,6 +267,37 @@ class FakeStructuredInferencePort:
         )
 
 
+def _ensure_work_unit_bindings(
+    value: object,
+    *,
+    input_projection: Mapping[str, object],
+) -> dict[str, object]:
+    responsibilities = cast(Mapping[str, object], value)
+    base_projection = input_projection.get("base_projection")
+    base = (
+        cast(Mapping[str, object], base_projection)
+        if isinstance(base_projection, Mapping)
+        else input_projection
+    )
+    requested_work = cast(Mapping[str, object], base["requested_work"])
+    work_units = cast(Sequence[Mapping[str, object]], requested_work["work_units"])
+    unit_ids = [cast(str, unit["unit_id"]) for unit in work_units]
+    return {
+        "source_reads": [
+            {**cast(Mapping[str, object], item), "work_unit_ids": list(
+                cast(Mapping[str, object], item).get("work_unit_ids", unit_ids)
+            )}
+            for item in cast(Sequence[object], responsibilities["source_reads"])
+        ],
+        "outputs": [
+            {**cast(Mapping[str, object], item), "work_unit_ids": list(
+                cast(Mapping[str, object], item).get("work_unit_ids", unit_ids)
+            )}
+            for item in cast(Sequence[object], responsibilities["outputs"])
+        ],
+    }
+
+
 def _source_dependency_decisions_from_responsibilities(
     value: object,
     *,
@@ -228,6 +316,7 @@ def _source_dependency_decisions_from_responsibilities(
                 "resource_type": resource_type,
                 "required_information": [],
                 "target_scope": source["target_scope"],
+                "work_unit_ids": list(cast(Sequence[str], source["work_unit_ids"])),
             },
         )
         if current["target_scope"] != source["target_scope"]:
@@ -257,6 +346,9 @@ def _source_dependency_decisions_from_responsibilities(
                     "dependency": "SOURCE_REQUIRED",
                     "required_information": required_information,
                     "target_scope": selected_source["target_scope"],
+                    "work_unit_ids": list(
+                        cast(Sequence[str], selected_source["work_unit_ids"])
+                    ),
                 }
             )
         else:
@@ -268,6 +360,7 @@ def _source_dependency_decisions_from_responsibilities(
             "dependency": "SOURCE_REQUIRED",
             "required_information": list(cast(Sequence[str], source["required_information"])),
             "target_scope": source["target_scope"],
+            "work_unit_ids": list(cast(Sequence[str], source["work_unit_ids"])),
         }
         for resource_type, source in sources.items()
         if resource_type not in candidate_types
@@ -298,13 +391,23 @@ def _output_responsibility_decisions_from_responsibilities(
         {
             "resource_type": candidate["resource_type"],
             "effect": outputs[cast(str, candidate["resource_type"])]["effect"],
+            "work_unit_ids": list(
+                cast(
+                    Sequence[str],
+                    outputs[cast(str, candidate["resource_type"])]["work_unit_ids"],
+                )
+            ),
         }
         for candidate in candidates
         if cast(str, candidate["resource_type"]) in outputs
     ]
     candidate_types = {cast(str, candidate["resource_type"]) for candidate in candidates}
     decisions.extend(
-        {"resource_type": resource_type, "effect": output["effect"]}
+        {
+            "resource_type": resource_type,
+            "effect": output["effect"],
+            "work_unit_ids": list(cast(Sequence[str], output["work_unit_ids"])),
+        }
         for resource_type, output in outputs.items()
         if resource_type not in candidate_types
     )

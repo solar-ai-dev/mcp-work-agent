@@ -17,6 +17,7 @@ class InputToolRouteV1(TypedDict):
     allowed_read_tool_ids: list[str]
     required: bool
     reason_codes: list[str]
+    work_unit_ids: list[str]
 
 
 class OutputToolRouteV1(TypedDict):
@@ -26,6 +27,7 @@ class OutputToolRouteV1(TypedDict):
     effect: ToolRouteEffect
     selected_tool_id: str
     reason_codes: list[str]
+    work_unit_ids: list[str]
 
 
 class InputRoutePlanV1(TypedDict):

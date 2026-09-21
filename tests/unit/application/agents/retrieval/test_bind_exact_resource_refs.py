@@ -3,7 +3,7 @@ from typing import cast
 import pytest
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.retrieval.bind_exact_resource_refs import (
     bind_exact_resource_refs,
@@ -17,9 +17,9 @@ from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan
 from google_work_agent.ports.system.contracts.workflow_execution import SelectedResourceRef
 
 
-def _intent(draft_id: str) -> RequestIntentV2:
+def _intent(draft_id: str) -> RequestIntentV3:
     return cast(
-        RequestIntentV2,
+        RequestIntentV3,
         {
             "schema_version": 2,
             "meta": {"artifact_id": "intent", "revision": 1, "based_on": []},

@@ -188,7 +188,7 @@ Imported evaluation artifact가 current Workflow/Connector-neutral contract와 �
 Imported artifact를 current contract로 변환할 때 최소 다음을 검증한다.
 
 ```
-Request Understanding Gold → RequestIntentV2
+Request Understanding Gold → RequestIntentV3
 Tool Route Gold           → connector_id + InputRoutePlanV1 + OutputPlanV1
 Retrieval Gold            → RetrievalResultV1 + source_statuses + allowed Read trajectory
 Analysis Gold             → optional WorkAnalysisResultV2

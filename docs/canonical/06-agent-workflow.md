@@ -435,7 +435,7 @@ class GraphState:
     graph_profile: GraphProfileIdV1
     run_input: RunInputV1
 
-    request_intent: RequestIntentV2 | None
+    request_intent: RequestIntentV3 | None
     tool_route_plan: ToolRoutePlanV2 | None
     retrieval_result: RetrievalResultV1 | None
     work_analysis_result: WorkAnalysisResultV2 | None
@@ -727,7 +727,7 @@ class StateArtifactMetaV1:
 
 ## 3. Typed Schema 계약
 
-### 3.1 RequestIntentV2
+### 3.1 RequestIntentV3
 
 Request Understanding은 사용자 요청의 의미를 구조화하며 실제 Tool을 선택하지 않는다.
 
@@ -744,6 +744,20 @@ class ConstraintV1:
     value: str | list[str]
     provenance: ConstraintProvenanceV1 | None = None
     source_resource_type: str | None = None
+    work_unit_ids: list[str]
+
+class RequestedWorkUnitV1:
+    unit_id: str
+    request_provenance: list[ConstraintProvenanceV1]
+
+class RequestedWorkRelationV1:
+    source_work_unit_id: str
+    target_work_unit_id: str
+    kind: Literal["CONSUMES_WORK_PRODUCT", "CONSUMES_PLANNED_SPECIFICATION"]
+
+class RequestedWorkDefinitionV1:
+    work_units: list[RequestedWorkUnitV1]
+    work_relations: list[RequestedWorkRelationV1]
 
 class AmbiguityV1:
     requires_confirmation: bool
@@ -753,24 +767,33 @@ class AmbiguityV1:
 class SourceResourceResponsibilityV1:
     resource_type: str
     required_information: list[str]
+    target_scope: Literal["SINGULAR", "CRITERIA"]
+    work_unit_ids: list[str]
 
 class OutputResourceResponsibilityV1:
     resource_type: str
     effect: Literal["CREATE", "UPDATE", "SEND", "DELETE"]
+    work_unit_ids: list[str]
+
+class EffectProhibitionV1:
+    effect: Literal["CREATE", "UPDATE", "SEND", "DELETE"]
+    work_unit_ids: list[str]
 
 class ResourceResponsibilitiesV1:
     source_reads: list[SourceResourceResponsibilityV1]
     outputs: list[OutputResourceResponsibilityV1]
 
-class RequestIntentV2:
-    schema_version: Literal[2]
+class RequestIntentV3:
+    schema_version: Literal[3]
     meta: StateArtifactMetaV1
     goal: str
     completion_conditions: list[str]
+    requested_work: RequestedWorkDefinitionV1
     constraints: list[ConstraintV1]
     requested_effect_hints: list[Literal["READ", "CREATE", "UPDATE", "SEND", "DELETE"]]
     requested_resource_hints: list[str]
     resource_responsibilities: ResourceResponsibilitiesV1 | None = None
+    effect_prohibitions: list[EffectProhibitionV1]
     analysis_requirement: Literal["NONE", "REQUIRED"]
     ambiguity: AmbiguityV1
 ```
@@ -783,12 +806,23 @@ class RequestIntentV2:
 | RESOURCE_SELECTED | 검증된 selected_resource_refs를 identify_goal·detect_ambiguity에 동일하게 전달한다. READ로 얻을 수 있는 본문·제목·발신자는 user-owned missing choice가 아니다. |
 | 실제 사용자 선택 | recipient·시간·범위 등 사용자만 결정할 값은 선택 Resource가 있어도 자동 보완하지 않는다. Write의 필수 선택 누락은 Confirmation을 유지한다. |
 | analysis_requirement | 별도 업무 사실·관계 해석 필요 여부다. 단순 조회·요약과 충분한 직접 ACTION은 NONE일 수 있다. 실제 Analysis 적용 조건은 §18을 따른다. |
+| requested_work | Request Understanding이 소유하는 사용자 요청의 업무 경계와 current-request exact provenance다. Source·Output·Constraint·Effect 문자열을 WorkUnit에 복제하지 않는다. |
+| work_unit_ids | 각 기존 semantic item owner가 소유하는 적용 범위다. 비어 있거나 현재 RequestIntent revision에 없는 ID를 참조할 수 없으며 shared/local이라는 별도 category나 implicit 전체 적용 기본값을 두지 않는다. |
+
+#### Requested Work binding과 관계
+
+- WorkUnit은 사용자 요청의 독립 결과 경계와 원문 provenance만 소유한다. Constraint, Source responsibility, Output responsibility와 explicit effect prohibition의 의미 권위는 기존 atomic owner에 남는다.
+- 동일 READ capability가 여러 WorkUnit에 필요하면 Input Route와 Provider READ를 복제하지 않고 해당 Route의 `work_unit_ids`를 stable union한다.
+- 같은 Resource/effect라도 서로 다른 사용자 결과인 Output responsibility는 별도 Output Route로 보존한다. Tool capability 선택은 공유할 수 있으나 Route 의미는 합치지 않는다.
+- `CONSUMES_WORK_PRODUCT`는 앞 업무의 same-Run 내부 파생 결과, `CONSUMES_PLANNED_SPECIFICATION`은 승인 전 외부 Action의 계획 명세를 뒤 업무가 입력으로 소비하는 관계다. WorkRelation은 Planning Action dependency, Approval, 실행 순서 또는 Write 권한이 아니다.
+- WorkRelation owner는 검증된 WorkUnit과 semantic item을 입력으로 사용한다. 단일 WorkUnit에서는 호출하지 않으며, 복수 WorkUnit에서는 self edge를 제외한 ordered pair 전체를 판단한다. 관계 kind는 source WorkUnit의 확정 Output responsibility 유무에서 결정하고 LLM은 dependency 존재 여부만 판단한다.
+- persisted V2 checkpoint를 V3로 조용히 승격하지 않는다. V3 graph/resume contract version이 다른 checkpoint resume를 fail-closed하여 새 Run에서 V3 owner가 다시 생성하도록 한다.
 
 #### Identity-bearing constraint provenance
 
 **Source 검증**
 
-- Provider identity로 사용되는 constraint는 finalized `RequestIntentV2`에 들어가기 전에 `request.finalize`의 기존 `finalize_intent → validate_intent` 단계에서 deterministic provenance 검증을 통과해야 한다. LLM은 constraint와 source span 후보를 제안할 수 있을 뿐 `provenance`를 확정하는 authority가 아니다.
+- Provider identity로 사용되는 constraint는 finalized `RequestIntentV3`에 들어가기 전에 `request.finalize`의 기존 `finalize_intent → validate_intent` 단계에서 deterministic provenance 검증을 통과해야 한다. LLM은 constraint와 source span 후보를 제안할 수 있을 뿐 `provenance`를 확정하는 authority가 아니다.
 
 - `start_offset:end_offset`은 `source`가 가리키는 현재 Run의 정확한 사용자 요청 또는 동일 Run Confirmation 응답 문자열에 대한 half-open span이다. 결정적 validator가 범위와 exact source slice를 constraint 값에 대조한 뒤에만 `ConstraintProvenanceV1`을 부여한다. 대조되지 않은 LLM 선언은 authority가 아니며 identity-bearing constraint로 사용할 수 없다.
 - 정규화 값과 원문 표현이 다른 source scope는 `source_text`로 정확한 원문 span을 보존한다. 특히 `SCOPE.status`는 `source_resource_type`을 함께 가져야 하며, 원문 또는 동일 Run Confirmation에 명시된 source Resource 상태만 허용한다. Output effect·완료 후 기대 상태·다른 Resource 상태는 source search scope의 provenance가 아니다. LLM이 제안한 `source_text`와 Resource binding은 `finalize_intent → validate_intent`가 현재 Run source와 대조하며, 단순한 canonical status 문자열 포함 검사로 대체하지 않는다.
@@ -825,7 +859,7 @@ class RequestIntentV2:
 
 검증된 parent_resource_id는 repository container authority가 될 수 있다. 같은 Run의 explicit provenance-validated repository가 있으면 exact match해야 한다. 불일치에 silent precedence를 적용하지 않고 기존 Confirmation 또는 fail-closed 경로를 사용한다.
 
-- 이 provenance는 `ConstraintV1`의 선택적 source binding이며 새 Main State field나 장기 repository authority Artifact가 아니다. 권위는 기존 finalized `RequestIntentV2`, `SelectedResourceRefV1`/`ResourceRef`, frozen Route와 immutable Planning arguments 안에만 존재한다.
+- 이 provenance는 `ConstraintV1`의 선택적 source binding이며 새 Main State field나 장기 repository authority Artifact가 아니다. 권위는 기존 finalized `RequestIntentV3`, `SelectedResourceRefV1`/`ResourceRef`, frozen Route와 immutable Planning arguments 안에만 존재한다.
 
 **Run allowlist와 현재 접근**
 
@@ -878,6 +912,7 @@ class InputToolRouteV1:
     allowed_read_tool_ids: list[str]
     required: bool
     reason_codes: list[str]
+    work_unit_ids: list[str]
 
 class OutputToolRouteV1:
     route_id: str
@@ -886,12 +921,15 @@ class OutputToolRouteV1:
     effect: Literal["CREATE", "UPDATE", "SEND", "DELETE"]
     selected_tool_id: str
     reason_codes: list[str]
+    work_unit_ids: list[str]
 ```
 
 규칙:
 
 - Tool 이름·Effect는 Signed Tool Registry의 실제 Entry에서만 선택한다.
-- Tool Route의 output effect는 `RequestIntentV2.requested_effect_hints`의 Write subset을 초과할 수 없다. READ-only intent에 LLM이 CREATE/UPDATE/SEND/DELETE 후보를 반환하면 결정적 경계가 `ANSWER`로 축소하며 Write Route는 0이어야 한다.
+- Tool Route의 output effect는 `RequestIntentV3.requested_effect_hints`의 Write subset을 초과할 수 없다. READ-only intent에 LLM이 CREATE/UPDATE/SEND/DELETE 후보를 반환하면 결정적 경계가 `ANSWER`로 축소하며 Write Route는 0이어야 한다.
+- Input Route는 동일 READ capability를 하나로 유지하면서 관련 Source responsibility의 `work_unit_ids` union을 보존한다. dependency-only Route도 이를 필요로 한 direct Route의 union을 상속한다.
+- Output Route는 해당 Output responsibility와 일대일이다. 같은 Resource/effect의 Tool 선택 결과는 재사용할 수 있지만 서로 다른 `work_unit_ids`의 사용자 결과를 한 Route로 합치지 않는다.
 - `RESOURCE_SELECTED`의 exact resource type은 semantic candidate보다 우선하는 current-Run scope다. 후보가 다른 resource family를 제안하면 bounded semantic revision 또는 fail-closed하며 선택 identity를 새 값으로 교체하지 않는다.
 - `input_routes`는 Retrieval이 사용할 허용 Read Tool 범위를 보존한다. Retrieval LLM이 다시 Tool 종류를 고르지 않는다.
 - `output_routes`의 실제 Action Tool은 여기서 확정한다. Planning은 Tool을 다시 선택하지 않고 Arguments·내용만 작성한다.
@@ -1190,7 +1228,7 @@ Request는 run_input을 projection하고, Back-edge 재진입에서는 해당 No
 
 | Agent Subgraph | 유일한 책임 | 금지 | Parent 반환 |
 | --- | --- | --- | --- |
-| Request Understanding | 사용자 목표·완료조건·제약·모호성 구조화 | Tool 선택·Google 조회·Action 작성 | `RequestIntentV2` |
+| Request Understanding | 사용자 목표·완료조건·제약·모호성·업무 경계 구조화 | Tool 선택·Google 조회·Action 작성 | `RequestIntentV3` |
 | Tool Route | IN Resource/Read Tool 범위와 OUT Resource/Effect/Tool 결정 | Query 작성·Evidence 판단·Arguments 작성 | `ToolRoutePlanV2` |
 | Retrieval | 고정된 IN Route에서 Query→Read→RAG→Evidence→Sufficiency | OUT Tool 변경·업무 의미 최종 해석·Write | `RetrievalResultV1` |
 | Work Analysis | Evidence를 업무 사실·관계·모호성·위험으로 해석 | Tool 선택·Arguments 작성·정책 최종 판정 | `WorkAnalysisResultV2` |
@@ -1230,7 +1268,7 @@ class RequestUnderstandingStateV2:
     selected_resource_refs: list[SelectedResourceRefV1]
     goal_candidate: RequestGoalCandidateV1 | None
     ambiguity_candidate: AmbiguityV1 | None
-    final_intent: RequestIntentV2 | None
+    final_intent: RequestIntentV3 | None
 ```
 
 ### 5.3 Tool Route Subgraph
@@ -1263,7 +1301,7 @@ class RegistryCandidateSetV1:
     candidate_tool_ids: list[str]
 
 class ToolRouteStateV1:
-    request_intent: RequestIntentV2
+    request_intent: RequestIntentV3
     registry_snapshot_ref: str
     io_resource_candidate: IORouteIntentV1 | None
     io_resource_failure: FailureRecordV1 | None
@@ -1394,7 +1432,7 @@ class OperationalRiskCandidateV1:
 
 class WorkAnalysisStateV2:
     user_request: str
-    request_intent: RequestIntentV2
+    request_intent: RequestIntentV3
     evidence_refs: list[str]
     fact_candidates: list[WorkFactV1]
     entity_relation_candidates: list[WorkRelationV1]
@@ -1454,7 +1492,7 @@ class ActionDependencyCandidateV1:
 
 class PlanningStateV2:
     user_request: str
-    request_intent: RequestIntentV2
+    request_intent: RequestIntentV3
     output_plan: OutputPlanV1
     work_analysis: WorkAnalysisResultV2 | None
     evidence_refs: list[str]
@@ -1798,8 +1836,8 @@ registered node/resume target set이 변경되면 compiled Resume Target Registr
 | `request.identify_goal` | request_understanding | LLM | request | goal 후보 → resource 책임 → source status를 순서대로 조립한 goal candidate |
 | `request.identify_temporal_scope` | request_understanding | LLM/conditional | request + goal period/context | temporal axis를 더한 goal candidate |
 | `request.detect_ambiguity` | request_understanding | LLM/conditional | request + goal | ambiguity |
-| `request.finalize` | request_understanding | deterministic | local candidates | `finalize_intent → validate_intent → RequestIntentV2` |
-| `route.determine_resources` | tool_route | LLM | `RequestIntentV2` | IN/OUT resource·effect candidate |
+| `request.finalize` | request_understanding | deterministic | local candidates | `finalize_intent → validate_intent → RequestIntentV3` |
+| `route.determine_resources` | tool_route | LLM/conditional | `RequestIntentV3` | WorkUnit-bound IN/OUT resource·effect candidate |
 | `route.bind_candidates` | tool_route | deterministic | resource/effect candidate + Registry | registry candidates |
 | `route.select_tool` | tool_route | LLM/conditional | route candidate + registered candidates | selected candidate |
 | `route.finalize` | tool_route | deterministic | selected candidate + Registry | `ToolRoutePlanV2` |

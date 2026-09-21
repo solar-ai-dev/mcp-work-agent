@@ -66,7 +66,7 @@ from google_work_agent.api.composition import (
     build_production_runtime,
 )
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.tool_routing.bind_registry_candidates import (
     is_retrieval_dependency_route,
@@ -231,7 +231,7 @@ def evaluate(
     model_id: str,
     sampling_temperature: float,
     sampling_seed: int,
-    input_overrides: Mapping[str, tuple[RequestIntentV2, ToolRoutePlanV2]] | None = None,
+    input_overrides: Mapping[str, tuple[RequestIntentV3, ToolRoutePlanV2]] | None = None,
     request_text_overrides: Mapping[str, str] | None = None,
     emit_case_records: bool = True,
     connect_work_analysis: bool = False,
@@ -394,7 +394,7 @@ def _evaluate_case(
     checkpoint_root: Path,
     llm_runtime: Any,
     model_id: str,
-    input_override: tuple[RequestIntentV2, ToolRoutePlanV2] | None = None,
+    input_override: tuple[RequestIntentV3, ToolRoutePlanV2] | None = None,
     request_text_override: str | None = None,
     dispatch_count: Callable[[], int] | None = None,
     connect_work_analysis: bool = False,
@@ -740,7 +740,7 @@ def _read_result(
 
 def _select_replay_inputs(
     persisted: Mapping[str, object],
-    input_override: tuple[RequestIntentV2, ToolRoutePlanV2] | None,
+    input_override: tuple[RequestIntentV3, ToolRoutePlanV2] | None,
 ) -> tuple[object, object]:
     if input_override is not None:
         return input_override

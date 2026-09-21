@@ -6,7 +6,7 @@ from google_work_agent.application.agents.request_understanding.contracts.reques
     AmbiguityV1,
     ConstraintProvenanceSource,
     RequestGoalCandidateV1,
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.request_understanding.validate_intent import (
     materialize_validated_constraint_provenance,
@@ -23,8 +23,8 @@ def finalize_intent(
     user_request: str,
     confirmation_response_text: str | None = None,
     repository_default: GitHubRepositoryDefaultV1 | None = None,
-    prior_intent: RequestIntentV2 | None = None,
-) -> RequestIntentV2:
+    prior_intent: RequestIntentV3 | None = None,
+) -> RequestIntentV3:
     if not artifact_id:
         raise ValueError("artifact_id must be non-empty")
     constraints = materialize_validated_constraint_provenance(
@@ -51,7 +51,7 @@ def finalize_intent(
     )
     return validate_intent(
         {
-            "schema_version": 2,
+            "schema_version": 3,
             **goal_candidate,
             "constraints": constraints,
             "ambiguity": ambiguity_candidate,

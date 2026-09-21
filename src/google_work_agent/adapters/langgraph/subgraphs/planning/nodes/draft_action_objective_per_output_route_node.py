@@ -27,6 +27,7 @@ def draft_action_objective_per_output_route_node(
                 request_intent=projected["request_intent"],
                 work_analysis=projected.get("work_analysis"),
                 evidence=projected["evidence"],
+                retrieval_result=projected.get("retrieval_result"),
                 invoke=invoke,
             )
         )

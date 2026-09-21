@@ -331,8 +331,8 @@ Approval·ExecutionAttempt·Verification Row 미생성. Claim 경쟁 하나만 �
 
 - `run_input.user_request`는 Main State의 읽기 전용 원문이다.
   - Request Understanding은 최초 입력으로 이를 소비하고, Work Analysis/Planning은 06/15가 명시한 최소 typed projection에서만 사용할 수 있다.
-  - Retrieval Query Planner는 현재 Run raw `user_request + RequestIntentV2 + frozen input_routes + retrieval_budget`를 소비한다. 원문은 typed intent의 의미 손실을 보완할 뿐 별도 권위가 아니다.
-  - Retrieval Evidence Selector의 raw `user_request` Projection은 0이며 `RequestIntentV2 + ranked_segments`를 소비한다. 같은 Run의 detail 재평가에서는 유지된 selected Evidence의 bounded projection만 관계 문맥으로 추가할 수 있다.
+  - Retrieval Query Planner는 현재 Run raw `user_request + RequestIntentV3 + frozen input_routes + retrieval_budget`를 소비한다. 원문은 typed intent의 의미 손실을 보완할 뿐 별도 권위가 아니다.
+  - Retrieval Evidence Selector의 raw `user_request` Projection은 0이며 `RequestIntentV3 + ranked_segments`를 소비한다. 같은 Run의 detail 재평가에서는 유지된 selected Evidence의 bounded projection만 관계 문맥으로 추가할 수 있다.
   - 어떤 Subgraph도 raw request를 별도 장기 Memory나 owner-local authority field로 복제하지 않는다.
 
 - `workflow_phase`는 닫힌 Enum, `selected_resource_refs`는 `SelectedResourceRefV1`, Request constraint/ambiguity는 Typed Schema 사용
@@ -1428,7 +1428,7 @@ Experiment Runner는 Dataset·Projection 참조 오류, Holdout 누수, 의도 �
 | upsert/remove 충돌 차단 | 같은 kind를 같은 delta에서 추가/변경과 제거에 동시에 넣으면 Provider 호출 0이다. |
 | unchanged SEARCH 차단 | merge/normalize 결과가 prior effective constraints와 동일하면 `QUERY_UNCHANGED_AFTER_FAILURE`, 새 Retrieval Round 증가 0, Provider 호출 0이다. |
 | Provider authority leakage 차단 | Product Prompt/Planner output에 raw Provider query, RFC3339 provider representation, raw continuation, MCP Arguments가 들어가면 invalid contract다. |
-| determinism | 동일 `RequestIntentV2 + frozen route + prior effective constraints + ConstraintDeltaV2`는 동일 normalized effective constraints와 동일 `query_identity_hash`를 만든다. |
+| determinism | 동일 `RequestIntentV3 + frozen route + prior effective constraints + ConstraintDeltaV2`는 동일 normalized effective constraints와 동일 `query_identity_hash`를 만든다. |
 
 ### Operation·Projection·State
 

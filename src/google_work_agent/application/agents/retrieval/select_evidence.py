@@ -7,7 +7,7 @@ from dataclasses import replace
 from typing import Literal, cast
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.retrieval.contracts.evidence_selection_schema import (
     bind_evidence_selection_schema,
@@ -71,7 +71,7 @@ def select_evidence(
     prompt_ref: PromptReference,
     revision_prompt_ref: PromptReference,
     requested_mode: RequestedModeV1,
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     rag_candidates: list[RagCandidateV1],
     segments: list[SourceSegment],
     retry_budget: RunBudgetV2,
@@ -152,7 +152,7 @@ def _select_ranked_evidence(
     prompt_ref: PromptReference,
     revision_prompt_ref: PromptReference,
     requested_mode: RequestedModeV1,
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     rag_candidates: list[RagCandidateV1],
     segments: list[SourceSegment],
     retry_budget: RunBudgetV2,
@@ -343,7 +343,7 @@ def _select_ranked_evidence(
 
 
 def _receipt_listing_selection(
-    intent: RequestIntentV2,
+    intent: RequestIntentV3,
     candidates: list[RagCandidateV1],
     segments: Sequence[SourceSegment],
     attempts: Sequence[QueryAttemptV1],
@@ -399,7 +399,7 @@ def _receipt_listing_selection(
 
 def _exact_selected_resource_selection(
     *,
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     candidates: list[RagCandidateV1],
     exclusion_obligations: Collection[str],
 ) -> EvidenceSelectionResultV2 | None:
@@ -432,7 +432,7 @@ def _exact_selected_resource_selection(
 
 def _exact_task_calendar_draft_source_selection(
     *,
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     candidates: list[RagCandidateV1],
     segments: Sequence[SourceSegment],
     exclusion_obligations: Collection[str],

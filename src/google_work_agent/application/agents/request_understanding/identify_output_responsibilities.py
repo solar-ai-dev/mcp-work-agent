@@ -25,6 +25,7 @@ from .contracts.request_intent import (
     RequestGoalSemanticValidationError,
     WriteEffectValue,
 )
+from .contracts.work_unit_binding import work_unit_id_schema
 from .identify_effect_prohibitions import prohibited_effects as resolve_prohibited_effects
 
 _WRITE_EFFECT_ORDER: tuple[WriteEffectValue, ...] = (
@@ -90,6 +91,7 @@ def build_output_responsibility_output_schema(
     candidates: Sequence[OutputResponsibilityCandidateV1],
     *,
     prohibited_effects: Collection[WriteEffectValue] = (),
+    work_unit_ids: Sequence[str],
 ) -> OutputSchemaDefinition:
     """Build the sparse requested-output schema with bounded Resource/effect choices."""
 
@@ -106,12 +108,12 @@ def build_output_responsibility_output_schema(
     decisions_schema: dict[str, object] = {
         "type": "array",
         "minItems": 0,
-        "maxItems": len(resource_types),
+        "maxItems": len(resource_types) * len(work_unit_ids),
         "uniqueItems": True,
         "items": {
             "type": "object",
             "additionalProperties": False,
-            "required": ["resource_type", "effect"],
+            "required": ["resource_type", "effect", "work_unit_ids"],
             "properties": {
                 "resource_type": {"enum": resource_types},
                 "effect": {
@@ -123,6 +125,7 @@ def build_output_responsibility_output_schema(
                         ],
                     ]
                 },
+                "work_unit_ids": work_unit_id_schema(work_unit_ids),
             },
             "allOf": [
                 {
@@ -139,18 +142,6 @@ def build_output_responsibility_output_schema(
                 for resource_type in resource_types
             ],
         },
-        "allOf": [
-            {
-                "contains": {
-                    "type": "object",
-                    "properties": {"resource_type": {"const": resource_type}},
-                    "required": ["resource_type"],
-                },
-                "minContains": 0,
-                "maxContains": 1,
-            }
-            for resource_type in resource_types
-        ],
     }
     return OutputSchemaDefinition(
         schema_version="request-output-responsibility-decision-v2",
@@ -172,6 +163,7 @@ def identify_output_responsibilities(
     goal_candidate: Mapping[str, object],
     output_candidates: Sequence[OutputResponsibilityCandidateV1],
     effect_prohibitions: EffectProhibitionDecisionCandidateV1,
+    work_unit_ids: Sequence[str],
     candidate_output: object | None = None,
     failure_record: Mapping[str, object] | None = None,
 ) -> OutputResponsibilityDecisionCandidateV2:
@@ -200,12 +192,14 @@ def identify_output_responsibilities(
         build_output_responsibility_output_schema(
             output_candidates,
             prohibited_effects=prohibited,
+            work_unit_ids=work_unit_ids,
         ),
     )
     return validate_output_responsibility_candidate(
         result.structured_output,
         output_candidates=output_candidates,
         prohibited_effects=prohibited,
+        work_unit_ids=work_unit_ids,
     )
 
 
@@ -214,6 +208,7 @@ def validate_output_responsibility_candidate(
     *,
     output_candidates: Sequence[OutputResponsibilityCandidateV1],
     prohibited_effects: Collection[WriteEffectValue] = (),
+    work_unit_ids: Sequence[str],
 ) -> OutputResponsibilityDecisionCandidateV2:
     conflict_paths = _prohibited_effect_paths(value, prohibited_effects=prohibited_effects)
     if conflict_paths:
@@ -224,6 +219,7 @@ def validate_output_responsibility_candidate(
     schema = build_output_responsibility_output_schema(
         output_candidates,
         prohibited_effects=prohibited_effects,
+        work_unit_ids=work_unit_ids,
     )
     errors = validate_output_schema(value, schema.json_schema)
     if errors:
@@ -232,8 +228,18 @@ def validate_output_responsibility_candidate(
     decisions = cast(Sequence[Mapping[str, object]], root["output_responsibilities"])
     expected = {candidate["resource_type"] for candidate in output_candidates}
     actual = [cast(str, decision["resource_type"]) for decision in decisions]
-    if len(actual) != len(set(actual)) or not set(actual).issubset(expected):
-        raise ValueError("output responsibility decisions must be a unique candidate subset")
+    if not set(actual).issubset(expected):
+        raise ValueError("output responsibility decisions must be a candidate subset")
+    identities = [
+        (
+            decision["resource_type"],
+            decision["effect"],
+            tuple(cast(Sequence[str], decision["work_unit_ids"])),
+        )
+        for decision in decisions
+    ]
+    if len(identities) != len(set(identities)):
+        raise ValueError("output responsibility decisions contain an exact duplicate")
     return cast(OutputResponsibilityDecisionCandidateV2, deepcopy(value))
 
 

@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from typing import TypedDict
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
     RequestUnderstandingValidationError,
     validated_gmail_draft_anchor,
 )
@@ -45,7 +45,7 @@ _DIRECT_READ_TOOLS = frozenset(
 
 def bind_exact_resource_refs(
     *,
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     frozen_routes: Sequence[InputToolRouteV1],
     selected_resources: Sequence[SelectedResourceRef],
 ) -> ExactResourceBindingsV1:

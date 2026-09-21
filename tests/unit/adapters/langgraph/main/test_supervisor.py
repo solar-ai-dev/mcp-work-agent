@@ -28,7 +28,7 @@ from google_work_agent.application.agents.planning.contracts.domain_validation i
 )
 from google_work_agent.application.agents.planning.contracts.planning_result import PlanningResultV2
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     RetrievalResultV1,
@@ -1147,7 +1147,7 @@ def test_cancel_owner__ready_to_finalize__reaches_terminal_message() -> None:
 def _state(
     *,
     workflow_phase: WorkflowPhase = WorkflowPhase.REQUEST_ANALYSIS,
-    request_intent: RequestIntentV2 | None = None,
+    request_intent: RequestIntentV3 | None = None,
     tool_route_plan: ToolRoutePlanV2 | None = None,
     retrieval_result: RetrievalResultV1 | None = None,
     planning_result: PlanningResultV2 | None = None,
@@ -1215,7 +1215,7 @@ def _state(
 
 def _request_intent(
     *, analysis_requirement: Literal["NONE", "REQUIRED"] = "REQUIRED"
-) -> RequestIntentV2:
+) -> RequestIntentV3:
     return {
         "schema_version": 2,
         "meta": {"artifact_id": "intent-1", "revision": 1, "based_on": []},

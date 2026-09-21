@@ -139,7 +139,13 @@ def outline_answer(
     if confirmation_response is not None:
         prompt_input["confirmation_response"] = dict(confirmation_response)
     if retrieval_result is not None:
-        for key in ("coverage", "unresolved_event_dates", "missing_information", "source_statuses"):
+        for key in (
+            "coverage",
+            "unresolved_event_dates",
+            "missing_information",
+            "source_statuses",
+            "evidence_by_work_unit",
+        ):
             if key in retrieval_result:
                 prompt_input[key] = deepcopy(retrieval_result[key])
         if "collection_results" in retrieval_result and retrieval_collections_are_answer_target(

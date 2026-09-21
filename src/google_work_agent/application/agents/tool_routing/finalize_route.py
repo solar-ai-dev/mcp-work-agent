@@ -4,7 +4,7 @@ from collections.abc import Callable, Mapping
 from typing import Literal
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
     StateArtifactRefV1,
 )
 from google_work_agent.application.agents.tool_routing.contracts.route_binding_candidate import (
@@ -29,7 +29,7 @@ SelectedToolMap = Mapping[tuple[str, str], str]
 
 def finalize_route(
     *,
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     binding: RouteBindingCandidateV1,
     selected_tools: SelectedToolMap,
     tool_catalog: SignedToolRegistry,
@@ -92,6 +92,7 @@ def _materialize_output_routes(
                 "effect": bound.effect,
                 "selected_tool_id": selected_tool_id,
                 "reason_codes": reason_codes,
+                "work_unit_ids": list(bound.work_unit_ids),
             }
         )
     return output_routes
@@ -180,6 +181,7 @@ def _same_input_route_semantics(
             tuple(route["allowed_read_tool_ids"]),
             route["required"],
             tuple(route["reason_codes"]),
+            tuple(route["work_unit_ids"]),
         )
 
     return [semantics(route) for route in previous_routes] == [
@@ -187,14 +189,14 @@ def _same_input_route_semantics(
     ]
 
 
-def _request_intent_ref(request_intent: RequestIntentV2) -> StateArtifactRefV1:
+def _request_intent_ref(request_intent: RequestIntentV3) -> StateArtifactRefV1:
     meta = request_intent.get("meta")
     if not isinstance(meta, Mapping):
-        raise ToolRouteValidationError("RequestIntentV2.meta is required")
+        raise ToolRouteValidationError("RequestIntentV3.meta is required")
     artifact_id = meta.get("artifact_id")
     revision = meta.get("revision")
     if not isinstance(artifact_id, str) or not artifact_id or not isinstance(revision, int):
-        raise ToolRouteValidationError("RequestIntentV2.meta is invalid")
+        raise ToolRouteValidationError("RequestIntentV3.meta is invalid")
     return {"artifact_id": artifact_id, "revision": revision}
 
 

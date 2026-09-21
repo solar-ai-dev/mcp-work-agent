@@ -6,6 +6,38 @@ from google_work_agent.application.agents.request_understanding.contracts.reques
 )
 
 
+def _preserve(
+    candidate: RequestGoalCandidateV1,
+    *,
+    request_text: str,
+    entry_mode: str,
+) -> RequestGoalCandidateV1:
+    candidate["requested_work"] = {
+        "work_units": [
+            {
+                "unit_id": "work-1",
+                "request_provenance": [
+                    {
+                        "source": "USER_REQUEST",
+                        "start_offset": 0,
+                        "end_offset": len(request_text),
+                        "source_text": request_text,
+                    }
+                ],
+            }
+        ],
+        "work_relations": [],
+    }
+    candidate.setdefault("effect_prohibitions", [])
+    for constraint in candidate["constraints"]:
+        constraint.setdefault("work_unit_ids", ["work-1"])
+    return operation.preserve_explicit_search_anchors(
+        candidate,
+        request_text=request_text,
+        entry_mode=entry_mode,
+    )
+
+
 def _candidate() -> RequestGoalCandidateV1:
     return {
         "goal": "메일 조회",
@@ -24,7 +56,7 @@ def _candidate() -> RequestGoalCandidateV1:
 def test_semantic_slots__with_request_keywords__remain_model_owned() -> None:
     candidate = _candidate()
 
-    result = operation.preserve_explicit_search_anchors(
+    result = _preserve(
         candidate,
         request_text="9월 첫째주에 김대리에게 온 메일을 분석해줘.",
         entry_mode="AGENT_SEARCH",
@@ -46,7 +78,7 @@ def test_explicit_subject__with_competing_anchors__replaces_only_lexical_values(
         {"kind": "USER_REQUIREMENT", "field": "search_terms", "value": ["검증"]}
     )
 
-    result = operation.preserve_explicit_search_anchors(
+    result = _preserve(
         candidate,
         request_text="제목이 '절대로 존재하지 않는 3/8 검증 메일'인 메일을 찾아줘.",
         entry_mode="AGENT_SEARCH",
@@ -65,7 +97,7 @@ def test_unstated_placeholder__without_source_value__is_removed() -> None:
         {"kind": "USER_REQUIREMENT", "field": "required_information", "value": ["N/A"]}
     )
 
-    result = operation.preserve_explicit_search_anchors(
+    result = _preserve(
         candidate,
         request_text="관련 메일을 찾아줘.",
         entry_mode="AGENT_SEARCH",
@@ -85,7 +117,7 @@ def test_inferred_anchor__with_source_spacing__restores_exact_text() -> None:
         "value": ["김 대리"],
     }
 
-    result = operation.preserve_explicit_search_anchors(
+    result = _preserve(
         candidate,
         request_text="오로라 현장의 김대리와 잡힌 일정을 메일에서 확인해줘.",
         entry_mode="AGENT_SEARCH",
@@ -113,7 +145,7 @@ def test_business_concept__unbound_paraphrase__falls_back_to_exact_request_meani
         ]
     )
 
-    result = operation.preserve_explicit_search_anchors(
+    result = _preserve(
         candidate,
         request_text="오로라 참여자의 연수 일정을 확인해줘.",
         entry_mode="AGENT_SEARCH",
@@ -136,7 +168,7 @@ def test_business_concept__exact_source_span__remains_search_hypothesis() -> Non
         }
     )
 
-    result = operation.preserve_explicit_search_anchors(
+    result = _preserve(
         candidate,
         request_text="오로라 참여자의 연수 일정을 확인해줘.",
         entry_mode="AGENT_SEARCH",
@@ -153,15 +185,20 @@ def test_project_extractive_source_goal__with_unbound_model_meaning__removes_exe
         "goal": "Atlas 출시 일정과 담당자를 확인한다",
         "completion_conditions": ["출시 날짜를 답한다"],
         "constraints": {
-            "search_terms": ["Atlas"],
-            "business_concepts": ["출시"],
+            "search_terms": [{"value": "Atlas", "work_unit_ids": ["work-1"]}],
+            "business_concepts": [{"value": "출시", "work_unit_ids": ["work-1"]}],
             "person": [],
             "sender": [],
             "recipient": [],
             "subject": [],
             "period": [],
-            "coverage_requirement": "LIMITED_ITEMS",
-            "additional_constraints": [{"field": "date", "value": "now"}],
+            "coverage_requirement": {
+                "value": "LIMITED_ITEMS",
+                "work_unit_ids": ["work-1"],
+            },
+            "additional_constraints": [
+                {"field": "date", "value": "now", "work_unit_ids": ["work-1"]}
+            ],
         },
         "analysis_requirement": "NONE",
     }
@@ -173,7 +210,9 @@ def test_project_extractive_source_goal__with_unbound_model_meaning__removes_exe
     assert result["completion_conditions"] == []
     constraints = result["constraints"]
     assert isinstance(constraints, dict)
-    assert constraints["search_terms"] == ["Atlas"]
+    assert constraints["search_terms"] == [
+        {"value": "Atlas", "work_unit_ids": ["work-1"]}
+    ]
     assert constraints["business_concepts"] == []
     assert constraints["additional_constraints"] == []
 
@@ -184,7 +223,7 @@ def test_explicit_search_anchor__when_repeated__remains_source_bound() -> None:
         {"kind": "USER_REQUIREMENT", "field": "search_terms", "value": ["Nimbus"]}
     )
 
-    result = operation.preserve_explicit_search_anchors(
+    result = _preserve(
         candidate,
         request_text="Nimbus 출시와 Nimbus 일정 변경을 메일에서 확인해줘.",
         entry_mode="AGENT_SEARCH",
@@ -202,7 +241,7 @@ def test_explicit_relative_period__without_year__preserves_source_text() -> None
         "value": ["2025-09-01 ~ 2025-09-07"],
     }
 
-    result = operation.preserve_explicit_search_anchors(
+    result = _preserve(
         candidate,
         request_text="오로라 참여자의 9월 첫째주 연수 날짜를 메일에서 확인해줘.",
         entry_mode="AGENT_SEARCH",
@@ -217,7 +256,7 @@ def test_non_gmail_candidate__during_anchor_preservation__is_unchanged() -> None
     candidate = _candidate()
     candidate["requested_resource_hints"] = ["TASK"]
 
-    assert operation.preserve_explicit_search_anchors(
+    assert _preserve(
         candidate,
         request_text="태스크를 보여줘.",
         entry_mode="AGENT_SEARCH",
@@ -229,14 +268,19 @@ def test_github_candidate__with_explicit_repository__restores_identity_from_requ
     candidate["constraints"] = []
     candidate["requested_resource_hints"] = ["GITHUB_ISSUE"]
 
-    result = operation.preserve_explicit_search_anchors(
+    result = _preserve(
         candidate,
         request_text="List open issues in acme/search-save.",
         entry_mode="AGENT_SEARCH",
     )
 
     assert result["constraints"] == [
-        {"kind": "RESOURCE", "field": "repository", "value": "acme/search-save"}
+        {
+            "kind": "RESOURCE",
+            "field": "repository",
+            "value": "acme/search-save",
+            "work_unit_ids": ["work-1"],
+        }
     ]
 
 
@@ -245,7 +289,7 @@ def test_github_candidate__with_bare_project_name__does_not_infer_repository() -
     candidate["constraints"] = []
     candidate["requested_resource_hints"] = ["GITHUB_ISSUE"]
 
-    result = operation.preserve_explicit_search_anchors(
+    result = _preserve(
         candidate,
         request_text="search-save 저장소의 열린 이슈를 조회해줘.",
         entry_mode="AGENT_SEARCH",
@@ -276,7 +320,7 @@ def test_gmail_draft_source_update__with_quoted_anchor__separates_status_scope()
     candidate["requested_effect_hints"] = ["UPDATE"]
     candidate["requested_resource_hints"] = ["GMAIL_DRAFT"]
 
-    result = operation.preserve_explicit_search_anchors(
+    result = _preserve(
         candidate,
         request_text=request,
         entry_mode="AGENT_SEARCH",
@@ -303,7 +347,7 @@ def test_gmail_draft_source__with_status_word_as_subject__preserves_lexical_valu
     ]
     candidate["requested_resource_hints"] = ["GMAIL_DRAFT"]
 
-    result = operation.preserve_explicit_search_anchors(
+    result = _preserve(
         candidate,
         request_text=request,
         entry_mode="AGENT_SEARCH",
@@ -333,7 +377,7 @@ def test_gmail_source__with_inferred_sent_scope_from_business_verb__removes_scop
     ]
     candidate["requested_resource_hints"] = ["GMAIL_THREAD", "GMAIL_MESSAGE"]
 
-    result = operation.preserve_explicit_search_anchors(
+    result = _preserve(
         candidate,
         request_text=request,
         entry_mode="AGENT_SEARCH",
@@ -359,7 +403,7 @@ def test_gmail_source__with_explicit_sent_mailbox__preserves_scope() -> None:
         },
     ]
 
-    result = operation.preserve_explicit_search_anchors(
+    result = _preserve(
         candidate,
         request_text=request,
         entry_mode="AGENT_SEARCH",
@@ -378,14 +422,19 @@ def test_gmail_draft_candidate__with_explicit_id__restores_exact_anchor() -> Non
     candidate["requested_effect_hints"] = ["UPDATE"]
     candidate["requested_resource_hints"] = ["GMAIL_DRAFT"]
 
-    result = operation.preserve_explicit_search_anchors(
+    result = _preserve(
         candidate,
         request_text="Gmail 초안 ID r976635311795334843를 수정해줘.",
         entry_mode="AGENT_SEARCH",
     )
 
     assert result["constraints"] == [
-        {"kind": "RESOURCE", "field": "draft_id", "value": "r976635311795334843"}
+        {
+            "kind": "RESOURCE",
+            "field": "draft_id",
+            "value": "r976635311795334843",
+            "work_unit_ids": ["work-1"],
+        }
     ]
 
 
@@ -395,7 +444,7 @@ def test_gmail_draft_candidate__without_explicit_id__does_not_infer_anchor() -> 
     candidate["requested_effect_hints"] = ["UPDATE"]
     candidate["requested_resource_hints"] = ["GMAIL_DRAFT"]
 
-    result = operation.preserve_explicit_search_anchors(
+    result = _preserve(
         candidate,
         request_text="방금 만든 Gmail 초안을 수정해줘.",
         entry_mode="AGENT_SEARCH",
@@ -410,7 +459,7 @@ def test_gmail_draft_candidate__draft_word_in_subject__is_not_an_identifier() ->
     candidate["requested_effect_hints"] = ["UPDATE"]
     candidate["requested_resource_hints"] = ["GMAIL_DRAFT"]
 
-    result = operation.preserve_explicit_search_anchors(
+    result = _preserve(
         candidate,
         request_text=(
             "Gmail 초안 ID draft-123를 수정하고 제목은 "
@@ -420,5 +469,10 @@ def test_gmail_draft_candidate__draft_word_in_subject__is_not_an_identifier() ->
     )
 
     assert result["constraints"] == [
-        {"kind": "RESOURCE", "field": "draft_id", "value": "draft-123"}
+        {
+            "kind": "RESOURCE",
+            "field": "draft_id",
+            "value": "draft-123",
+            "work_unit_ids": ["work-1"],
+        }
     ]

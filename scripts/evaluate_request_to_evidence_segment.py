@@ -30,7 +30,7 @@ from google_work_agent.application.agents.request_understanding import (
     identify_source_dependencies as source_ops,
 )
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.request_understanding.detect_ambiguity import (
     detect_ambiguity,
@@ -163,7 +163,7 @@ def main() -> None:
         for name in prompt_names
     }
     records: list[dict[str, object]] = []
-    overrides: dict[str, tuple[RequestIntentV2, ToolRoutePlanV2]] = {}
+    overrides: dict[str, tuple[RequestIntentV3, ToolRoutePlanV2]] = {}
     for case_id in arguments.case:
         database = (
             arguments.checkpoint_root

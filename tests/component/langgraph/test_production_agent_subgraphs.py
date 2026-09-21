@@ -147,6 +147,8 @@ class _ComponentInferencePort:
         projection = cast(Mapping[str, object], base)
         self.inputs.setdefault(prompt_id, []).append(dict(projection))
         output = self._response(prompt_id, projection)
+        if prompt_id == "request_understanding.identify_goal":
+            _bind_component_goal_constraints(output, output_schema_ref)
         if self.github_retrieval:
             assert not validate_output_schema(output, output_schema_ref.json_schema)
         return StructuredInferenceResultV1(
@@ -163,6 +165,26 @@ class _ComponentInferencePort:
 
     def _response(self, prompt_id: str, projection: Mapping[str, object]) -> dict[str, object]:
         has_confirmation = isinstance(projection.get("confirmation_response"), Mapping)
+        if prompt_id == "request_understanding.identify_requested_work":
+            user_request = str(projection["user_request"])
+            return {
+                "schema_version": 1,
+                "work_units": [{"request_spans": [user_request]}],
+            }
+        if prompt_id == "request_understanding.identify_work_relations":
+            return {
+                "schema_version": 1,
+                "relation_decisions": [
+                    {
+                        "source_work_unit_id": pair["source_work_unit_id"],
+                        "target_work_unit_id": pair["target_work_unit_id"],
+                        "disposition": "NONE",
+                    }
+                    for pair in cast(
+                        Sequence[Mapping[str, object]], projection["candidate_pairs"]
+                    )
+                ],
+            }
         if prompt_id == "request_understanding.identify_goal":
             if self.cross_source_draft:
                 return {
@@ -233,6 +255,7 @@ class _ComponentInferencePort:
                 "analysis_requirement": "NONE",
             }
         if prompt_id == "request_understanding.identify_effect_prohibitions":
+            work_unit_ids = _projection_work_unit_ids(projection)
             return {
                 "effect_prohibitions": [
                     {
@@ -242,6 +265,7 @@ class _ComponentInferencePort:
                             if self.cross_source_draft and candidate["effect"] == "SEND"
                             else "NOT_FORBIDDEN"
                         ),
+                        "work_unit_ids": work_unit_ids,
                     }
                     for candidate in cast(
                         Sequence[Mapping[str, object]], projection["effect_candidates"]
@@ -844,13 +868,31 @@ def _state(
 
 def _intent() -> dict[str, object]:
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "goal": "summarize status",
         "completion_conditions": ["return a result"],
         "constraints": [],
         "requested_effect_hints": ["READ"],
         "requested_resource_hints": [],
+        "resource_responsibilities": {"source_reads": [], "outputs": []},
         "analysis_requirement": "NONE",
+        "effect_prohibitions": [],
+        "requested_work": {
+            "work_units": [
+                {
+                    "unit_id": "work-1",
+                    "request_provenance": [
+                        {
+                            "source": "USER_REQUEST",
+                            "start_offset": 0,
+                            "end_offset": 16,
+                            "source_text": "summarize status",
+                        }
+                    ],
+                }
+            ],
+            "work_relations": [],
+        },
         "ambiguity": {
             "requires_confirmation": False,
             "reason_codes": [],
@@ -871,6 +913,7 @@ def _answer_route_plan(*, with_input_route: bool = False) -> dict[str, object]:
                 "allowed_read_tool_ids": ["gmail_search_threads"],
                 "required": True,
                 "reason_codes": ["USER_REQUEST"],
+                "work_unit_ids": ["work-1"],
             }
         )
     based_on = [{"artifact_id": "intent-1", "revision": 1}]
@@ -907,6 +950,7 @@ def _task_create_route_plan() -> dict[str, object]:
                 "allowed_read_tool_ids": ["tasks_list_tasks"],
                 "required": True,
                 "reason_codes": ["POLICY_TASK_DUPLICATE_CHECK"],
+                "work_unit_ids": ["work-1"],
             }
         ],
     }
@@ -926,6 +970,7 @@ def _task_create_route_plan() -> dict[str, object]:
                 "effect": "CREATE",
                 "selected_tool_id": "tasks_create_task",
                 "reason_codes": ["USER_REQUEST"],
+                "work_unit_ids": ["work-1"],
             }
         ],
     }
@@ -951,6 +996,7 @@ def _container_read_route_plan(resource_type: str) -> dict[str, object]:
                 ],
                 "required": True,
                 "reason_codes": ["USER_REQUEST"],
+                "work_unit_ids": ["work-1"],
             }
         ],
     }
@@ -974,6 +1020,7 @@ def _task_and_calendar_read_route_plan() -> dict[str, object]:
                 "allowed_read_tool_ids": ["tasks_list_tasks"],
                 "required": True,
                 "reason_codes": ["USER_REQUEST"],
+                "work_unit_ids": ["work-1"],
             },
             {
                 "route_id": "calendar-route",
@@ -982,6 +1029,7 @@ def _task_and_calendar_read_route_plan() -> dict[str, object]:
                 "allowed_read_tool_ids": ["calendar_list_events"],
                 "required": True,
                 "reason_codes": ["USER_REQUEST"],
+                "work_unit_ids": ["work-1"],
             },
         ],
     }
@@ -1003,6 +1051,7 @@ def _retrieval_result() -> dict[str, object]:
         "excluded_segment_ids": [],
         "source_resource_refs": [],
         "source_statuses": [],
+        "evidence_by_work_unit": [],
         "availability_results": [],
         "missing_information": [],
         "retrieval_rounds": 0,
@@ -1027,6 +1076,7 @@ def _source_dependency_decisions(
     source_types: Mapping[str, tuple[list[str], str]] | None = None,
 ) -> dict[str, object]:
     sources = source_types or {}
+    work_unit_ids = _projection_work_unit_ids(projection)
     decisions: list[dict[str, object]] = []
     candidates = cast(list[Mapping[str, object]], projection["source_candidates"])
     for candidate in candidates:
@@ -1039,6 +1089,7 @@ def _source_dependency_decisions(
                     "dependency": "SOURCE_REQUIRED",
                     "required_information": source[0],
                     "target_scope": source[1],
+                    "work_unit_ids": work_unit_ids,
                 }
             )
         else:
@@ -1052,17 +1103,79 @@ def _output_responsibility_decisions(
     output_types: Mapping[str, str] | None = None,
 ) -> dict[str, object]:
     outputs = output_types or {}
+    work_unit_ids = _projection_work_unit_ids(projection)
     candidates = cast(list[Mapping[str, object]], projection["output_candidates"])
     return {
         "output_responsibilities": [
             {
                 "resource_type": candidate["resource_type"],
                 "effect": outputs[cast(str, candidate["resource_type"])],
+                "work_unit_ids": work_unit_ids,
             }
             for candidate in candidates
             if candidate["resource_type"] in outputs
         ]
     }
+
+
+def _projection_work_unit_ids(projection: Mapping[str, object]) -> list[str]:
+    requested_work = cast(Mapping[str, object], projection["requested_work"])
+    units = cast(Sequence[Mapping[str, object]], requested_work["work_units"])
+    return [str(unit["unit_id"]) for unit in units]
+
+
+def _bind_component_goal_constraints(
+    output: dict[str, object], output_schema: OutputSchemaDefinition
+) -> None:
+    properties = output_schema.json_schema.get("properties")
+    if not isinstance(properties, Mapping):
+        return
+    constraints_schema = properties.get("constraints")
+    if not isinstance(constraints_schema, Mapping):
+        return
+    allowed_slots = constraints_schema.get("properties")
+    raw_constraints = output.get("constraints")
+    if not isinstance(allowed_slots, Mapping) or not isinstance(raw_constraints, Mapping):
+        return
+    coverage_schema = allowed_slots.get("coverage_requirement")
+    coverage_properties = (
+        coverage_schema.get("properties")
+        if isinstance(coverage_schema, Mapping)
+        else None
+    )
+    work_unit_schema = (
+        coverage_properties.get("work_unit_ids")
+        if isinstance(coverage_properties, Mapping)
+        else None
+    )
+    work_unit_items = (
+        work_unit_schema.get("items") if isinstance(work_unit_schema, Mapping) else None
+    )
+    work_unit_ids = (
+        list(cast(Sequence[str], work_unit_items["enum"]))
+        if isinstance(work_unit_items, Mapping)
+        and isinstance(work_unit_items.get("enum"), list)
+        else ["work-1"]
+    )
+    bound: dict[str, object] = {}
+    for field in allowed_slots:
+        if field == "coverage_requirement":
+            bound[field] = {
+                "value": raw_constraints.get(field, "NOT_COLLECTION"),
+                "work_unit_ids": work_unit_ids,
+            }
+        elif field == "additional_constraints":
+            bound[field] = [
+                {**dict(item), "work_unit_ids": work_unit_ids}
+                for item in cast(Sequence[Mapping[str, object]], raw_constraints.get(field, []))
+            ]
+        else:
+            values = raw_constraints.get(field, [])
+            bound[field] = [
+                {"value": value, "work_unit_ids": work_unit_ids}
+                for value in cast(Sequence[object], values)
+            ]
+    output["constraints"] = bound
 
 
 def _confirm_early(_state: object) -> tuple[None, dict[str, object]]:
@@ -1092,6 +1205,7 @@ def test_request_understanding__compiled_normal_path__produces_intent() -> None:
 
     assert result["request_intent"]["goal"] == "summarize status"
     assert llm.calls == [
+        "request_understanding.identify_requested_work",
         "request_understanding.identify_goal",
         "request_understanding.identify_effect_prohibitions",
         "request_understanding.identify_source_dependencies",
@@ -1191,14 +1305,22 @@ def test_request_understanding__compiled_cross_source_draft__keeps_sources_and_s
                 "resource_type": "TASK",
                 "required_information": ["work status"],
                 "target_scope": "CRITERIA",
+                "work_unit_ids": ["work-1"],
             },
             {
                 "resource_type": "CALENDAR_EVENT",
                 "required_information": ["schedule"],
                 "target_scope": "CRITERIA",
+                "work_unit_ids": ["work-1"],
             },
         ],
-        "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
+        "outputs": [
+            {
+                "resource_type": "GMAIL_DRAFT",
+                "effect": "CREATE",
+                "work_unit_ids": ["work-1"],
+            }
+        ],
     }
     source_input = llm.inputs["request_understanding.identify_source_dependencies"][0]
     source_candidates_input = cast(
@@ -1223,7 +1345,13 @@ def test_request_understanding__compiled_cross_source_draft__keeps_sources_and_s
         "TASK",
         "CALENDAR_EVENT",
     ]
-    assert source_status_input["outputs"] == [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}]
+    assert source_status_input["outputs"] == [
+        {
+            "resource_type": "GMAIL_DRAFT",
+            "effect": "CREATE",
+            "work_unit_ids": ["work-1"],
+        }
+    ]
 
 
 def test_tool_routing__compiled_normal_path__produces_answer_route() -> None:
@@ -1264,13 +1392,26 @@ def test_tool_routing__compiled_cross_source_draft__does_not_add_freebusy() -> N
             "requested_resource_hints": ["TASK", "CALENDAR_EVENT", "GMAIL_DRAFT"],
             "resource_responsibilities": {
                 "source_reads": [
-                    {"resource_type": "TASK", "required_information": ["work status"]},
+                    {
+                        "resource_type": "TASK",
+                        "required_information": ["work status"],
+                        "target_scope": "CRITERIA",
+                        "work_unit_ids": ["work-1"],
+                    },
                     {
                         "resource_type": "CALENDAR_EVENT",
                         "required_information": ["schedule"],
+                        "target_scope": "CRITERIA",
+                        "work_unit_ids": ["work-1"],
                     },
                 ],
-                "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
+                "outputs": [
+                    {
+                        "resource_type": "GMAIL_DRAFT",
+                        "effect": "CREATE",
+                        "work_unit_ids": ["work-1"],
+                    }
+                ],
             },
         },
     )
@@ -1312,7 +1453,13 @@ def test_tool_routing__compiled_multiple_registry_candidates__preserves_bound_ro
             "requested_resource_hints": ["GITHUB_ISSUE"],
             "resource_responsibilities": {
                 "source_reads": [],
-                "outputs": [{"resource_type": "GITHUB_ISSUE", "effect": "UPDATE"}],
+                "outputs": [
+                    {
+                        "resource_type": "GITHUB_ISSUE",
+                        "effect": "UPDATE",
+                        "work_unit_ids": ["work-1"],
+                    }
+                ],
             },
         },
     )
@@ -1829,6 +1976,7 @@ def test_retrieval__compiled_cache_rehydrate__preserves_bounded_segment_selectio
             "allowed_read_tool_ids": ["tasks_list_tasks"],
             "required": True,
             "reason_codes": ["USER_REQUEST"],
+            "work_unit_ids": ["work-1"],
         },
         {
             "route_id": "task-list-route",
@@ -1837,6 +1985,7 @@ def test_retrieval__compiled_cache_rehydrate__preserves_bounded_segment_selectio
             "allowed_read_tool_ids": ["tasks_list_tasklists"],
             "required": True,
             "reason_codes": ["RESOURCE_DISCOVERY"],
+            "work_unit_ids": ["work-1"],
         },
         {
             "route_id": "calendar-route",
@@ -1845,6 +1994,7 @@ def test_retrieval__compiled_cache_rehydrate__preserves_bounded_segment_selectio
             "allowed_read_tool_ids": ["calendar_list_calendars"],
             "required": True,
             "reason_codes": ["RESOURCE_DISCOVERY"],
+            "work_unit_ids": ["work-1"],
         },
     ]
     state["tool_route_plan"] = cast(Any, route_plan)
@@ -2395,6 +2545,7 @@ def test_retrieval__route_reconsideration__preserves_inflight_query_facts() -> N
         (),
         "ANSWER",
         "REQUIRED",
+        input_work_unit_bindings=(("GMAIL_THREAD", ("work-1",)),),
     )
     first_binding = bind_registry_candidates(
         candidate=semantic,
@@ -3325,6 +3476,7 @@ def _github_intent(*, explicit_repository: bool) -> dict[str, object]:
                     "start_offset": 0,
                     "end_offset": 9,
                 },
+                "work_unit_ids": ["work-1"],
             }
         ]
     return intent
@@ -3341,6 +3493,7 @@ def _github_route_plan() -> dict[str, object]:
             "allowed_read_tool_ids": ["github_list_issues"],
             "required": True,
             "reason_codes": ["USER_REQUEST"],
+            "work_unit_ids": ["work-1"],
         }
     ]
     return plan
@@ -3406,6 +3559,7 @@ def test_retrieval__github_repository_authority__reaches_connector_read(
             "resource_type": "github_issue",
             "status": "COMPLETE",
             "evidence_refs": result["retrieval_result"]["evidence_refs"],
+            "work_unit_ids": ["work-1"],
             "observed_resource_count": 2,
             "checked_read_count": 1,
             "known_scope_count": 1,

@@ -8,7 +8,7 @@ from typing import NotRequired, TypedDict, cast
 from zoneinfo import ZoneInfo
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
     is_fully_qualified_repository,
 )
 from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
@@ -57,7 +57,7 @@ class ExecuteReadInput(TypedDict):
     now_ms: int
     prior_query_attempts: list[QueryAttemptV1]
     repository_access: NotRequired[GetRepositoryAccessHandler | None]
-    request_intent: NotRequired[RequestIntentV2 | None]
+    request_intent: NotRequired[RequestIntentV3 | None]
     selected_resources: NotRequired[Sequence[SelectedResourceRef]]
     durable_budget_accountant: NotRequired[
         Callable[[Callable[[Mapping[str, object]], Mapping[str, object]]], Mapping[str, object]]

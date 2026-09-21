@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from math import log
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.retrieval.contracts.query_plan import SourceFetchPlanV1
 from google_work_agent.application.agents.retrieval.normalize_segments import SourceSegment
@@ -41,7 +41,7 @@ DEFAULT_BM25_CANDIDATE_CONFIG = BM25CandidateConfig()
 def bm25_rag_retrieve_rerank(
     segments: list[SourceSegment],
     *,
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     source_plans: Sequence[SourceFetchPlanV1],
     top_k: int,
     config: RagScoringConfig = DEFAULT_RAG_SCORING_CONFIG,

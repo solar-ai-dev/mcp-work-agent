@@ -19,7 +19,7 @@ from evaluation.dataset_v8 import DEFAULT_PROVIDER_FIXTURE_PATH, load_cases
 from scripts.serve_canonical_v8_product import _case_resources, _normalize_provider_resources
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.retrieval.normalize_segments import (
     ContextBudget,
@@ -78,7 +78,7 @@ def _rank(
     top_k: int,
     use_bm25: bool,
 ) -> dict[str, object]:
-    intent = cast(RequestIntentV2, {"goal": request, "constraints": []})
+    intent = cast(RequestIntentV3, {"goal": request, "constraints": []})
     started = time.perf_counter()
     ranker = bm25_rag_retrieve_rerank if use_bm25 else rag_retrieve_rerank
     ranked = ranker(

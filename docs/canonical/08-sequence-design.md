@@ -384,8 +384,8 @@ sequenceDiagram
 | 순서 | 호출·처리 | 반환·저장 |
 | --- | --- | --- |
 | 1 | Supervisor → Application `start_analysis` → Domain `StartAnalysis(expected_version)` | Run `CREATED → ANALYZING` + Receipt/Audit UoW COMMIT(`applied=true`) 뒤 Supervisor에 준비 결과 반환. |
-| 2 | Supervisor → Request Understanding: Request Projection + invocation_id | goal/ambiguity PromptRef의 RequestIntent candidate를 Schema·Contract 검증하고 bounded repair 후 `RequestIntentV2 + disposition` 반환. `REQUEST_UNDERSTANDING` checkpoint 저장. |
-| 3 | Supervisor → Tool Route: `RequestIntentV2` | 의미 판단으로 IN/OUT Resource·Effect candidate 준비. |
+| 2 | Supervisor → Request Understanding: Request Projection + invocation_id | 업무 경계·semantic item binding·relation과 goal/ambiguity candidate를 Schema·Contract 검증하고 bounded repair 후 `RequestIntentV3 + disposition` 반환. `REQUEST_UNDERSTANDING` checkpoint 저장. |
+| 3 | Supervisor → Tool Route: `RequestIntentV3` | 검증된 Source/Output item을 WorkUnit binding과 함께 IN/OUT Route로 결정적 투영. |
 | 4 | Tool Route의 결정적 `tool_routing.resolve_policy_preconditions` | TASK CREATE에는 Tasks duplicate READ, CALENDAR CREATE에는 Event/FreeBusy conflict READ 보강. |
 | 5 | 필수 READ가 사용자 지정 범위 밖이면 `SCOPE_EXPANSION_REQUIRED` 확인 | 추가 Source·기간·Resource·이유를 제시한다. 실제 사용자 승인/거절을 Confirmation Controller가 검증하고 `PolicyConfirmationReceiptV1 + POLICY_CONFIRMATION_RECORDED`를 저장한 뒤 Tool Route owner checkpoint에서 재개한다. 공통 Confirmation·handoff 경로를 따른다. |
 | 6 | 확인된 범위 안에서 결정적 Registry candidate binding | eligible candidate가 여러 개일 때만 `select_tool` PromptRef로 선택한다. heuristic shortlist는 금지한다. |
@@ -442,7 +442,7 @@ facts를 추출하고 필요한 entity·temporal/dependency·duplicate/conflict 
 
 Application `begin_planning` → Domain `BeginPlanning(expected_version)` → Run `ANALYZING | RETRIEVING → PLANNING` UoW Commit 후 Planning을 호출한다. 이미 `PLANNING`인 revision에서는 같은 Command를 반복 적용하지 않는다.
 
-입력은 `User Request + Intent + ToolRoutePlanV2.output_plan + optional Analysis + Evidence refs`다.
+입력은 `User Request + RequestIntentV3 + ToolRoutePlanV2.output_plan + optional Analysis + Evidence refs`다. ACTION은 route-local WorkUnit semantic projection을 소비하고, ANSWER는 WorkUnit별 Evidence binding을 포함한 단일 호출을 유지한다.
 
 | 계획 분기 | 반환까지의 순서 |
 | --- | --- |
@@ -489,8 +489,8 @@ sequenceDiagram
     APP->>SUP: post-commit schedule_run_execution(handoff_id)<br>RunInputV1.selected_resource_refs
     SUP->>REQ: RESOURCE_SELECTED Input Projection
     REQ->>LLM: goal/ambiguity PromptRef
-    LLM-->>REQ: RequestIntentV2
-    REQ-->>SUP: RequestIntentV2
+    LLM-->>REQ: RequestIntentV3 candidates
+    REQ-->>SUP: validated RequestIntentV3
 
     SUP->>ROUTE: Intent + selected resource hints + Registry
     ROUTE-->>SUP: ToolRoutePlanV2<br>선택 Resource를 IN Route에 고정
@@ -580,14 +580,14 @@ sequenceDiagram
         SUP->>RET: RetrievalRequiredV1 projection
     else current InputRoutePlan has no route / new Route required
         ANA-->>SUP: ROUTE_RECONSIDERATION_REQUIRED + RouteReconsiderationRequiredV1
-        SUP->>ROUTE: current RequestIntentV2 + route reconsideration signal
+        SUP->>ROUTE: current RequestIntentV3 + route reconsideration signal
     end
     REV-->>SUP: RETRIEVE_MORE 가능
     alt current InputRoutePlan has route
         SUP->>RET: RetrievalRequiredV1 projection from EvidenceGapV1
     else current InputRoutePlan has no route / new Route required
         REV-->>SUP: ROUTE_RECONSIDERATION + RouteReconsiderationRequiredV1
-        SUP->>ROUTE: current RequestIntentV2 + route reconsideration signal
+        SUP->>ROUTE: current RequestIntentV3 + route reconsideration signal
     end
 ```
 

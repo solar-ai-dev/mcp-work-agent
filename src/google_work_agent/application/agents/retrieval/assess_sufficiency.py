@@ -11,7 +11,7 @@ from typing import cast
 
 import google_work_agent.application.agents.retrieval.contracts.schema_validation as _schema
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.retrieval import (
     gmail_metadata_collection_is_answer_target as gmail_metadata_collection,
@@ -83,14 +83,14 @@ from google_work_agent.ports.system.contracts.workflow_handoff import RequestedM
 READ_ANSWER_CALL_RESERVE = 4
 
 
-def _answer_call_reserve(intent: RequestIntentV2) -> int:
+def _answer_call_reserve(intent: RequestIntentV3) -> int:
     # Seven Work Analysis semantic operations precede Planning when required.
     return READ_ANSWER_CALL_RESERVE + (7 if intent.get("analysis_requirement") == "REQUIRED" else 0)
 
 
 def deterministic_sufficiency(
     *,
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     tool_route_plan: ToolRoutePlanV2 | None,
     acquisition_result: AcquisitionResultV1,
     evidence_drafts: list[EvidenceDraftV1],
@@ -222,7 +222,7 @@ def deterministic_sufficiency(
 
 def _deterministic_source_sufficiency(
     *,
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     tool_route_plan: ToolRoutePlanV2 | None,
     acquisition_result: AcquisitionResultV1,
     evidence_drafts: list[EvidenceDraftV1],
@@ -341,7 +341,7 @@ def _deterministic_source_sufficiency(
 
 def _is_complete_task_calendar_draft_source(
     *,
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     tool_route_plan: ToolRoutePlanV2 | None,
     acquisition_result: AcquisitionResultV1,
     evidence_drafts: Sequence[EvidenceDraftV1],
@@ -409,7 +409,7 @@ def _is_complete_task_calendar_draft_source(
 
 def _is_complete_gmail_metadata_collection(
     *,
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     tool_route_plan: ToolRoutePlanV2 | None,
     acquisition_result: AcquisitionResultV1,
     confirmation_response: ConfirmationResponseProjectionV1 | None,
@@ -438,7 +438,7 @@ def _is_complete_gmail_metadata_collection(
 
 def _is_complete_gmail_thread_reply(
     *,
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     tool_route_plan: ToolRoutePlanV2 | None,
     acquisition_result: AcquisitionResultV1,
     evidence_drafts: list[EvidenceDraftV1],
@@ -497,7 +497,7 @@ def _is_complete_gmail_thread_reply(
 
 
 def _is_complete_selected_resource_action(
-    intent: RequestIntentV2,
+    intent: RequestIntentV3,
     plan: ToolRoutePlanV2 | None,
     acquisition: AcquisitionResultV1,
     evidence: list[EvidenceDraftV1],
@@ -553,7 +553,7 @@ def assess_sufficiency(
     llm_runtime: StructuredInferencePort,
     prompt_ref: PromptReference,
     requested_mode: RequestedModeV1,
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     tool_route_plan: ToolRoutePlanV2 | None,
     acquisition_result: AcquisitionResultV1,
     evidence_drafts: list[EvidenceDraftV1],
@@ -658,7 +658,7 @@ def assess_sufficiency(
 def _require_unread_exhaustive_collection_pages(
     result: SufficiencyResultV2,
     *,
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     tool_route_plan: ToolRoutePlanV2 | None,
     read_result_summaries: Sequence[Mapping[str, object]],
 ) -> SufficiencyResultV2:
@@ -713,7 +713,7 @@ def _require_unread_exhaustive_collection_pages(
 
 def _guard_event_year(
     result: SufficiencyResultV2,
-    intent: RequestIntentV2,
+    intent: RequestIntentV3,
     evidence: Sequence[EvidenceDraftV1],
     attempts: Sequence[QueryAttemptV1],
 ) -> SufficiencyResultV2:
@@ -938,7 +938,7 @@ def _route_summaries(
 
 def _is_complete_selected_gmail_read(
     *,
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     tool_route_plan: ToolRoutePlanV2 | None,
     acquisition_result: AcquisitionResultV1,
     evidence_drafts: list[EvidenceDraftV1],
@@ -1342,7 +1342,7 @@ def _validate_sufficiency_issue(value: object, path: str) -> SufficiencyIssueV2:
 def enforce_sufficiency_guard(
     sufficiency_result: SufficiencyResultV2,
     *,
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     retry_budget: RunBudgetV2,
     evidence_supported_partial_possible: bool,
 ) -> SufficiencyResultV2:
@@ -1409,7 +1409,7 @@ def enforce_sufficiency_guard(
 def _require_gmail_candidate_details(
     result: SufficiencyResultV2,
     *,
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     tool_route_plan: ToolRoutePlanV2 | None,
     evidence_drafts: list[EvidenceDraftV1],
     detail_candidate_refs: Collection[str] = (),
@@ -1493,12 +1493,9 @@ def _require_gmail_candidate_details(
         "resolution_source": "GOOGLE",
         "safety_critical": False,
         "reason_codes": ["CANDIDATE_DETAIL_REQUIRED"],
-        **(
-            {"route_id": gmail_detail_routes[0]["route_id"]}
-            if len(gmail_detail_routes) == 1
-            else {}
-        ),
     }
+    if len(gmail_detail_routes) == 1:
+        issue["route_id"] = gmail_detail_routes[0]["route_id"]
     return {
         "schema_version": 2,
         "status": result["status"],
@@ -1516,7 +1513,7 @@ def _require_gmail_candidate_details(
 def authorize_retrieval_followup(
     sufficiency_result: SufficiencyResultV2,
     *,
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     retry_budget: RunBudgetV2,
     evidence_supported_partial_possible: bool,
     can_acquire_new_information: bool,

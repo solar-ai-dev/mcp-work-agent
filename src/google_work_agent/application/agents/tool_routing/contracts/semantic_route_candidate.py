@@ -13,3 +13,7 @@ class SemanticRouteCandidate:
     output_mode: Literal["ANSWER", "ACTION"]
     analysis_requirement: Literal["NONE", "REQUIRED"]
     input_reason_codes: tuple[tuple[str, str], ...] = ()
+    input_work_unit_bindings: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    output_work_unit_bindings: tuple[
+        tuple[str, EffectType, tuple[str, ...]], ...
+    ] = ()

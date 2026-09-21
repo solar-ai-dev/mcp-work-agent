@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Literal, cast
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.request_understanding.validate_intent import (
     validate_intent,
@@ -245,7 +245,7 @@ class ConfirmRunHandler:
             id_factory=self._id_factory,
             interrupt_id=_required_string(authority, "interrupt_id"),
             decision=decision,
-            request_intent=cast(RequestIntentV2, request_intent),
+            request_intent=cast(RequestIntentV3, request_intent),
             required_resource_types=required_resource_types,
             reason_codes=reason_codes,
             affected_route_ids=affected_route_ids,

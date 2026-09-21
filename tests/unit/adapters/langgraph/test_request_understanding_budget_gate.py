@@ -81,6 +81,16 @@ SOURCE_STATUS_PROMPT_REF = replace(
     prompt_id="request_understanding.identify_source_status",
     purpose="identify_source_status",
 )
+REQUESTED_WORK_PROMPT_REF = replace(
+    PROMPT_REF,
+    prompt_id="request_understanding.identify_requested_work",
+    purpose="identify_requested_work",
+)
+WORK_RELATION_PROMPT_REF = replace(
+    PROMPT_REF,
+    prompt_id="request_understanding.identify_work_relations",
+    purpose="identify_work_relations",
+)
 
 
 class _NeverCalledAgent:
@@ -125,7 +135,10 @@ class _RepairingAgent:
                 "recipient": [],
                 "subject": [],
                 "period": [],
-                "coverage_requirement": "NOT_COLLECTION",
+                "coverage_requirement": {
+                    "value": "NOT_COLLECTION",
+                    "work_unit_ids": ["work-1"],
+                },
                 "additional_constraints": [],
             },
             "resource_responsibilities": {
@@ -152,7 +165,13 @@ class _RepairingAgent:
         del requested_mode, output_schema_ref
         result = self.invoke_structured()
         output = result.structured_output
-        if prompt_ref.prompt_id == "request_understanding.identify_source_dependencies":
+        if prompt_ref.prompt_id == "request_understanding.identify_requested_work":
+            user_request = input_projection["user_request"]
+            output = {
+                "schema_version": 1,
+                "work_units": [{"request_spans": [user_request]}],
+            }
+        elif prompt_ref.prompt_id == "request_understanding.identify_source_dependencies":
             responsibilities = cast(Mapping[str, object], output["resource_responsibilities"])
             task_source = cast(list[Mapping[str, object]], responsibilities["source_reads"])[0]
             base = cast(
@@ -160,6 +179,11 @@ class _RepairingAgent:
                 input_projection.get("base_projection", input_projection),
             )
             candidates = cast(list[Mapping[str, object]], base["source_candidates"])
+            requested_work = cast(Mapping[str, object], base["requested_work"])
+            work_units = cast(
+                list[Mapping[str, object]], requested_work["work_units"]
+            )
+            unit_ids = [cast(str, unit["unit_id"]) for unit in work_units]
             output = {
                 "source_dependencies": [
                     (
@@ -168,6 +192,7 @@ class _RepairingAgent:
                             "dependency": "SOURCE_REQUIRED",
                             "required_information": task_source["required_information"],
                             "target_scope": task_source["target_scope"],
+                            "work_unit_ids": unit_ids,
                         }
                         if candidate["resource_type"] == "TASK"
                         else {
@@ -191,11 +216,17 @@ class _RepairingAgent:
                 Mapping[str, object],
                 input_projection.get("base_projection", input_projection),
             )
+            requested_work = cast(Mapping[str, object], base["requested_work"])
+            work_units = cast(
+                list[Mapping[str, object]], requested_work["work_units"]
+            )
+            unit_ids = [cast(str, unit["unit_id"]) for unit in work_units]
             output = {
                 "effect_prohibitions": [
                     {
                         "effect": candidate["effect"],
                         "prohibition": "NOT_FORBIDDEN",
+                        "work_unit_ids": unit_ids,
                     }
                     for candidate in cast(list[Mapping[str, object]], base["effect_candidates"])
                 ]
@@ -229,6 +260,8 @@ def _subgraph(agent: Any = None) -> RequestUnderstandingSubgraph:
     subgraph = object.__new__(RequestUnderstandingSubgraph)
     subgraph._llm_runtime = agent if agent is not None else cast(Any, _NeverCalledAgent())
     subgraph._identify_goal_prompt_ref = PROMPT_REF
+    subgraph._identify_requested_work_prompt_ref = REQUESTED_WORK_PROMPT_REF
+    subgraph._identify_work_relations_prompt_ref = WORK_RELATION_PROMPT_REF
     subgraph._identify_effect_prohibitions_prompt_ref = EFFECT_PROHIBITION_PROMPT_REF
     subgraph._identify_source_dependencies_prompt_ref = SOURCE_DEPENDENCY_PROMPT_REF
     subgraph._identify_output_responsibilities_prompt_ref = OUTPUT_RESPONSIBILITY_PROMPT_REF
@@ -299,5 +332,5 @@ def test_a_schema_repair__attempt_consumes_two__llm_calls_not_one() -> None:
 
     result = subgraph._identify_goal_node(cast(Any, state))
 
-    assert agent.calls == 5
-    assert cast(dict[str, Any], result["retry_budget"])["llm_calls_used"] == 13
+    assert agent.calls == 6
+    assert cast(dict[str, Any], result["retry_budget"])["llm_calls_used"] == 15

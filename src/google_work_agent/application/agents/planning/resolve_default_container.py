@@ -7,7 +7,7 @@ from copy import deepcopy
 from typing import Literal, Required, TypedDict, cast
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
     RequestUnderstandingValidationError,
     validated_repository_authority,
 )
@@ -63,7 +63,7 @@ def resolve_default_container(
     route: OutputToolRouteV1,
     selected_tool_schema: Mapping[str, object],
     explicit_container_id: str | None = None,
-    request_intent: RequestIntentV2 | None = None,
+    request_intent: RequestIntentV3 | None = None,
     selected_resources: Sequence[SelectedResourceRef] = (),
     default_tasklist_id_provider: Callable[[], str | None] | None = None,
     default_calendar_id_provider: Callable[[], str | None] | None = None,
@@ -110,7 +110,7 @@ def resolve_default_container(
 
 
 def _validated_repository(
-    request_intent: RequestIntentV2 | None,
+    request_intent: RequestIntentV3 | None,
     *,
     selected_resources: Sequence[SelectedResourceRef],
 ) -> str | None:

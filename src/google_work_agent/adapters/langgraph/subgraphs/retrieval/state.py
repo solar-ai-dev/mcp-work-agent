@@ -10,7 +10,7 @@ from google_work_agent.adapters.langgraph.subgraph_state import (
     AgentSubgraphInputEnvelope,
 )
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
     StateArtifactRefV1,
 )
 from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
@@ -59,7 +59,7 @@ class ReadResultBindingV1(TypedDict):
 class ContextRetrievalInputState(AgentSubgraphInputEnvelope, total=False):
     """Parent projection owned by Retrieval."""
 
-    request_intent: RequestIntentV2 | None
+    request_intent: RequestIntentV3 | None
     tool_route_plan: ToolRoutePlanV2 | None
     workflow_signal: (
         ScopeExpansionRequiredV1 | RouteReconsiderationRequiredV1 | RetrievalRequiredV1 | None
@@ -118,7 +118,7 @@ class ContextRetrievalLocalState(GraphState):
 class RetrievalState(TypedDict, total=False):
     """The exact 05-owned Retrieval-local semantic state."""
 
-    request_intent: RequestIntentV2
+    request_intent: RequestIntentV3
     input_route_ref: StateArtifactRefV1
     input_routes: list[InputToolRouteV1]
     query_plan: RetrievalQueryPlanV2 | None

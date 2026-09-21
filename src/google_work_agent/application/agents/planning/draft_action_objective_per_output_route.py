@@ -14,6 +14,10 @@ from google_work_agent.application.agents.planning.contracts.planning_semantics 
 from google_work_agent.application.agents.planning.materialize_task_create_payload import (
     materialize_task_create_payload,
 )
+from google_work_agent.application.agents.planning.project_request_intent_for_work_units import (
+    evidence_refs_for_work_units,
+    project_request_intent_for_work_units,
+)
 from google_work_agent.application.agents.preserve_exact_user_literals import (
     restore_exact_user_literals,
 )
@@ -99,32 +103,49 @@ def draft_action_objective_per_output_route(
     request_intent: Mapping[str, object],
     work_analysis: Mapping[str, object] | None,
     evidence: Sequence[Mapping[str, object]],
+    retrieval_result: Mapping[str, object] | None = None,
     invoke: PlanningSemanticInvoker,
 ) -> tuple[ActionObjectiveCandidateV1, ...]:
     if not output_routes:
         raise ValueError("ACTION planning requires at least one output route")
     result: list[ActionObjectiveCandidateV1] = []
-    allowed_refs = {
-        ref
-        for item in evidence
-        for ref in (item.get("evidence_ref") or item.get("evidence_id") or item.get("id"),)
-        if isinstance(ref, str) and ref
-    }
-    deterministic_evidence_refs = [
-        ref
-        for item in evidence
-        for ref in (item.get("evidence_ref") or item.get("evidence_id") or item.get("id"),)
-        if isinstance(ref, str) and ref
-    ]
     seen: set[str] = set()
     for route in output_routes:
         route_id = route.get("route_id")
         if not isinstance(route_id, str) or not route_id or route_id in seen:
             raise ValueError("output route_id must be unique and non-empty")
         seen.add(route_id)
+        route_work_unit_ids = route.get("work_unit_ids")
+        if not isinstance(route_work_unit_ids, list) or not all(
+            isinstance(item, str) and item for item in route_work_unit_ids
+        ):
+            raise ValueError("output route requires work_unit_ids")
+        route_intent = project_request_intent_for_work_units(
+            request_intent,
+            work_unit_ids=cast(list[str], route_work_unit_ids),
+        )
+        bound_refs = evidence_refs_for_work_units(
+            retrieval_result,
+            work_unit_ids=cast(list[str], route_work_unit_ids),
+        )
+        route_evidence = [
+            item
+            for item in evidence
+            if retrieval_result is None
+            or (
+                item.get("evidence_ref") or item.get("evidence_id") or item.get("id")
+            ) in bound_refs
+        ]
+        allowed_refs = {
+            ref
+            for item in route_evidence
+            for ref in (item.get("evidence_ref") or item.get("evidence_id") or item.get("id"),)
+            if isinstance(ref, str) and ref
+        }
+        deterministic_evidence_refs = list(dict.fromkeys(allowed_refs))
         candidate: Mapping[str, object] | None = _deterministic_create_objective(
             route=route,
-            request_intent=request_intent,
+            request_intent=route_intent,
         )
         if candidate is not None:
             candidate = {
@@ -134,9 +155,9 @@ def draft_action_objective_per_output_route(
         if candidate is None:
             prompt_input: dict[str, object] = {
                 "user_request": user_request,
-                "request_intent": dict(request_intent),
+                "request_intent": route_intent,
                 "output_route": dict(route),
-                "evidence": [dict(item) for item in evidence],
+                "evidence": [dict(item) for item in route_evidence],
             }
             if work_analysis is not None:
                 prompt_input["work_analysis"] = dict(work_analysis)

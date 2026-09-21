@@ -10,7 +10,7 @@ from typing import cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.retrieval import (
     gmail_metadata_collection_is_answer_target as gmail_metadata_collection,
@@ -234,7 +234,7 @@ def _exact_gmail_metadata_collection_plan(
         or not route["required"]
         or not isinstance(request_intent, Mapping)
         or not gmail_metadata_collection.gmail_metadata_collection_is_answer_target(
-            cast(RequestIntentV2, request_intent)
+            cast(RequestIntentV3, request_intent)
         )
     ):
         return None
@@ -1723,7 +1723,7 @@ DEFAULT_RETRIEVAL_BUDGET = RetrievalBudget()
 
 def has_retrieval_followup_path(
     *,
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     tool_route_plan: ToolRoutePlanV2,
     route_policies: Mapping[str, RouteConstraintPolicy],
     unresolved_sufficiency_issues: Sequence[Mapping[str, object]],
@@ -1781,7 +1781,7 @@ def has_retrieval_followup_path(
 def initial_retrieval_planner_input(
     *,
     user_request: str,
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     input_routes: Sequence[InputToolRouteV1],
     retrieval_budget: RetrievalBudget,
     validated_resource_refs: Mapping[str, Sequence[str]] | None = None,
@@ -1809,7 +1809,7 @@ def initial_retrieval_planner_input(
 
 def _required_user_anchor_projection(
     *,
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     input_routes: Sequence[InputToolRouteV1],
 ) -> dict[str, object]:
     """Bind trusted exact user anchors to the Gmail routes that consume them."""
@@ -1833,7 +1833,7 @@ def _required_user_anchor_projection(
 def followup_retrieval_planner_input(
     *,
     user_request: str,
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     input_routes: Sequence[InputToolRouteV1],
     retrieval_budget: RetrievalBudget,
     followup: Mapping[str, object],

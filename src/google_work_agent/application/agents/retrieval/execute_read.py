@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
     validated_repository_authority,
 )
 from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
@@ -79,7 +79,7 @@ def execute_read(
     now_ms: int,
     prior_query_attempts: Sequence[QueryAttemptV1],
     repository_access: GetRepositoryAccessHandler | None = None,
-    request_intent: RequestIntentV2 | None = None,
+    request_intent: RequestIntentV3 | None = None,
     selected_resources: Sequence[SelectedResourceRef] = (),
     durable_budget_accountant: Callable[
         [Callable[[Mapping[str, object]], Mapping[str, object]]], Mapping[str, object]
@@ -140,7 +140,7 @@ def execute_read(
             raise RetrievalReadBindingError("GitHub read differs from repository authority")
         # Determine default usage independently of its value: an explicit request
         # for the same repository is still explicit provenance.
-        without_default: RequestIntentV2 = {**request_intent}
+        without_default: RequestIntentV3 = {**request_intent}
         without_default.pop("repository_default", None)
         uses_default = (
             validated_repository_authority(without_default, selected_resources=selected_resources)

@@ -1,10 +1,13 @@
 from collections.abc import Mapping
-from typing import cast
+from copy import deepcopy
+from typing import Any, cast
 
 import pytest
 
 from google_work_agent.application.agents.planning.compose_arguments_per_output_route import (
-    compose_arguments_per_output_route,
+    compose_arguments_per_output_route as _compose_arguments_per_output_route,
+)
+from google_work_agent.application.agents.planning.compose_arguments_per_output_route import (
     requires_argument_inference,
     tool_argument_candidate_output_schema,
 )
@@ -21,7 +24,7 @@ from google_work_agent.application.agents.planning.resolve_default_container imp
     resolve_default_container,
 )
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
 
@@ -32,6 +35,7 @@ ROUTE = {
     "effect": "CREATE",
     "selected_tool_id": "tasks_create_task",
     "reason_codes": [],
+    "work_unit_ids": ["work-1"],
 }
 OBJECTIVE: ActionObjectiveCandidateV1 = {
     "schema_version": 1,
@@ -41,6 +45,95 @@ OBJECTIVE: ActionObjectiveCandidateV1 = {
     "scope_constraints": ["create only"],
     "evidence_refs": ["e1"],
 }
+
+
+def compose_arguments_per_output_route(
+    output_routes: list[dict[str, object]],
+    **kwargs: Any,
+):
+    output_routes = [
+        {**route, "work_unit_ids": route.get("work_unit_ids", ["work-1"])}
+        for route in output_routes
+    ]
+    request_intent = kwargs.get("request_intent")
+    if isinstance(request_intent, Mapping):
+        intent = deepcopy(dict(request_intent))
+        unit_ids = list(
+            dict.fromkeys(
+                unit_id
+                for route in output_routes
+                for unit_id in cast(list[str], route.get("work_unit_ids", ["work-1"]))
+            )
+        )
+        intent.setdefault(
+            "requested_work",
+            {
+                "work_units": [
+                    {
+                        "unit_id": unit_id,
+                        "request_provenance": [
+                            {
+                                "source": "USER_REQUEST",
+                                "start_offset": 0,
+                                "end_offset": 1,
+                                "source_text": "x",
+                            }
+                        ],
+                    }
+                    for unit_id in unit_ids
+                ],
+                "work_relations": [],
+            },
+        )
+        intent.setdefault("effect_prohibitions", [])
+        for constraint in cast(list[dict[str, object]], intent.get("constraints", [])):
+            constraint.setdefault("work_unit_ids", unit_ids)
+        output_resource_types = {str(route["resource_type"]) for route in output_routes}
+        required_information = [
+            value
+            for constraint in cast(list[dict[str, object]], intent.get("constraints", []))
+            if constraint.get("field") == "required_information"
+            for value in (
+                cast(list[str], constraint["value"])
+                if isinstance(constraint.get("value"), list)
+                else [cast(str, constraint["value"])]
+            )
+        ]
+        source_reads = [
+            {
+                "resource_type": resource_type,
+                "required_information": required_information or ["requested facts"],
+                "target_scope": "CRITERIA",
+                "work_unit_ids": unit_ids,
+            }
+            for resource_type in cast(list[str], intent.get("requested_resource_hints", []))
+            if "READ" in cast(list[str], intent.get("requested_effect_hints", []))
+            and resource_type not in output_resource_types
+        ]
+        responsibilities = cast(
+            dict[str, list[dict[str, object]]],
+            intent.setdefault(
+                "resource_responsibilities",
+                {
+                    "source_reads": source_reads,
+                    "outputs": [
+                        {
+                            "resource_type": route["resource_type"],
+                            "effect": route["effect"],
+                            "work_unit_ids": route.get("work_unit_ids", unit_ids),
+                        }
+                        for route in output_routes
+                    ],
+                },
+            ),
+        )
+        for item in [
+            *responsibilities.get("source_reads", []),
+            *responsibilities.get("outputs", []),
+        ]:
+            item.setdefault("work_unit_ids", unit_ids)
+        kwargs["request_intent"] = intent
+    return _compose_arguments_per_output_route(output_routes, **kwargs)
 
 
 @pytest.mark.parametrize(
@@ -151,6 +244,36 @@ def test_compose_modification__explicit_changes__preserve_partial_shape(
     )
     assert result[0]["arguments"] == {"payload": patch}
     assert "title" not in result[0]["arguments"]["payload"]  # type: ignore[operator]
+
+
+def test_compose_modification__missing_work_projection__preserves_edit() -> None:
+    route = {key: value for key, value in ROUTE.items() if key != "work_unit_ids"}
+    bound = cast(
+        BoundSelectedToolSchemaV1,
+        {
+            **route,
+            "schema_version": 1,
+            "immutable_arguments": {},
+            "argument_schema": planning_tool_argument_schema(
+                "tasks_create_task", modification=True
+            ),
+        },
+    )
+
+    result = _compose_arguments_per_output_route(
+        [route],
+        objectives=[OBJECTIVE],
+        bound_tool_schemas=[bound],
+        modification={"request": "예정일을 바꿔줘"},
+        invoke=lambda *_: {
+            "schema_version": 1,
+            "route_id": "r1",
+            "arguments": {"payload": {"due": "2026-09-08"}},
+            "evidence_refs": [],
+        },
+    )
+
+    assert result[0]["arguments"] == {"payload": {"due": "2026-09-08"}}
 
 
 @pytest.mark.parametrize(
@@ -329,7 +452,15 @@ def test_exact_calendar_create__preserves_all_constraints__in_arguments(
         assert description is not None or location is not None, (
             "exact supported constraints need no inference"
         )
-        assert prompt_input["request_intent"] == request_intent
+        projected_intent = cast(dict[str, object], prompt_input["request_intent"])
+        assert projected_intent["ambiguity"] == request_intent["ambiguity"]
+        assert [
+            {key: value for key, value in item.items() if key != "work_unit_ids"}
+            for item in cast(list[dict[str, object]], projected_intent["constraints"])
+        ] == request_intent["constraints"]
+        assert cast(dict[str, object], projected_intent["requested_work"])[
+            "work_relations"
+        ] == []
         calls.append(prompt_id)
         return {
             "schema_version": 1,
@@ -434,7 +565,17 @@ def test_source_derived_task_create__with_evidence__uses_semantic_argument_compo
 
     def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
         calls.append(prompt_id)
-        assert prompt_input["request_intent"] == request_intent
+        projected_intent = cast(dict[str, object], prompt_input["request_intent"])
+        assert projected_intent["requested_effect_hints"] == request_intent[
+            "requested_effect_hints"
+        ]
+        assert projected_intent["requested_resource_hints"] == request_intent[
+            "requested_resource_hints"
+        ]
+        assert [
+            {key: value for key, value in item.items() if key != "work_unit_ids"}
+            for item in cast(list[dict[str, object]], projected_intent["constraints"])
+        ] == request_intent["constraints"]
         assert prompt_input["evidence"] == [
             {"evidence_ref": "mail-1", "origin_type": "CONNECTOR_READ"}
         ]
@@ -746,9 +887,9 @@ def _github_objective() -> dict[str, object]:
     }
 
 
-def _github_intent(repository: str) -> RequestIntentV2:
+def _github_intent(repository: str) -> RequestIntentV3:
     return cast(
-        RequestIntentV2,
+        RequestIntentV3,
         {
             "schema_version": 2,
             "meta": {"artifact_id": "intent-1", "revision": 1, "based_on": []},

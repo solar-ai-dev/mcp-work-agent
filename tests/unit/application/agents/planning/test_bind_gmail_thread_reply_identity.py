@@ -147,6 +147,7 @@ def _gmail_reply_inputs() -> tuple[dict[str, object], BoundSelectedToolSchemaV1,
         "effect": "SEND",
         "selected_tool_id": "gmail_send",
         "reason_codes": [],
+        "work_unit_ids": ["work-1"],
     }
     bound = cast(
         BoundSelectedToolSchemaV1,
@@ -158,8 +159,43 @@ def _gmail_reply_inputs() -> tuple[dict[str, object], BoundSelectedToolSchemaV1,
         },
     )
     intent: dict[str, object] = {
+        "constraints": [],
+        "effect_prohibitions": [],
         "requested_effect_hints": ["READ", "SEND"],
         "requested_resource_hints": ["GMAIL_THREAD", "GMAIL_MESSAGE"],
+        "resource_responsibilities": {
+            "source_reads": [
+                {
+                    "resource_type": "GMAIL_THREAD",
+                    "required_information": ["message_history"],
+                    "target_scope": "SINGULAR",
+                    "work_unit_ids": ["work-1"],
+                }
+            ],
+            "outputs": [
+                {
+                    "resource_type": "GMAIL_MESSAGE",
+                    "effect": "SEND",
+                    "work_unit_ids": ["work-1"],
+                }
+            ],
+        },
+        "requested_work": {
+            "work_units": [
+                {
+                    "unit_id": "work-1",
+                    "request_provenance": [
+                        {
+                            "source": "USER_REQUEST",
+                            "start_offset": 0,
+                            "end_offset": 1,
+                            "source_text": "x",
+                        }
+                    ],
+                }
+            ],
+            "work_relations": [],
+        },
     }
     return route, bound, intent
 

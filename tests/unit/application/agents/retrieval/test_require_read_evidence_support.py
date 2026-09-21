@@ -1,7 +1,7 @@
 from typing import cast
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     EvidenceDraftV1,
@@ -15,8 +15,8 @@ from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan
 )
 
 
-def _intent(*, effect: str = "READ") -> RequestIntentV2:
-    return cast(RequestIntentV2, {"requested_effect_hints": [effect]})
+def _intent(*, effect: str = "READ") -> RequestIntentV3:
+    return cast(RequestIntentV3, {"requested_effect_hints": [effect]})
 
 
 def _plan(*, connector_id: str = "google_workspace") -> ToolRoutePlanV2:

@@ -14,7 +14,7 @@ from google_work_agent.adapters.langgraph.subgraphs.retrieval.projections import
 )
 from google_work_agent.adapters.system.memory.run_retrieval_cache import InMemoryRunRetrievalCache
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.retrieval.build_query import (
     QueryUnchangedAfterFailureError,
@@ -164,7 +164,7 @@ def test_execute_read__with_durable_accountant__commits_budget_before_connector_
 def test_github_default__lost_access__prevents_issue_read() -> None:
     reader = _Reader()
     intent = cast(
-        RequestIntentV2,
+        RequestIntentV3,
         {
             "constraints": [],
             "ambiguity": {"requires_confirmation": False},

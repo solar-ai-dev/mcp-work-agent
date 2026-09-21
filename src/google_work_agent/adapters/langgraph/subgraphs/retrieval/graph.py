@@ -86,7 +86,7 @@ from google_work_agent.application.agents.request_understanding.contracts import
     request_understanding_output,
 )
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
     StateArtifactRefV1,
     validated_repository_authority,
 )
@@ -1202,7 +1202,7 @@ class RetrievalSubgraph:
         ]
         if github_routes:
             request_intent = cast(
-                RequestIntentV2,
+                RequestIntentV3,
                 _require_state_value(state.get("request_intent"), "request intent"),
             )
             repository = validated_repository_authority(
@@ -1220,7 +1220,7 @@ class RetrievalSubgraph:
         frozen_routes: list[InputToolRouteV1],
     ) -> ExactResourceBindingsV1:
         request_intent = cast(
-            RequestIntentV2,
+            RequestIntentV3,
             _require_state_value(state.get("request_intent"), "request intent"),
         )
         return bind_exact_resource_refs(
@@ -1833,7 +1833,7 @@ class RetrievalSubgraph:
         self,
         *,
         result: SufficiencyResultV2,
-        request_intent: RequestIntentV2,
+        request_intent: RequestIntentV3,
         person_candidates: Sequence[PersonCandidateV1] = (),
         selected_person_identities: Mapping[str, str] | None = None,
     ) -> tuple[dict[str, object], dict[str, object]]:

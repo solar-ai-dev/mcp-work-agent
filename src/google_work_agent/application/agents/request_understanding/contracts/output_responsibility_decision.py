@@ -15,6 +15,7 @@ class OutputResponsibilityCandidateV1(TypedDict):
 class OutputResponsibilityDecisionV2(TypedDict):
     resource_type: str
     effect: WriteEffectValue
+    work_unit_ids: list[str]
 
 
 class OutputResponsibilityDecisionCandidateV2(TypedDict):

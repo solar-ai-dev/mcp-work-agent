@@ -65,6 +65,7 @@ def select_tool_if_needed_node(
                 "effect": bound.effect,
                 "selected_tool_id": tool_id,
                 "reason_codes": [reason_code],
+                "work_unit_ids": list(bound.work_unit_ids),
             }
         )
     return {"bound_output_routes": selected, "retry_budget": retry_budget}

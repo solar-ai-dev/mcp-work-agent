@@ -98,7 +98,7 @@ def _metadata(**extra: object) -> dict[str, object]:
     return {
         "product_run_id": "run-123",
         "graph_profile": "SIX_ROLE_BASELINE",
-        "graph_version": "resume-contract-v2",
+        "graph_version": "resume-contract-v3",
         **extra,
     }
 
@@ -234,7 +234,7 @@ def test_callback__exports_only_safe_graph_metadata__with_node_hierarchy() -> No
         "domain_run_id": "run-123",
         **_trace_binding(),
         "graph_profile": "SIX_ROLE_BASELINE",
-        "graph_version": "resume-contract-v2",
+        "graph_version": "resume-contract-v3",
         "graph_node": "request_understanding",
         "checkpoint_namespace_hash": "cb4b3a2e1644c463",
     }
@@ -275,7 +275,7 @@ def test_callback__receives_metadata_from_compiled_langgraph__without_state_payl
             "metadata": {
                 "product_run_id": "run-123",
                 "graph_profile": "SIX_ROLE_BASELINE",
-                "graph_version": "resume-contract-v2",
+                "graph_version": "resume-contract-v3",
             },
         },
     )
@@ -441,7 +441,7 @@ def test_callback__exports_typed_failure_code__without_error_message() -> None:
     assert update["extra"]["metadata"] == {
         "domain_run_id": "run-123",
         "graph_profile": "SIX_ROLE_BASELINE",
-        "graph_version": "resume-contract-v2",
+        "graph_version": "resume-contract-v3",
         "error_type": "LLMInvocationError",
         "safe_error_code": "OUTPUT_SCHEMA_INVALID",
         "provider_dispatch_occurred": True,

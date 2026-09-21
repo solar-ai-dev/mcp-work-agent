@@ -8,7 +8,7 @@ from google_work_agent.adapters.langgraph.main.supervisor_artifact_revisions imp
 )
 from google_work_agent.adapters.langgraph.subgraphs.tool_routing.state import ToolRouteStateV1
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.tool_routing.contracts.route_binding_candidate import (
     RouteBindingCandidateV1,
@@ -19,7 +19,7 @@ from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan
 
 
 class FinalizeRouteInput(TypedDict):
-    request_intent: RequestIntentV2
+    request_intent: RequestIntentV3
     binding: RouteBindingCandidateV1
     selected_tools: dict[tuple[str, str], str]
     previous_plan: ToolRoutePlanV2 | None

@@ -120,6 +120,7 @@ def _resume_registry() -> ResumeTargetRegistry:
 
 
 def test_node_registry__contains_exact__canonical_runtime_nodes() -> None:
+    assert RESUME_CONTRACT_VERSION == "resume-contract-v3"
     assert RUNTIME_NODE_OWNERS["analysis.assess_action_necessity"] == "WORK_ANALYSIS"
 
 

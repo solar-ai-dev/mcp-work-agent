@@ -106,10 +106,19 @@ def test_selected_gmail_read__through_semantic_contracts__projects_exact_get() -
                 [],
             ),
             "additional_constraints": [],
-            "coverage_requirement": "NOT_COLLECTION",
+            "coverage_requirement": {
+                "value": "NOT_COLLECTION",
+                "work_unit_ids": ["work-1"],
+            },
         },
         "resource_responsibilities": {
-            "source_reads": [{"resource_type": "GMAIL_THREAD", "required_information": []}],
+            "source_reads": [
+                {
+                    "resource_type": "GMAIL_THREAD",
+                    "required_information": ["message body"],
+                    "target_scope": "SINGULAR",
+                }
+            ],
             "outputs": [],
         },
         "analysis_requirement": "NONE",
@@ -129,6 +138,12 @@ def test_selected_gmail_read__through_semantic_contracts__projects_exact_get() -
         llm_runtime=runtime,
         request=request,
         prompt_ref=_prompt("request_understanding.identify_goal"),
+        requested_work_prompt_ref=_prompt(
+            "request_understanding.identify_requested_work"
+        ),
+        work_relation_prompt_ref=_prompt(
+            "request_understanding.identify_work_relations"
+        ),
         effect_prohibition_prompt_ref=_prompt("request_understanding.identify_effect_prohibitions"),
         source_dependency_prompt_ref=_prompt("request_understanding.identify_source_dependencies"),
         output_responsibility_prompt_ref=_prompt(
@@ -215,6 +230,7 @@ def test_selected_gmail_read__through_semantic_contracts__projects_exact_get() -
     assert tool_id == "gmail_get_thread"
     assert arguments == {"thread_id": "thread-42"}
     assert [cast(PromptReference, call["prompt_ref"]).prompt_id for call in runtime.calls] == [
+        "request_understanding.identify_requested_work",
         "request_understanding.identify_goal",
         "request_understanding.identify_effect_prohibitions",
         "request_understanding.identify_source_dependencies",

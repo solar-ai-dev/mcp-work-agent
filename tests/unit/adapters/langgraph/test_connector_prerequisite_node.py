@@ -50,7 +50,10 @@ def test_missing_github__terminates_before_repository_confirmation__in_compiled_
                     "subject": [],
                     "period": [],
                     "status": [],
-                    "coverage_requirement": "NOT_COLLECTION",
+                    "coverage_requirement": {
+                        "value": "NOT_COLLECTION",
+                        "work_unit_ids": ["work-1"],
+                    },
                     "additional_constraints": [],
                 },
                 "resource_responsibilities": {
@@ -122,7 +125,7 @@ def test_missing_github__terminates_before_repository_confirmation__in_compiled_
     assert output["finalize_intent"]["result_kind"] == "PARTIAL"
     assert "GitHub" in output["finalize_intent"]["prerequisite_message"]
     assert output["user_interrupt"] is None
-    assert len(llm.calls) == 5
+    assert len(llm.calls) == 6
     assert output["trace_context"]["llm_call_count"] == 0
     assert output["admitted_connector_ids"] == []
     confirm.assert_not_called()
@@ -165,6 +168,7 @@ def test_route_node__projects_initial_connection_failure__to_terminal_handoff(
                         "allowed_read_tool_ids": [tool_id],
                         "required": True,
                         "reason_codes": [],
+                        "work_unit_ids": ["work-1"],
                     }
                 ],
             },
@@ -190,6 +194,7 @@ def test_route_node__projects_initial_connection_failure__to_terminal_handoff(
                     "effect": "CREATE",
                     "selected_tool_id": write.tool_id,
                     "reason_codes": [],
+                    "work_unit_ids": ["work-1"],
                 }
             ],
         }

@@ -23,6 +23,6 @@ def test_reference_time_comparison_uses_isolated_prompt_contract(tmp_path: Path)
         execution_scope=DEVELOPMENT_SMOKE,
     )
 
-    assert active.input_schema_version == "1"
+    assert active.input_schema_version == "2"
     assert experimental.input_schema_version == "2"
     assert active.content_hash == experimental.content_hash

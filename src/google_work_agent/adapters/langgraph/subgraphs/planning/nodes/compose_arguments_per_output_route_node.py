@@ -18,6 +18,9 @@ from google_work_agent.application.agents.planning.contracts.planning_semantics 
 from google_work_agent.application.agents.planning.contracts.planning_tool_schema import (
     planning_tool_argument_schema,
 )
+from google_work_agent.application.agents.planning.project_request_intent_for_work_units import (
+    project_request_intent_for_work_units,
+)
 from google_work_agent.application.agents.planning.resolve_default_container import (
     resolve_default_container,
 )
@@ -56,7 +59,10 @@ def compose_arguments_per_output_route_node(
             explicit_container_id=(
                 explicit_container_id if route.get("route_id") == missing_route_id else None
             ),
-            request_intent=projected["request_intent"],
+            request_intent=project_request_intent_for_work_units(
+                projected["request_intent"],
+                work_unit_ids=cast(list[str], route["work_unit_ids"]),
+            ),
             selected_resources=projected["selected_resources"],
             default_tasklist_id_provider=default_tasklist_id_provider,
             default_calendar_id_provider=default_calendar_id_provider,
@@ -72,6 +78,7 @@ def compose_arguments_per_output_route_node(
                 request_intent=projected.get("request_intent"),
                 work_analysis=projected.get("work_analysis"),
                 evidence=projected["evidence"],
+                retrieval_result=projected.get("retrieval_result"),
                 source_snapshots=projected.get("source_snapshots", {}),
                 selected_resources=projected["selected_resources"],
                 invoke=invoke,

@@ -198,6 +198,14 @@ def normalize_source_status_constraints(
                     "end_offset": start_offset + len(source_text),
                     "source_text": source_text,
                 },
+                work_unit_ids=list(
+                    dict.fromkeys(
+                        unit_id
+                        for responsibility in responsibilities["source_reads"]
+                        if responsibility["resource_type"] == resource_type
+                        for unit_id in responsibility["work_unit_ids"]
+                    )
+                ),
             )
         )
     return normalized

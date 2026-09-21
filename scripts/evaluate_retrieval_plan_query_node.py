@@ -38,7 +38,7 @@ from google_work_agent.api.composition import (
     build_production_runtime,
 )
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.retrieval.bind_exact_resource_refs import (
     bind_exact_resource_refs,
@@ -407,7 +407,7 @@ def _evaluate_case(
         or not frozen_routes
     ):
         return {"case_id": case.case_id, "outcome": "SKIP_NO_NODE_INPUT"}
-    typed_intent = cast(RequestIntentV2, request_intent)
+    typed_intent = cast(RequestIntentV3, request_intent)
     typed_routes = cast(list[InputToolRouteV1], frozen_routes)
 
     selected_resources = request.selected_resources

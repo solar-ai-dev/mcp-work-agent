@@ -7,7 +7,7 @@ import pytest
 from tests.support.fakes.llm import FakeStructuredInferencePort
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.tool_routing.determine_io_resources import (
     determine_io_resources,
@@ -37,6 +37,54 @@ def _valid_output() -> dict[str, object]:
     }
 
 
+def _v3(intent: RequestIntentV3, request_text: str) -> RequestIntentV3:
+    responsibilities = intent.get("resource_responsibilities")
+    return cast(
+        RequestIntentV3,
+        {
+            **intent,
+            "schema_version": 3,
+            "constraints": [
+                {**constraint, "work_unit_ids": constraint.get("work_unit_ids", ["work-1"])}
+                for constraint in intent.get("constraints", [])
+            ],
+            **(
+                {
+                    "resource_responsibilities": {
+                        "source_reads": [
+                            {**item, "work_unit_ids": item.get("work_unit_ids", ["work-1"])}
+                            for item in responsibilities["source_reads"]
+                        ],
+                        "outputs": [
+                            {**item, "work_unit_ids": item.get("work_unit_ids", ["work-1"])}
+                            for item in responsibilities["outputs"]
+                        ],
+                    }
+                }
+                if responsibilities is not None
+                else {}
+            ),
+            "effect_prohibitions": intent.get("effect_prohibitions", []),
+            "requested_work": {
+                "work_units": [
+                    {
+                        "unit_id": "work-1",
+                        "request_provenance": [
+                            {
+                                "source": "USER_REQUEST",
+                                "start_offset": 0,
+                                "end_offset": len(request_text),
+                                "source_text": request_text,
+                            }
+                        ],
+                    }
+                ],
+                "work_relations": [],
+            },
+        },
+    )
+
+
 @pytest.mark.parametrize(
     "resource_type,connector,selected_type",
     [
@@ -51,7 +99,7 @@ def test_selected_mutation__preserves_exact_typed_scope__without_inventing_route
     selected_type: str,
 ) -> None:
     intent = cast(
-        RequestIntentV2,
+        RequestIntentV3,
         {
             "schema_version": 2,
             "meta": {"artifact_id": "intent", "revision": 1, "based_on": []},
@@ -80,7 +128,7 @@ def test_selected_mutation__preserves_exact_typed_scope__without_inventing_route
     candidate, _ = determine_io_resources(
         llm_runtime=runtime,
         tool_catalog=load_signed_tool_registry(),
-        request_intent=intent,
+        request_intent=_v3(intent, request.request_text),
         request=request,
         retry_budget=build_default_run_budget(),
     )
@@ -92,7 +140,7 @@ def test_selected_mutation__preserves_exact_typed_scope__without_inventing_route
 
 def test_task_create__produces_semantic_candidate__without_tool_identity() -> None:
     catalog = load_signed_tool_registry()
-    intent: RequestIntentV2 = {
+    intent: RequestIntentV3 = {
         "schema_version": 2,
         "meta": {"artifact_id": "intent-1", "revision": 1, "based_on": []},
         "goal": "create task",
@@ -133,7 +181,7 @@ def test_task_create__produces_semantic_candidate__without_tool_identity() -> No
     candidate, _ = determine_io_resources(
         llm_runtime=runtime,
         tool_catalog=catalog,
-        request_intent=intent,
+        request_intent=_v3(intent, request.request_text),
         request=request,
         retry_budget=build_default_run_budget(),
         prompt_ref=prompt_ref,
@@ -148,7 +196,7 @@ def test_explicit_gmail_draft_update__requires_exact_draft_read__without_llm(
     effect_hints: list[str],
 ) -> None:
     intent = cast(
-        RequestIntentV2,
+        RequestIntentV3,
         {
             "schema_version": 2,
             "meta": {"artifact_id": "intent-draft", "revision": 1, "based_on": []},
@@ -193,7 +241,7 @@ def test_explicit_gmail_draft_update__requires_exact_draft_read__without_llm(
     candidate, _ = determine_io_resources(
         llm_runtime=runtime,
         tool_catalog=load_signed_tool_registry(),
-        request_intent=intent,
+        request_intent=_v3(intent, request.request_text),
         request=request,
         retry_budget=build_default_run_budget(),
     )
@@ -206,7 +254,7 @@ def test_explicit_gmail_draft_update__requires_exact_draft_read__without_llm(
 
 def test_named_gmail_draft_update__requires_search_read__without_llm() -> None:
     intent = cast(
-        RequestIntentV2,
+        RequestIntentV3,
         {
             "schema_version": 2,
             "meta": {"artifact_id": "intent-draft", "revision": 1, "based_on": []},
@@ -244,7 +292,7 @@ def test_named_gmail_draft_update__requires_search_read__without_llm() -> None:
     candidate, _ = determine_io_resources(
         llm_runtime=FakeStructuredInferencePort(outputs=[]),
         tool_catalog=load_signed_tool_registry(),
-        request_intent=intent,
+        request_intent=_v3(intent, request.request_text),
         request=request,
         retry_budget=build_default_run_budget(),
     )
@@ -259,7 +307,7 @@ def test_new_gmail_send__message_write_intent__skips_input_retrieval(
     effect_hints: list[str],
 ) -> None:
     intent = cast(
-        RequestIntentV2,
+        RequestIntentV3,
         {
             "schema_version": 2,
             "meta": {"artifact_id": "intent-send", "revision": 1, "based_on": []},
@@ -293,7 +341,7 @@ def test_new_gmail_send__message_write_intent__skips_input_retrieval(
     candidate, _ = determine_io_resources(
         llm_runtime=runtime,
         tool_catalog=load_signed_tool_registry(),
-        request_intent=intent,
+        request_intent=_v3(intent, request.request_text),
         request=request,
         retry_budget=build_default_run_budget(),
     )
@@ -305,7 +353,7 @@ def test_new_gmail_send__message_write_intent__skips_input_retrieval(
 
 def test_existing_gmail_thread_reply__thread_input_hint__routes_through_retrieval() -> None:
     intent = cast(
-        RequestIntentV2,
+        RequestIntentV3,
         {
             "schema_version": 2,
             "meta": {"artifact_id": "intent-reply", "revision": 1, "based_on": []},
@@ -339,7 +387,7 @@ def test_existing_gmail_thread_reply__thread_input_hint__routes_through_retrieva
     candidate, _ = determine_io_resources(
         llm_runtime=runtime,
         tool_catalog=load_signed_tool_registry(),
-        request_intent=intent,
+        request_intent=_v3(intent, request.request_text),
         request=request,
         retry_budget=build_default_run_budget(),
     )
@@ -354,7 +402,7 @@ def test_gmail_read__message_and_thread__use_one_searchable_thread_route(
     with_responsibilities: bool,
 ) -> None:
     intent = cast(
-        RequestIntentV2,
+        RequestIntentV3,
         {
             "schema_version": 2,
             "meta": {"artifact_id": "intent-read", "revision": 1, "based_on": []},
@@ -401,7 +449,7 @@ def test_gmail_read__message_and_thread__use_one_searchable_thread_route(
     candidate, _ = determine_io_resources(
         llm_runtime=runtime,
         tool_catalog=load_signed_tool_registry(),
-        request_intent=intent,
+        request_intent=_v3(intent, request.request_text),
         request=request,
         retry_budget=build_default_run_budget(),
     )
@@ -413,7 +461,7 @@ def test_gmail_read__message_and_thread__use_one_searchable_thread_route(
 
 def test_cross_resource_responsibilities__project_deterministically__to_input_and_output() -> None:
     intent = cast(
-        RequestIntentV2,
+        RequestIntentV3,
         {
             "schema_version": 2,
             "meta": {"artifact_id": "intent-source-output", "revision": 1, "based_on": []},
@@ -462,7 +510,7 @@ def test_cross_resource_responsibilities__project_deterministically__to_input_an
     candidate, _ = determine_io_resources(
         llm_runtime=runtime,
         tool_catalog=load_signed_tool_registry(),
-        request_intent=intent,
+        request_intent=_v3(intent, request.request_text),
         request=request,
         retry_budget=build_default_run_budget(),
     )
@@ -474,7 +522,7 @@ def test_cross_resource_responsibilities__project_deterministically__to_input_an
 
 def test_calendar_create__uses_exact_validated_intent__without_llm() -> None:
     catalog = load_signed_tool_registry()
-    intent: RequestIntentV2 = {
+    intent: RequestIntentV3 = {
         "schema_version": 2,
         "meta": {"artifact_id": "intent-calendar", "revision": 1, "based_on": []},
         "goal": "create calendar event",
@@ -502,7 +550,7 @@ def test_calendar_create__uses_exact_validated_intent__without_llm() -> None:
     candidate, _ = determine_io_resources(
         llm_runtime=runtime,
         tool_catalog=catalog,
-        request_intent=intent,
+        request_intent=_v3(intent, request.request_text),
         request=request,
         retry_budget=build_default_run_budget(),
     )
@@ -515,7 +563,7 @@ def test_calendar_create__uses_exact_validated_intent__without_llm() -> None:
 
 def test_semantic_revision_reuses__base_slot_and__bounded_failure_envelope() -> None:
     catalog = load_signed_tool_registry()
-    intent: RequestIntentV2 = {
+    intent: RequestIntentV3 = {
         "schema_version": 2,
         "meta": {"artifact_id": "intent-1", "revision": 1, "based_on": []},
         "goal": "create task",
@@ -568,7 +616,7 @@ def test_semantic_revision_reuses__base_slot_and__bounded_failure_envelope() -> 
     determine_io_resources(
         llm_runtime=runtime,
         tool_catalog=catalog,
-        request_intent=intent,
+        request_intent=_v3(intent, request.request_text),
         request=request,
         retry_budget=build_default_run_budget(),
         prompt_ref=prompt_ref,
@@ -592,7 +640,7 @@ def test_semantic_revision_reuses__base_slot_and__bounded_failure_envelope() -> 
 
 def test_no_tool_disposition__with_input_routes__is_rejected() -> None:
     intent = cast(
-        RequestIntentV2,
+        RequestIntentV3,
         {
             "schema_version": 2,
             "meta": {"artifact_id": "intent-answer", "revision": 1, "based_on": []},
@@ -643,7 +691,7 @@ def test_no_tool_disposition__with_input_routes__is_rejected() -> None:
     candidate, _ = determine_io_resources(
         llm_runtime=runtime,
         tool_catalog=load_signed_tool_registry(),
-        request_intent=intent,
+        request_intent=_v3(intent, request.request_text),
         request=request,
         retry_budget=build_default_run_budget(),
         prompt_ref=PromptReference(
@@ -672,7 +720,7 @@ def test_no_tool_disposition__with_input_routes__is_rejected() -> None:
 
 def test_semantic_route_schema__with_requested_writes__permits_only_those_effects() -> None:
     intent = cast(
-        RequestIntentV2,
+        RequestIntentV3,
         {
             "schema_version": 2,
             "meta": {"artifact_id": "intent-task", "revision": 1, "based_on": []},
@@ -706,7 +754,7 @@ def test_semantic_route_schema__with_requested_writes__permits_only_those_effect
     candidate, _ = determine_io_resources(
         llm_runtime=runtime,
         tool_catalog=load_signed_tool_registry(),
-        request_intent=intent,
+        request_intent=_v3(intent, request.request_text),
         request=request,
         retry_budget=build_default_run_budget(),
         prompt_ref=PromptReference(
@@ -743,7 +791,7 @@ def test_semantic_route_schema__with_requested_writes__permits_only_those_effect
 
 def test_legacy_fallback__with_validated_output__cannot_drop_effect() -> None:
     intent = cast(
-        RequestIntentV2,
+        RequestIntentV3,
         {
             "schema_version": 2,
             "meta": {"artifact_id": "intent-multi-write", "revision": 1, "based_on": []},
@@ -794,7 +842,7 @@ def test_legacy_fallback__with_validated_output__cannot_drop_effect() -> None:
     candidate, _ = determine_io_resources(
         llm_runtime=runtime,
         tool_catalog=load_signed_tool_registry(),
-        request_intent=intent,
+        request_intent=_v3(intent, request.request_text),
         request=request,
         retry_budget=build_default_run_budget(),
         prompt_ref=PromptReference(
@@ -826,7 +874,7 @@ def test_legacy_fallback__with_validated_output__cannot_drop_effect() -> None:
 
 def test_selected_analysis_read__stays_answer_only__without_llm() -> None:
     catalog = load_signed_tool_registry()
-    intent: RequestIntentV2 = {
+    intent: RequestIntentV3 = {
         "schema_version": 2,
         "meta": {"artifact_id": "intent-read", "revision": 1, "based_on": []},
         "goal": "read selected mail",
@@ -856,7 +904,7 @@ def test_selected_analysis_read__stays_answer_only__without_llm() -> None:
     candidate, _ = determine_io_resources(
         llm_runtime=runtime,
         tool_catalog=catalog,
-        request_intent=intent,
+        request_intent=_v3(intent, request.request_text),
         request=request,
         retry_budget=build_default_run_budget(),
         prompt_ref=PromptReference(
@@ -884,7 +932,7 @@ def test_selected_analysis_read__stays_answer_only__without_llm() -> None:
 
 def test_selected_simple_read__materializes_exact_route__without_llm() -> None:
     catalog = load_signed_tool_registry()
-    intent: RequestIntentV2 = {
+    intent: RequestIntentV3 = {
         "schema_version": 2,
         "meta": {"artifact_id": "intent-read", "revision": 1, "based_on": []},
         "goal": "read selected mail",
@@ -916,7 +964,7 @@ def test_selected_simple_read__materializes_exact_route__without_llm() -> None:
     candidate, _ = determine_io_resources(
         llm_runtime=runtime,
         tool_catalog=catalog,
-        request_intent=intent,
+        request_intent=_v3(intent, request.request_text),
         request=request,
         retry_budget=build_default_run_budget(),
     )
@@ -929,7 +977,7 @@ def test_selected_simple_read__materializes_exact_route__without_llm() -> None:
 
 def test_answer_only__materializes_no_tool_route__without_llm() -> None:
     catalog = load_signed_tool_registry()
-    intent: RequestIntentV2 = {
+    intent: RequestIntentV3 = {
         "schema_version": 2,
         "meta": {"artifact_id": "intent-read", "revision": 1, "based_on": []},
         "goal": "answer arithmetic question",
@@ -957,7 +1005,7 @@ def test_answer_only__materializes_no_tool_route__without_llm() -> None:
     candidate, _ = determine_io_resources(
         llm_runtime=runtime,
         tool_catalog=catalog,
-        request_intent=intent,
+        request_intent=_v3(intent, request.request_text),
         request=request,
         retry_budget=build_default_run_budget(),
     )

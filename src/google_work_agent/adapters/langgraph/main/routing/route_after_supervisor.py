@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from google_work_agent.adapters.langgraph.main.supervisor_decision import SupervisorTarget
 from google_work_agent.adapters.langgraph.profiles.profile_registry import GraphProfile
 
-RESUME_CONTRACT_VERSION = "resume-contract-v2"
+RESUME_CONTRACT_VERSION = "resume-contract-v3"
 
 
 class UnroutableSupervisorTargetError(ValueError):

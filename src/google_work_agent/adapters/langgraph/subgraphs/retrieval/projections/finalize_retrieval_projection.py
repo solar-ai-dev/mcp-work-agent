@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from typing import TypedDict, cast
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
@@ -16,7 +16,7 @@ from google_work_agent.application.agents.retrieval.resolve_availability import 
 
 
 class FinalizeRetrievalInput(TypedDict):
-    request_intent: RequestIntentV2
+    request_intent: RequestIntentV3
     selection_result: EvidenceSelectionResultV2
     sufficiency_result: SufficiencyResultV2
     availability_results: list[AvailableIntervalV1]
@@ -43,7 +43,7 @@ def project_finalize_retrieval_input(state: Mapping[str, object]) -> FinalizeRet
     if not isinstance(exclusions, list) or not all(isinstance(item, str) for item in exclusions):
         raise ValueError("retrieval exclusion obligations must be list[str]")
     return {
-        "request_intent": cast(RequestIntentV2, request_intent),
+        "request_intent": cast(RequestIntentV3, request_intent),
         "selection_result": cast(EvidenceSelectionResultV2, selection),
         "sufficiency_result": cast(SufficiencyResultV2, sufficiency),
         "availability_results": cast(list[AvailableIntervalV1], availability),

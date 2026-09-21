@@ -23,7 +23,7 @@ from google_work_agent.application.agents.request_understanding.contracts import
     request_understanding_output,
 )
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.use_cases.run.guard_run_budget import BudgetDecisionV1
 from google_work_agent.application.use_cases.run.terminal_contract import (
@@ -91,9 +91,9 @@ def finalize_supervisor_result(
     )
 
 
-def request_intent_from_state(state: GraphState) -> RequestIntentV2:
+def request_intent_from_state(state: GraphState) -> RequestIntentV3:
     return cast(
-        RequestIntentV2,
+        RequestIntentV3,
         require_supervisor_result_mapping(state.get("request_intent"), "request_intent"),
     )
 

@@ -1,3 +1,6 @@
+from copy import deepcopy
+from typing import Any, cast
+
 import pytest
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
@@ -5,8 +8,46 @@ from google_work_agent.application.agents.request_understanding.contracts.reques
     RequestUnderstandingValidationError,
 )
 from google_work_agent.application.agents.request_understanding.finalize_intent import (
-    finalize_intent,
+    finalize_intent as _finalize_intent,
 )
+
+
+def finalize_intent(
+    goal_candidate: RequestGoalCandidateV1,
+    ambiguity_candidate: object,
+    **kwargs: Any,
+) -> Any:
+    user_request = cast(str, kwargs["user_request"])
+    candidate = deepcopy(goal_candidate)
+    candidate.setdefault("effect_prohibitions", [])
+    candidate.setdefault(
+        "requested_work",
+        {
+            "work_units": [
+                {
+                    "unit_id": "work-1",
+                    "request_provenance": [
+                        {
+                            "source": "USER_REQUEST",
+                            "start_offset": 0,
+                            "end_offset": len(user_request),
+                            "source_text": user_request,
+                        }
+                    ],
+                }
+            ],
+            "work_relations": [],
+        },
+    )
+    for constraint in candidate["constraints"]:
+        constraint.setdefault("work_unit_ids", ["work-1"])
+    responsibilities = candidate.get("resource_responsibilities", {})
+    for item in [
+        *responsibilities.get("source_reads", []),
+        *responsibilities.get("outputs", []),
+    ]:
+        item.setdefault("work_unit_ids", ["work-1"])
+    return _finalize_intent(candidate, ambiguity_candidate, **kwargs)
 
 
 def test_finalize_intent__valid_candidates__attaches_application_lineage() -> None:
@@ -25,7 +66,7 @@ def test_finalize_intent__valid_candidates__attaches_application_lineage() -> No
         user_request="goal",
     )
 
-    assert intent["schema_version"] == 2
+    assert intent["schema_version"] == 3
     assert intent["meta"] == {"artifact_id": "intent-1", "revision": 1, "based_on": []}
 
 
@@ -152,6 +193,7 @@ def test_finalize_intent__source_literals__split_and_bind_each_scalar_value() ->
             "kind": "USER_REQUIREMENT",
             "field": "search_terms",
             "value": "Nimbus",
+            "work_unit_ids": ["work-1"],
             "provenance": {
                 "source": "USER_REQUEST",
                 "start_offset": request_text.index("Nimbus"),
@@ -162,6 +204,7 @@ def test_finalize_intent__source_literals__split_and_bind_each_scalar_value() ->
             "kind": "USER_REQUIREMENT",
             "field": "search_terms",
             "value": "Quartz",
+            "work_unit_ids": ["work-1"],
             "provenance": {
                 "source": "USER_REQUEST",
                 "start_offset": request_text.index("Quartz"),
@@ -172,12 +215,14 @@ def test_finalize_intent__source_literals__split_and_bind_each_scalar_value() ->
             "kind": "USER_REQUIREMENT",
             "field": "search_terms",
             "value": "모델 가설",
+            "work_unit_ids": ["work-1"],
         },
     ]
     assert intent["constraints"][3] == {
         "kind": "USER_REQUIREMENT",
         "field": "business_concepts",
         "value": ["출시 일정"],
+        "work_unit_ids": ["work-1"],
     }
 
 
@@ -205,6 +250,7 @@ def test_finalize_intent__confirmation_literal__binds_only_to_current_response()
             "kind": "RESOURCE",
             "field": "subject",
             "value": subject,
+            "work_unit_ids": ["work-1"],
             "provenance": {
                 "source": "CONFIRMATION_RESPONSE",
                 "start_offset": 0,

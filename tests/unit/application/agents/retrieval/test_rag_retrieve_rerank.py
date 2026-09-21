@@ -1,7 +1,7 @@
 from typing import cast
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.retrieval.normalize_segments import SourceSegment
 from google_work_agent.application.agents.retrieval.rag_retrieve_rerank import rag_retrieve_rerank
@@ -9,7 +9,7 @@ from google_work_agent.application.agents.retrieval.rag_retrieve_rerank import r
 
 def test_rag_ranking__is_deterministic__and_prompt_free() -> None:
     intent = cast(
-        RequestIntentV2,
+        RequestIntentV3,
         {
             "schema_version": 2,
             "meta": {"artifact_id": "i", "revision": 1, "based_on": []},
@@ -32,7 +32,7 @@ def test_rag_ranking__is_deterministic__and_prompt_free() -> None:
 
 def test_rag_ranking__preserved_original_request__does_not_score_whole_text() -> None:
     intent = cast(
-        RequestIntentV2,
+        RequestIntentV3,
         {
             "schema_version": 2,
             "meta": {"artifact_id": "i", "revision": 1, "based_on": []},
@@ -61,7 +61,7 @@ def test_rag_ranking__preserved_original_request__does_not_score_whole_text() ->
 
 def test_rag_retrieve_rerank__with_cross_resource_draft__keeps_explicit_sources() -> None:
     intent = cast(
-        RequestIntentV2,
+        RequestIntentV3,
         {
             "schema_version": 2,
             "meta": {"artifact_id": "i", "revision": 1, "based_on": []},

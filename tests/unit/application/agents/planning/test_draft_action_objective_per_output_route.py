@@ -1,13 +1,88 @@
 from collections.abc import Mapping
+from copy import deepcopy
 from typing import Any, cast
 
 import pytest
 
 from google_work_agent.application.agents.planning.draft_action_objective_per_output_route import (
     action_objective_candidate_output_schema,
-    draft_action_objective_per_output_route,
     requires_objective_inference,
 )
+from google_work_agent.application.agents.planning.draft_action_objective_per_output_route import (
+    draft_action_objective_per_output_route as _draft_action_objective_per_output_route,
+)
+
+
+def draft_action_objective_per_output_route(
+    output_routes: list[dict[str, object]],
+    **kwargs: Any,
+):
+    routes = [
+        {**route, "work_unit_ids": route.get("work_unit_ids", ["work-1"])}
+        for route in output_routes
+    ]
+    raw_intent = kwargs.get("request_intent")
+    if isinstance(raw_intent, Mapping):
+        intent = deepcopy(dict(raw_intent))
+        intent.setdefault(
+            "requested_work",
+            {
+                "work_units": [
+                    {
+                        "unit_id": "work-1",
+                        "request_provenance": [
+                            {
+                                "source": "USER_REQUEST",
+                                "start_offset": 0,
+                                "end_offset": 1,
+                                "source_text": "x",
+                            }
+                        ],
+                    }
+                ],
+                "work_relations": [],
+            },
+        )
+        intent.setdefault("effect_prohibitions", [])
+        constraints = cast(list[dict[str, object]], intent.setdefault("constraints", []))
+        for constraint in constraints:
+            constraint.setdefault("work_unit_ids", ["work-1"])
+        output_resource_types = {str(route["resource_type"]) for route in routes}
+        source_reads = [
+            {
+                "resource_type": resource_type,
+                "required_information": ["requested facts"],
+                "target_scope": "CRITERIA",
+                "work_unit_ids": ["work-1"],
+            }
+            for resource_type in cast(list[str], intent.get("requested_resource_hints", []))
+            if "READ" in cast(list[str], intent.get("requested_effect_hints", []))
+            and resource_type not in output_resource_types
+        ]
+        responsibilities = cast(
+            dict[str, list[dict[str, object]]],
+            intent.setdefault(
+                "resource_responsibilities",
+                {
+                    "source_reads": source_reads,
+                    "outputs": [
+                        {
+                            "resource_type": route["resource_type"],
+                            "effect": route["effect"],
+                            "work_unit_ids": route["work_unit_ids"],
+                        }
+                        for route in routes
+                    ],
+                },
+            ),
+        )
+        for source in responsibilities.get("source_reads", []):
+            source.setdefault("target_scope", "CRITERIA")
+            source.setdefault("work_unit_ids", ["work-1"])
+        for output in responsibilities.get("outputs", []):
+            output.setdefault("work_unit_ids", ["work-1"])
+        kwargs["request_intent"] = intent
+    return _draft_action_objective_per_output_route(routes, **kwargs)
 
 
 def test_action_objective_schema__binds_current_evidence__identities() -> None:
@@ -296,7 +371,17 @@ def test_source_derived_task_create__with_evidence__uses_semantic_objective_infe
 
     def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
         calls.append(prompt_id)
-        assert prompt_input["request_intent"] == request_intent
+        projected_intent = cast(dict[str, object], prompt_input["request_intent"])
+        assert projected_intent["requested_effect_hints"] == request_intent[
+            "requested_effect_hints"
+        ]
+        assert projected_intent["requested_resource_hints"] == request_intent[
+            "requested_resource_hints"
+        ]
+        assert [
+            {key: value for key, value in item.items() if key != "work_unit_ids"}
+            for item in cast(list[dict[str, object]], projected_intent["constraints"])
+        ] == request_intent["constraints"]
         return {
             "schema_version": 1,
             "objective": "Create a task using the retrieved mail facts",
@@ -350,7 +435,7 @@ def test_draft_action_objective_per_output_route__with_task_calendar_sources__re
 
     assert result[0]["target_semantics"] == "GMAIL_DRAFT"
     assert result[0]["scope_constraints"] == ["CREATE_DRAFT_ONLY", "DO_NOT_SEND"]
-    assert result[0]["evidence_refs"] == ["task", "event"]
+    assert set(result[0]["evidence_refs"]) == {"task", "event"}
     assert not requires_objective_inference(route, request_intent=intent)
 
 

@@ -15,7 +15,7 @@ from google_work_agent.application.agents.planning.resolve_default_container imp
     PlanningArgumentBindingError,
 )
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.use_cases.run.guard_run_budget import build_default_run_budget
 from google_work_agent.ports.system.contracts.workflow_execution import (
@@ -80,7 +80,7 @@ def test_github_planning_node__missing_or_conflicting_authority__skips_writer() 
 
 def _state(
     *,
-    intent: RequestIntentV2,
+    intent: RequestIntentV3,
     selected: tuple[SelectedResourceRef, ...],
 ) -> dict[str, object]:
     route = {
@@ -90,6 +90,7 @@ def _state(
         "effect": "CREATE",
         "selected_tool_id": "github_create_issue",
         "reason_codes": ["USER_REQUEST"],
+        "work_unit_ids": ["work-1"],
     }
     return {
         "__request__": WorkflowStartRequest(
@@ -120,7 +121,7 @@ def _state(
     }
 
 
-def _intent(repository: str | None) -> RequestIntentV2:
+def _intent(repository: str | None) -> RequestIntentV3:
     constraints: list[dict[str, object]] = []
     if repository is not None:
         constraints.append(
@@ -133,12 +134,13 @@ def _intent(repository: str | None) -> RequestIntentV2:
                     "start_offset": 0,
                     "end_offset": len(repository),
                 },
+                "work_unit_ids": ["work-1"],
             }
         )
     return cast(
-        RequestIntentV2,
+        RequestIntentV3,
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "meta": {"artifact_id": "intent-1", "revision": 1, "based_on": []},
             "goal": "Create issue",
             "completion_conditions": ["Issue created"],
@@ -146,6 +148,33 @@ def _intent(repository: str | None) -> RequestIntentV2:
             "requested_effect_hints": ["CREATE"],
             "requested_resource_hints": ["GITHUB_ISSUE"],
             "analysis_requirement": "NONE",
+            "effect_prohibitions": [],
+            "resource_responsibilities": {
+                "source_reads": [],
+                "outputs": [
+                    {
+                        "resource_type": "GITHUB_ISSUE",
+                        "effect": "CREATE",
+                        "work_unit_ids": ["work-1"],
+                    }
+                ],
+            },
+            "requested_work": {
+                "work_units": [
+                    {
+                        "unit_id": "work-1",
+                        "request_provenance": [
+                            {
+                                "source": "USER_REQUEST",
+                                "start_offset": 0,
+                                "end_offset": len("Create an issue"),
+                                "source_text": "Create an issue",
+                            }
+                        ],
+                    }
+                ],
+                "work_relations": [],
+            },
             "ambiguity": {
                 "requires_confirmation": False,
                 "reason_codes": [],

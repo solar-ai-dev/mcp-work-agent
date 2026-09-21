@@ -4,6 +4,8 @@
 
 # 입력의 의미
 
+`requested_work.work_units`는 확정된 업무 경계이며 각 판정은 적용되는 현재 `unit_id`를 `work_unit_ids`에 직접 기록한다.
+
 `user_request`는 현재 Run의 원문이고 `goal_candidate`는 바로 앞의 goal/completion/explicit-constraint 해석이다. 두 입력이 충돌하면 원문을 우선한다. `effect_candidates`는 현재 Runtime이 지원하는 write effect의 닫힌 목록이다. 후보를 추가·삭제·중복하지 않고 각 후보를 정확히 한 번 판정한다.
 
 `selected_resource_refs`는 현재 선택된 identity이며 effect 금지의 근거가 아니다. `confirmation_response`가 있으면 이번에 확인된 선택만 반영한다. `request_reconsideration`과 `run_reference_time`은 명시적 금지를 새로 만들지 않는다. 이전 Run이나 입력에 없는 대화는 사용하지 않는다.

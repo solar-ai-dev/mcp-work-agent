@@ -22,6 +22,7 @@ from .contracts.source_dependency_decision import (
     SourceDependencyCandidateV1,
     SourceDependencyDecisionCandidateV1,
 )
+from .contracts.work_unit_binding import work_unit_id_schema
 
 _NONEMPTY_INFORMATION_SCHEMA = {"type": "string", "minLength": 1}
 
@@ -139,6 +140,7 @@ def build_source_dependency_output_schema(
     candidates: Sequence[SourceDependencyCandidateV1],
     *,
     require_at_least_one_source: bool = False,
+    work_unit_ids: Sequence[str],
 ) -> OutputSchemaDefinition:
     """Build the exact-set discriminated schema for source dependency decisions."""
 
@@ -167,6 +169,7 @@ def build_source_dependency_output_schema(
                 "dependency",
                 "required_information",
                 "target_scope",
+                "work_unit_ids",
             ],
             "properties": {
                 "resource_type": {"enum": resource_types},
@@ -179,6 +182,7 @@ def build_source_dependency_output_schema(
                     "items": dict(_NONEMPTY_INFORMATION_SCHEMA),
                 },
                 "target_scope": {"enum": ["SINGULAR", "CRITERIA"]},
+                "work_unit_ids": work_unit_id_schema(work_unit_ids),
             },
         },
     ]
@@ -233,6 +237,7 @@ def identify_source_dependencies(
     goal_candidate: Mapping[str, object],
     source_candidates: Sequence[SourceDependencyCandidateV1],
     require_at_least_one_source: bool = False,
+    work_unit_ids: Sequence[str],
     candidate_output: object | None = None,
     failure_record: Mapping[str, object] | None = None,
 ) -> SourceDependencyDecisionCandidateV1:
@@ -259,12 +264,14 @@ def identify_source_dependencies(
         build_source_dependency_output_schema(
             source_candidates,
             require_at_least_one_source=require_at_least_one_source,
+            work_unit_ids=work_unit_ids,
         ),
     )
     return validate_source_dependency_candidate(
         result.structured_output,
         source_candidates=source_candidates,
         require_at_least_one_source=require_at_least_one_source,
+        work_unit_ids=work_unit_ids,
     )
 
 
@@ -273,10 +280,12 @@ def validate_source_dependency_candidate(
     *,
     source_candidates: Sequence[SourceDependencyCandidateV1],
     require_at_least_one_source: bool = False,
+    work_unit_ids: Sequence[str],
 ) -> SourceDependencyDecisionCandidateV1:
     schema = build_source_dependency_output_schema(
         source_candidates,
         require_at_least_one_source=require_at_least_one_source,
+        work_unit_ids=work_unit_ids,
     )
     errors = validate_output_schema(value, schema.json_schema)
     if errors:

@@ -50,7 +50,7 @@ Main Graph에는 Query 후보·Page Token·전체 후보·RAG score를 올리지
 
 ```python
 class RetrievalState:
-    request_intent: RequestIntentV2
+    request_intent: RequestIntentV3
     input_route_ref: StateArtifactRefV1
     input_routes: list[InputToolRouteV1]
     query_plan: RetrievalQueryPlanV2 | None
@@ -90,7 +90,7 @@ RETRIEVING checkpoint load
 → current local QueryAttemptV1/read-result/segment handles 폐기
 → durable handoff control = RETRIEVAL_CACHE_RESTART
 → MAIN_CONTROL:RETRIEVAL_ENTRY
-→ frozen RequestIntentV2 + current InputRoutePlanV1에서 fresh read 시작
+→ frozen RequestIntentV3 + current InputRoutePlanV1에서 fresh read 시작
 → 새 RetrievalResultV1 revision 발급
 ```
 
@@ -211,7 +211,7 @@ Follow-up의 prior attempt projection은 semantic constraint·operation·reason�
 
 **Exact anchor와 검색 가설**
 
-`required_user_anchors`는 `RequestIntentV2`의 명시 검색 필드 중 current-run
+`required_user_anchors`는 `RequestIntentV3`의 명시 검색 필드 중 current-run
 `USER_REQUEST | CONFIRMATION_RESPONSE` provenance가 검증된 값과 이를 소비할 Gmail route만
 투영한다. `business_concepts`, 시스템 유래 값, 정규식·사전 추측으로 새 anchor를 만들지
 않는다. 이 projection은 새 요청 권위가 아니라 기존 typed 의미의 bounded 전달 형식이다.
@@ -437,7 +437,7 @@ prior SourceFetchPlanV1.effective_constraints
 | 허용 source | 값 |
 | --- | --- |
 | 검증된 `SelectedResourceRefV1`/`ResourceRef` | `parent_resource_id` |
-| `06 Workflow`의 결정적 provenance 검증을 통과한 `RequestIntentV2` | 명시적 `owner/repository` constraint |
+| `06 Workflow`의 결정적 provenance 검증을 통과한 `RequestIntentV3` | 명시적 `owner/repository` constraint |
 
 둘이 일치하면 하나의 `ContainerRefConstraintV1(container_refs=["owner/repository"])`로 정규화한다. 불일치하면 임의 우선순위를 적용하지 않고 기존 Confirmation 또는 fail-closed 경로로 보낸다. `ConnectorReadPort` 호출은 0이다.
 
@@ -651,6 +651,7 @@ class RetrievalResultV1:
 | --- | --- |
 | 공식 Handoff | 다음 Work Analysis 또는 Planning이 소비할 최소 결과다. |
 | Source별 상태 | 복수 IN Route의 성공·부분 성공·실패·미시도를 각각 보존한다. 전체 `coverage`만으로 모든 Source가 완료됐다고 추론하지 않는다. |
+| WorkUnit coverage | `source_statuses[].work_unit_ids`는 frozen Input Route의 적용 WorkUnit union을 그대로 보존한다. 같은 READ/Evidence를 WorkUnit별로 복제하지 않으며 ANSWER Planning에는 기존 Evidence와 WorkUnit별 evidence ref projection을 한 입력으로 전달한다. |
 | 목록 metadata | `collection_results`는 실제 READ에서 관측한 Resource identity·사용자용 제목과 `EXHAUSTED \| HAS_MORE \| UNKNOWN` continuation만 보존한다. 상세 Evidence의 bounded context와 분리하며, 같은 제목이어도 identity가 다르면 별도 항목이다. 이 값은 Query 의미나 전체 Source coverage를 새로 판정하지 않는다. |
 | 제외 의무 | `EvidenceSelectionResultV2.excluded_segment_ids + RetrievalState.exclusion_obligation_segment_ids`를 stable dedup하여 결과에 기록한다. |
 | 제어 신호 | `NEEDS_MORE_DATA`, `NEEDS_CONFIRMATION`, `ROUTE_RECONSIDERATION_REQUIRED`, `BLOCKED`는 결과의 coverage 값이 아니라 `SubgraphReturnV2.disposition`과 Typed `WorkflowSignalV1`로 전달한다. |
@@ -666,7 +667,7 @@ Registry에 exact direct-read Tool이 있으면 detail Route만 유지한다. �
 
 ### AGENT_SEARCH
 
-현재 Run `user_request + RequestIntentV2 + frozen input_routes + retrieval_budget`으로 Source-native 검색을 시작한다. 원문은 typed intent의 의미 손실을 보완하는 Query Planner 입력으로만 사용하며 Local State의 별도 권위로 복제하지 않는다.
+현재 Run `user_request + RequestIntentV3 + frozen input_routes + retrieval_budget`으로 Source-native 검색을 시작한다. 원문은 typed intent의 의미 손실을 보완하는 Query Planner 입력으로만 사용하며 Local State의 별도 권위로 복제하지 않는다.
 
 Metadata Page에서 후보를 좁히고 RAG로 관련 Segment를 고른다. 부족할 때만 같은 Route의 새 Query·Page·Detail을 선택한다. 검색 후 행동을 Round 번호별로 고정하지 않는다.
 

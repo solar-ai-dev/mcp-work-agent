@@ -25,6 +25,7 @@ def _decisions(*, outputs: dict[str, str] | None = None) -> dict[str, object]:
             {
                 "resource_type": candidate["resource_type"],
                 "effect": outputs[candidate["resource_type"]],
+                "work_unit_ids": ["work-1"],
             }
             for candidate in _CANDIDATES
             if candidate["resource_type"] in outputs
@@ -46,7 +47,13 @@ def test_output_schema__with_non_candidate_or_unsupported_decisions__rejects_can
     candidate = _decisions(outputs={"GMAIL_DRAFT": "CREATE"})
     items = cast(list[dict[str, object]], candidate["output_responsibilities"])
     if mutation == "unregistered":
-        items.append({"resource_type": "UNREGISTERED", "effect": "CREATE"})
+        items.append(
+            {
+                "resource_type": "UNREGISTERED",
+                "effect": "CREATE",
+                "work_unit_ids": ["work-1"],
+            }
+        )
     elif mutation == "duplicate":
         items.append(deepcopy(items[0]))
     else:
@@ -54,7 +61,10 @@ def test_output_schema__with_non_candidate_or_unsupported_decisions__rejects_can
 
     assert validate_output_schema(
         candidate,
-        output_responsibilities.build_output_responsibility_output_schema(_CANDIDATES).json_schema,
+        output_responsibilities.build_output_responsibility_output_schema(
+            _CANDIDATES,
+            work_unit_ids=("work-1",),
+        ).json_schema,
     )
 
 
@@ -64,7 +74,10 @@ def test_output_schema__with_empty_or_requested_subset__accepts_candidate(
 ) -> None:
     assert validate_output_schema(
         candidate,
-        output_responsibilities.build_output_responsibility_output_schema(_CANDIDATES).json_schema,
+        output_responsibilities.build_output_responsibility_output_schema(
+            _CANDIDATES,
+            work_unit_ids=("work-1",),
+        ).json_schema,
     ) == []
 
 
@@ -72,12 +85,13 @@ def test_output_validation__with_duplicate_resource__rejects_candidate(
 ) -> None:
     candidate = _decisions(outputs={"GMAIL_DRAFT": "CREATE"})
     items = cast(list[dict[str, object]], candidate["output_responsibilities"])
-    items.append({"resource_type": "GMAIL_DRAFT", "effect": "UPDATE"})
+    items.append(deepcopy(items[0]))
 
     with pytest.raises(ValueError, match="candidate is invalid"):
         output_responsibilities.validate_output_responsibility_candidate(
             candidate,
             output_candidates=_CANDIDATES,
+            work_unit_ids=("work-1",),
         )
 
 
@@ -88,6 +102,7 @@ def test_output_validation__without_source_authority__keeps_requested_effect() -
         output_responsibilities.validate_output_responsibility_candidate(
             candidate,
             output_candidates=_CANDIDATES,
+            work_unit_ids=("work-1",),
         )
         == candidate
     )
@@ -101,5 +116,29 @@ def test_output_schema__with_prohibited_effect__removes_effect() -> None:
         output_responsibilities.build_output_responsibility_output_schema(
             _CANDIDATES,
             prohibited_effects={"SEND"},
+            work_unit_ids=("work-1",),
         ).json_schema,
     )
+
+
+def test_output_validation__same_capability_for_distinct_work__preserves_both() -> None:
+    candidate = {
+        "output_responsibilities": [
+            {
+                "resource_type": "GMAIL_DRAFT",
+                "effect": "CREATE",
+                "work_unit_ids": ["work-1"],
+            },
+            {
+                "resource_type": "GMAIL_DRAFT",
+                "effect": "CREATE",
+                "work_unit_ids": ["work-2"],
+            },
+        ]
+    }
+
+    assert output_responsibilities.validate_output_responsibility_candidate(
+        candidate,
+        output_candidates=_CANDIDATES,
+        work_unit_ids=("work-1", "work-2"),
+    ) == candidate

@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Literal, cast
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     AcquisitionResultV1,
@@ -126,13 +126,20 @@ class FakeLLMRuntime:
         return result
 
 
-def request_intent() -> RequestIntentV2:
+def request_intent() -> RequestIntentV3:
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "meta": {"artifact_id": "intent-1", "revision": 1, "based_on": []},
         "goal": "Summarize Kim's project updates",
         "completion_conditions": ["Relevant evidence is available."],
-        "constraints": [{"kind": "PERSON", "field": "person", "value": "Kim"}],
+        "constraints": [
+            {
+                "kind": "PERSON",
+                "field": "person",
+                "value": "Kim",
+                "work_unit_ids": ["work-1"],
+            }
+        ],
         "ambiguity": {
             "requires_confirmation": False,
             "reason_codes": [],
@@ -141,6 +148,23 @@ def request_intent() -> RequestIntentV2:
         "requested_effect_hints": ["READ"],
         "requested_resource_hints": ["GMAIL_THREAD"],
         "analysis_requirement": "REQUIRED",
+        "effect_prohibitions": [],
+        "requested_work": {
+            "work_units": [
+                {
+                    "unit_id": "work-1",
+                    "request_provenance": [
+                        {
+                            "source": "USER_REQUEST",
+                            "start_offset": 0,
+                            "end_offset": 31,
+                            "source_text": "Summarize Kim's project updates",
+                        }
+                    ],
+                }
+            ],
+            "work_relations": [],
+        },
     }
 
 
@@ -148,7 +172,10 @@ def tool_route_plan(
     routes: Sequence[Mapping[str, object]] | None = None,
 ) -> ToolRoutePlanV2:
     input_routes = (
-        [dict(route) for route in routes]
+        [
+            {**dict(route), "work_unit_ids": list(route.get("work_unit_ids", ["work-1"]))}
+            for route in routes
+        ]
         if routes is not None
         else [
             {
@@ -158,6 +185,7 @@ def tool_route_plan(
                 "allowed_read_tool_ids": ["gmail_search_threads"],
                 "required": True,
                 "reason_codes": [],
+                "work_unit_ids": ["work-1"],
             }
         ]
     )

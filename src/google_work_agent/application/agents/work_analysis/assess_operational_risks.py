@@ -7,7 +7,7 @@ from copy import deepcopy
 from typing import cast
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_candidates import (
     OperationalRiskAssessmentV1,
@@ -70,7 +70,7 @@ ASSESS_OPERATIONAL_RISKS_OUTPUT_SCHEMA = OutputSchemaDefinition(
 
 def assess_operational_risks(
     *,
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     work_facts: Sequence[WorkFactV1],
     validated_relations: Sequence[WorkRelationV1],
     evidence: list[dict[str, object]],

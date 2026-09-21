@@ -4,7 +4,7 @@ from google_work_agent.adapters.langgraph.subgraphs.work_analysis.state import (
     WorkAnalysisLocalState,
 )
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_result import (
     WorkFactV1,
@@ -23,7 +23,7 @@ class DetectDuplicateConflictCandidatesInput(TypedDict):
     evidence: list[dict[str, object]]
     source_state: dict[str, object]
     allowed_evidence_refs: set[str]
-    request_intent: RequestIntentV2
+    request_intent: RequestIntentV3
     task_duplicate_review_required: bool
 
 
@@ -61,6 +61,6 @@ def project_detect_duplicate_conflict_candidates_input(
             ),
         },
         "allowed_evidence_refs": set(state["evidence_refs"]),
-        "request_intent": cast(RequestIntentV2, state["request_intent"]),
+        "request_intent": cast(RequestIntentV3, state["request_intent"]),
         "task_duplicate_review_required": project_task_duplicate_review_requirement(state),
     }

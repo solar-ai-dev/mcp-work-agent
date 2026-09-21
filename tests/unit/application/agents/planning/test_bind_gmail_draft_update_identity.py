@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+from copy import deepcopy
 from typing import cast
 
 import pytest
@@ -27,6 +28,7 @@ ROUTE = {
     "effect": "UPDATE",
     "selected_tool_id": "gmail_update_draft",
     "reason_codes": [],
+    "work_unit_ids": ["work-1"],
 }
 PAYLOAD: dict[str, object] = {
     "to": ["recipient@example.com"],
@@ -178,7 +180,7 @@ def test_gmail_draft_update__argument_prompt__receives_bounded_editable_source()
             }
         ],
         bound_tool_schemas=[bound],
-        request_intent={},
+        request_intent=None,
         evidence=[
             {
                 "evidence_id": "draft-evidence",
@@ -343,7 +345,7 @@ def test_gmail_draft_update__same_resource_versions__binds_selected_evidence_sna
             }
         ],
         bound_tool_schemas=[bound],
-        request_intent={},
+        request_intent=None,
         evidence=evidence,
         source_snapshots={
             "draft-v1": {**PAYLOAD, "body": "이전 본문"},
@@ -371,6 +373,43 @@ def _compose(
     selected_resources: tuple[SelectedResourceRef, ...] = (),
     model_evidence_refs: list[str] | None = None,
 ) -> tuple[dict[str, object], ...]:
+    if request_intent is not None:
+        request_intent = deepcopy(request_intent)
+        request_intent.setdefault(
+            "requested_work",
+            {
+                "work_units": [
+                    {
+                        "unit_id": "work-1",
+                        "request_provenance": [
+                            {
+                                "source": "USER_REQUEST",
+                                "start_offset": 0,
+                                "end_offset": 1,
+                                "source_text": "x",
+                            }
+                        ],
+                    }
+                ],
+                "work_relations": [],
+            },
+        )
+        request_intent.setdefault("effect_prohibitions", [])
+        request_intent.setdefault(
+            "resource_responsibilities",
+            {
+                "source_reads": [],
+                "outputs": [
+                    {
+                        "resource_type": "GMAIL_DRAFT",
+                        "effect": "UPDATE",
+                        "work_unit_ids": ["work-1"],
+                    }
+                ],
+            },
+        )
+        for constraint in request_intent.get("constraints", []):
+            constraint.setdefault("work_unit_ids", ["work-1"])
     bound = cast(
         BoundSelectedToolSchemaV1,
         {
@@ -398,7 +437,7 @@ def _compose(
                 }
             ],
             bound_tool_schemas=[bound],
-            request_intent=request_intent or {},
+            request_intent=request_intent,
             evidence=(
                 [
                     {

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.tool_routing.bind_registry_candidates import (
     coarse_resource_category,
@@ -39,7 +39,7 @@ _ANALYSIS_REQUIRED_REASON_CODES = frozenset(
 
 def effective_analysis_required(
     *,
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     tool_route_plan: ToolRoutePlanV2,
 ) -> bool:
     """Derive Work Analysis applicability from current semantic artifacts.
@@ -66,7 +66,7 @@ def policy_analysis_required(tool_route_plan: ToolRoutePlanV2) -> bool:
 
 def resolve_policy_preconditions(
     *,
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     candidate: SemanticRouteCandidate,
     policy_confirmation_receipts: Sequence[PolicyConfirmationReceiptV1] = (),
     current_interrupt_id: str | None = None,
@@ -154,15 +154,31 @@ def _merge_required_reads(
 ) -> SemanticRouteCandidate:
     input_resources = set(candidate.input_resource_types)
     reason_codes = dict(candidate.input_reason_codes)
+    work_unit_ids_by_resource = dict(candidate.input_work_unit_bindings)
+    output_unit_ids = tuple(
+        dict.fromkeys(
+            unit_id
+            for _resource_type, _effect, unit_ids in candidate.output_work_unit_bindings
+            for unit_id in unit_ids
+        )
+    )
     for _connector_id, resource_type, reason_code in required_reads:
         input_resources.add(resource_type)
         reason_codes[resource_type] = reason_code
+        existing = list(work_unit_ids_by_resource.get(resource_type, ()))
+        existing.extend(unit_id for unit_id in output_unit_ids if unit_id not in existing)
+        work_unit_ids_by_resource[resource_type] = tuple(existing)
     return SemanticRouteCandidate(
         input_resource_types=tuple(sorted(input_resources)),
         output_pairs=candidate.output_pairs,
         output_mode=candidate.output_mode,
         analysis_requirement=candidate.analysis_requirement,
         input_reason_codes=tuple(sorted(reason_codes.items())),
+        input_work_unit_bindings=tuple(
+            (resource_type, work_unit_ids_by_resource[resource_type])
+            for resource_type in sorted(input_resources)
+        ),
+        output_work_unit_bindings=candidate.output_work_unit_bindings,
     )
 
 
@@ -176,7 +192,7 @@ PolicyReadTriple = tuple[str, str, str]
 class ScopeExpansionResolver:
     """Pure comparison of Policy Precondition reads against explicit user scope.
 
-    "Explicit scope" is read from ``RequestIntentV2.constraints`` entries with
+    "Explicit scope" is read from ``RequestIntentV3.constraints`` entries with
     ``kind="SCOPE"``, ``field in {"required_sources", "forbidden_sources"}``
     -- the same coarse EMAIL/TASK/CALENDAR source vocabulary
     ``coarse_resource_category`` already produces, established (not
@@ -190,7 +206,7 @@ class ScopeExpansionResolver:
     def out_of_scope_reads(
         self,
         *,
-        request_intent: RequestIntentV2,
+        request_intent: RequestIntentV3,
         required_reads: Iterable[PolicyReadTriple],
         category_of: Callable[[str], str],
     ) -> tuple[PolicyReadTriple, ...]:
@@ -207,7 +223,7 @@ class ScopeExpansionResolver:
     def find_valid_approval(
         self,
         *,
-        request_intent: RequestIntentV2,
+        request_intent: RequestIntentV3,
         required_resource_types: tuple[str, ...],
         reason_codes: tuple[str, ...],
         receipts: Sequence[PolicyConfirmationReceiptV1],
@@ -216,7 +232,7 @@ class ScopeExpansionResolver:
         """Fail-closed lookup: a receipt only unlocks the exact resume it was
         built for. It must be APPROVED, carry the ``interrupt_id`` that was
         *just* resolved (never an older or foreign one -- receipts are not
-        standing credentials), reference the current ``RequestIntentV2``
+        standing credentials), reference the current ``RequestIntentV3``
         revision in ``meta.based_on``, and its ``decision_context_hash`` must
         match the exact current out-of-scope read set recomputed fresh. Any
         mismatch (wrong run, wrong interrupt, stale revision, tampered hash)
@@ -258,7 +274,7 @@ def build_policy_confirmation_receipt(
     id_factory: Callable[[], str],
     interrupt_id: str,
     decision: Literal["APPROVED", "DECLINED"],
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     required_resource_types: tuple[str, ...],
     reason_codes: tuple[str, ...],
     affected_route_ids: list[str],
@@ -305,7 +321,7 @@ def build_policy_confirmation_receipt(
 
 
 def _explicit_source_scope(
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
 ) -> tuple[frozenset[str] | None, frozenset[str]]:
     required: set[str] | None = None
     forbidden: set[str] = set()

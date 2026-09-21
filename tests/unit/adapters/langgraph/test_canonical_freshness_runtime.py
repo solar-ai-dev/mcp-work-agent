@@ -26,7 +26,7 @@ from google_work_agent.adapters.langgraph.main.supervisor_state_projection impor
     project_supervisor_state,
 )
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     RetrievalResultV1,
@@ -285,7 +285,7 @@ def _state() -> GraphState:
 def _state_with_reusable_input_observation() -> GraphState:
     state = _state()
     state["request_intent"] = cast(
-        RequestIntentV2,
+        RequestIntentV3,
         {
             "schema_version": 2,
             "meta": _meta("intent-1", 1),

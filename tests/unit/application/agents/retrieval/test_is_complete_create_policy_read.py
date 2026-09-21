@@ -3,7 +3,7 @@ from typing import cast
 import pytest
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     AcquisitionResultV1,
@@ -38,7 +38,7 @@ def test_is_complete_create_policy_read__policy_routes__requires_every_source_co
 ) -> None:
     result = is_complete_create_policy_read(
         request_intent=cast(
-            RequestIntentV2,
+            RequestIntentV3,
             {
                 "analysis_requirement": "NONE",
                 "requested_effect_hints": (
@@ -88,7 +88,7 @@ def test_is_complete_create_policy_read__policy_routes__requires_every_source_co
 def test_is_complete_create_policy_read__unrelated_requested_resource__is_not_complete() -> None:
     result = is_complete_create_policy_read(
         request_intent=cast(
-            RequestIntentV2,
+            RequestIntentV3,
             {
                 "analysis_requirement": "NONE",
                 "requested_effect_hints": ["READ", "CREATE"],

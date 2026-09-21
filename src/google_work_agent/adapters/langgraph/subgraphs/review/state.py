@@ -23,7 +23,7 @@ from google_work_agent.application.agents.planning.contracts.answer_draft import
 )
 from google_work_agent.application.agents.planning.contracts.planning_result import PlanningResultV2
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     AcquisitionResultV1,
@@ -77,7 +77,7 @@ _TYPE_HINT_NAMESPACE = (
 class ReviewInputState(AgentSubgraphInputEnvelope, total=False):
     """Parent projection owned by Review."""
 
-    request_intent: RequestIntentV2 | None
+    request_intent: RequestIntentV3 | None
     tool_route_plan: ToolRoutePlanV2 | None
     retrieval_result: RetrievalResultV1 | None
     work_analysis_result: WorkAnalysisResultV2 | None

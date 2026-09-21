@@ -82,6 +82,20 @@ def identify_goal(**kwargs: Any) -> Any:
     kwargs.setdefault("source_dependency_candidates", _SOURCE_DEPENDENCY_CANDIDATES)
     kwargs.setdefault("output_responsibility_candidates", _OUTPUT_RESPONSIBILITY_CANDIDATES)
     kwargs.setdefault(
+        "requested_work_prompt_ref",
+        _prompt_ref(
+            "request_understanding.identify_requested_work",
+            "identify_requested_work",
+        ),
+    )
+    kwargs.setdefault(
+        "work_relation_prompt_ref",
+        _prompt_ref(
+            "request_understanding.identify_work_relations",
+            "identify_work_relations",
+        ),
+    )
+    kwargs.setdefault(
         "effect_prohibition_prompt_ref",
         _prompt_ref(
             "request_understanding.identify_effect_prohibitions",
@@ -116,6 +130,20 @@ def identify_goal_with_budget(**kwargs: Any) -> Any:
     kwargs.setdefault("source_dependency_candidates", _SOURCE_DEPENDENCY_CANDIDATES)
     kwargs.setdefault("output_responsibility_candidates", _OUTPUT_RESPONSIBILITY_CANDIDATES)
     kwargs.setdefault(
+        "requested_work_prompt_ref",
+        _prompt_ref(
+            "request_understanding.identify_requested_work",
+            "identify_requested_work",
+        ),
+    )
+    kwargs.setdefault(
+        "work_relation_prompt_ref",
+        _prompt_ref(
+            "request_understanding.identify_work_relations",
+            "identify_work_relations",
+        ),
+    )
+    kwargs.setdefault(
         "effect_prohibition_prompt_ref",
         _prompt_ref(
             "request_understanding.identify_effect_prohibitions",
@@ -143,6 +171,36 @@ def identify_goal_with_budget(**kwargs: Any) -> Any:
             "identify_source_status",
         ),
     )
+    prior_candidate = kwargs.get("prior_goal_candidate")
+    if isinstance(prior_candidate, dict) and "requested_work" not in prior_candidate:
+        request = cast(WorkflowStartRequest, kwargs["request"])
+        upgraded = deepcopy(prior_candidate)
+        upgraded["requested_work"] = {
+            "work_units": [
+                {
+                    "unit_id": "work-1",
+                    "request_provenance": [
+                        {
+                            "source": "USER_REQUEST",
+                            "start_offset": 0,
+                            "end_offset": len(request.request_text),
+                            "source_text": request.request_text,
+                        }
+                    ],
+                }
+            ],
+            "work_relations": [],
+        }
+        upgraded.setdefault("effect_prohibitions", [])
+        for constraint in upgraded.get("constraints", []):
+            constraint.setdefault("work_unit_ids", ["work-1"])
+        responsibilities = upgraded.get("resource_responsibilities", {})
+        for item in [
+            *responsibilities.get("source_reads", []),
+            *responsibilities.get("outputs", []),
+        ]:
+            item.setdefault("work_unit_ids", ["work-1"])
+        kwargs["prior_goal_candidate"] = upgraded
     return _identify_goal_with_budget(**kwargs)
 
 
@@ -155,11 +213,33 @@ def detect_ambiguity(**kwargs: Any) -> AmbiguityV1:
 
 
 def _goal_constraints(*additional: dict[str, object], **values: object) -> dict[str, object]:
+    normalized: dict[str, object] = {}
+    for field, raw in values.items():
+        if field == "status":
+            normalized[field] = raw
+            continue
+        if field == "coverage_requirement":
+            normalized[field] = {
+                "value": raw,
+                "work_unit_ids": ["work-1"],
+            }
+            continue
+        normalized[field] = [
+            (
+                {**item, "work_unit_ids": item.get("work_unit_ids", ["work-1"])}
+                if isinstance(item, dict)
+                else {"value": item, "work_unit_ids": ["work-1"]}
+            )
+            for item in cast(list[object], raw)
+        ]
     return {
         **dict.fromkeys(_GMAIL_CONSTRAINT_KINDS, []),
-        "coverage_requirement": "NOT_COLLECTION",
-        **values,
-        "additional_constraints": list(additional),
+        "coverage_requirement": {"value": "NOT_COLLECTION", "work_unit_ids": ["work-1"]},
+        **normalized,
+        "additional_constraints": [
+            {**item, "work_unit_ids": item.get("work_unit_ids", ["work-1"])}
+            for item in additional
+        ],
     }
 
 
@@ -197,6 +277,7 @@ def _resource_responsibilities(
                     "resource_type": source_type,
                     "required_information": required_information,
                     "target_scope": target_scope,
+                    "work_unit_ids": ["work-1"],
                 }
             ]
             if source_type is not None
@@ -205,11 +286,105 @@ def _resource_responsibilities(
             else []
         ),
         "outputs": (
-            [{"resource_type": output_type, "effect": output_effect}]
+            [
+                {
+                    "resource_type": output_type,
+                    "effect": output_effect,
+                    "work_unit_ids": ["work-1"],
+                }
+            ]
             if output_type is not None and output_effect is not None
             else []
         ),
     }
+
+
+def _validate_request_goal_candidate(
+    value: object,
+    *,
+    resource_responsibilities: object,
+    **kwargs: object,
+) -> Any:
+    bound_responsibilities = deepcopy(cast(dict[str, Any], resource_responsibilities))
+    for item in [
+        *bound_responsibilities.get("source_reads", []),
+        *bound_responsibilities.get("outputs", []),
+    ]:
+        item.setdefault("work_unit_ids", ["work-1"])
+    return goal_schema.validate_request_goal_candidate(
+        value,
+        resource_responsibilities=bound_responsibilities,
+        effect_prohibitions={"effect_prohibitions": []},
+        requested_work={
+            "work_units": [
+                {
+                    "unit_id": "work-1",
+                    "request_provenance": [
+                        {
+                            "source": "USER_REQUEST",
+                            "start_offset": 0,
+                            "end_offset": 1,
+                            "source_text": "x",
+                        }
+                    ],
+                }
+            ],
+            "work_relations": [],
+        },
+        work_unit_ids=("work-1",),
+        **kwargs,
+    )
+
+
+def _prompt_call(
+    runtime: FakeStructuredInferencePort,
+    prompt_id: str,
+) -> dict[str, object]:
+    return next(
+        call
+        for call in runtime.calls
+        if cast(PromptReference, call["prompt_ref"]).prompt_id == prompt_id
+    )
+
+
+def _single_requested_work(request_text: str) -> dict[str, object]:
+    return {
+        "work_units": [
+            {
+                "unit_id": "work-1",
+                "request_provenance": [
+                    {
+                        "source": "USER_REQUEST",
+                        "start_offset": 0,
+                        "end_offset": len(request_text),
+                        "source_text": request_text,
+                    }
+                ],
+            }
+        ],
+        "work_relations": [],
+    }
+
+
+def _normalized_v3_candidate(
+    candidate: dict[str, object],
+    *,
+    request_text: str = "x",
+) -> dict[str, object]:
+    result = deepcopy(candidate)
+    result["requested_work"] = _single_requested_work(request_text)
+    result.setdefault("effect_prohibitions", [])
+    for constraint in cast(list[dict[str, object]], result.get("constraints", [])):
+        constraint.setdefault("work_unit_ids", ["work-1"])
+    responsibilities = cast(
+        dict[str, list[dict[str, object]]], result.get("resource_responsibilities", {})
+    )
+    for item in [
+        *responsibilities.get("source_reads", []),
+        *responsibilities.get("outputs", []),
+    ]:
+        item.setdefault("work_unit_ids", ["work-1"])
+    return result
 
 
 @pytest.mark.parametrize(
@@ -242,8 +417,11 @@ def test_normalized_search_semantic_fields__wrong_kind__fails_output_contract(
         },
         "analysis_requirement": "NONE",
     }
+    candidate = _normalized_v3_candidate(candidate)
     if valid:
-        goal_schema.validate_normalized_request_goal_candidate(candidate)
+        goal_schema.validate_normalized_request_goal_candidate(
+            _normalized_v3_candidate(candidate)
+        )
     else:
         with pytest.raises(ValueError, match="normalized request goal candidate is invalid"):
             goal_schema.validate_normalized_request_goal_candidate(candidate)
@@ -442,6 +620,7 @@ def test_source_status__fixed_source_role__accepts_only_its_explicit_scope(
         "field": "status",
         "value": status_value,
         "source_resource_type": resource_type,
+        "work_unit_ids": ["work-1"],
         "provenance": {
             "source": "USER_REQUEST",
             "start_offset": request_text.index(source_text),
@@ -467,6 +646,7 @@ def _source_dependency_decisions(
                     "dependency": "SOURCE_REQUIRED",
                     "required_information": source[0],
                     "target_scope": source[1],
+                    "work_unit_ids": ["work-1"],
                 }
             )
         else:
@@ -484,6 +664,7 @@ def _output_responsibility_decisions(
             {
                 "resource_type": candidate["resource_type"],
                 "effect": output_types[candidate["resource_type"]],
+                "work_unit_ids": ["work-1"],
             }
             for candidate in _OUTPUT_RESPONSIBILITY_CANDIDATES
             if candidate["resource_type"] in output_types
@@ -499,6 +680,7 @@ def _effect_prohibition_decisions(*forbidden: str) -> dict[str, object]:
                 "prohibition": (
                     "FORBIDDEN" if candidate["effect"] in forbidden else "NOT_FORBIDDEN"
                 ),
+                "work_unit_ids": ["work-1"],
             }
             for candidate in _EFFECT_PROHIBITION_CANDIDATES
         ]
@@ -538,9 +720,12 @@ def test_source_status__task_update_output__does_not_become_completed_source_sco
                 "resource_type": "TASK",
                 "required_information": ["기존 할 일 identity"],
                 "target_scope": "SINGULAR",
+                "work_unit_ids": ["work-1"],
             }
         ],
-        "outputs": [{"resource_type": "TASK", "effect": "UPDATE"}],
+        "outputs": [
+            {"resource_type": "TASK", "effect": "UPDATE", "work_unit_ids": ["work-1"]}
+        ],
     }
     assert not any(item["field"] == "status" for item in candidate["constraints"])
 
@@ -587,7 +772,14 @@ def test_source_status__without_current_run_source_binding__uses_bounded_revisio
     )
 
     assert not any(item["field"] == "status" for item in candidate["constraints"])
-    revision_input = cast(dict[str, object], runtime.calls[5]["prompt_input"])
+    revision_input = cast(
+        dict[str, object],
+        next(
+            call["prompt_input"]
+            for call in runtime.calls
+            if "failure_record" in cast(dict[str, object], call["prompt_input"])
+        ),
+    )
     failure_record = cast(dict[str, object], revision_input["failure_record"])
     assert failure_record["failure_reason_code"] == ("REQUEST_STATUS_PROVENANCE_MISMATCH")
     assert len(budget["semantic_revisions_used_by_failure"]) == 1
@@ -623,6 +815,7 @@ def test_source_status_revision__with_unaffected_owner_outputs__preserves_them()
 
     prompt_ids = [call["prompt_ref"].prompt_id for call in runtime.calls]
     assert prompt_ids == [
+        "request_understanding.identify_requested_work",
         "request_understanding.identify_goal",
         "request_understanding.identify_effect_prohibitions",
         "request_understanding.identify_source_dependencies",
@@ -636,9 +829,16 @@ def test_source_status_revision__with_unaffected_owner_outputs__preserves_them()
                 "resource_type": "GMAIL_THREAD",
                 "required_information": ["납품 일정", "답장 대상 대화 identity"],
                 "target_scope": "SINGULAR",
+                "work_unit_ids": ["work-1"],
             }
         ],
-        "outputs": [{"resource_type": "GMAIL_MESSAGE", "effect": "SEND"}],
+        "outputs": [
+            {
+                "resource_type": "GMAIL_MESSAGE",
+                "effect": "SEND",
+                "work_unit_ids": ["work-1"],
+            }
+        ],
     }
     assert len(budget["semantic_revisions_used_by_failure"]) == 1
 
@@ -653,12 +853,14 @@ def test_target_confirmation_resume__with_nonempty_source__preserves_without_rea
                 "kind": "USER_REQUIREMENT",
                 "field": "business_concepts",
                 "value": ["일정 시간 확인"],
+                "work_unit_ids": ["work-1"],
             },
             {
                 "kind": "SCOPE",
                 "field": "status",
                 "value": "CONFIRMED",
                 "source_resource_type": "CALENDAR_EVENT",
+                "work_unit_ids": ["work-1"],
                 "provenance": {
                     "source": "USER_REQUEST",
                     "start_offset": 0,
@@ -675,6 +877,7 @@ def test_target_confirmation_resume__with_nonempty_source__preserves_without_rea
                     "resource_type": "CALENDAR_EVENT",
                     "required_information": ["event_identity", "start", "end"],
                     "target_scope": "SINGULAR",
+                    "work_unit_ids": ["work-1"],
                 }
             ],
             "outputs": [],
@@ -711,6 +914,7 @@ def test_target_confirmation_resume__with_nonempty_source__preserves_without_rea
             "kind": "USER_REQUIREMENT",
             "field": "search_terms",
             "value": "프로젝트 검토 회의",
+            "work_unit_ids": ["work-1"],
             "provenance": {
                 "source": "CONFIRMATION_RESPONSE",
                 "start_offset": 0,
@@ -729,6 +933,7 @@ def test_target_confirmation_resume__with_empty_source__reassesses_responsibilit
         "field": "status",
         "value": "CONFIRMED",
         "source_resource_type": "CALENDAR_EVENT",
+        "work_unit_ids": ["work-1"],
         "provenance": {
             "source": "USER_REQUEST",
             "start_offset": 0,
@@ -744,6 +949,7 @@ def test_target_confirmation_resume__with_empty_source__reassesses_responsibilit
                 "kind": "USER_REQUIREMENT",
                 "field": "business_concepts",
                 "value": ["일정 시간 확인"],
+                "work_unit_ids": ["work-1"],
             },
             status,
         ],
@@ -751,7 +957,13 @@ def test_target_confirmation_resume__with_empty_source__reassesses_responsibilit
         "requested_resource_hints": ["GMAIL_DRAFT"],
         "resource_responsibilities": {
             "source_reads": [],
-            "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
+            "outputs": [
+                {
+                    "resource_type": "GMAIL_DRAFT",
+                    "effect": "CREATE",
+                    "work_unit_ids": ["work-1"],
+                }
+            ],
         },
         "analysis_requirement": "NONE",
     }
@@ -799,6 +1011,7 @@ def test_target_confirmation_resume__with_empty_source__reassesses_responsibilit
                 "resource_type": "CALENDAR_EVENT",
                 "required_information": ["event_identity", "start", "end"],
                 "target_scope": "SINGULAR",
+                "work_unit_ids": ["work-1"],
             }
         ],
         "outputs": cast(Any, prior_candidate)["resource_responsibilities"]["outputs"],
@@ -810,6 +1023,7 @@ def test_target_confirmation_resume__with_empty_source__reassesses_responsibilit
         "kind": "USER_REQUIREMENT",
         "field": "required_information",
         "value": ["event_identity", "start", "end"],
+        "work_unit_ids": ["work-1"],
     } in candidate["constraints"]
     assert [call["prompt_ref"].prompt_id for call in runtime.calls] == [
         "request_understanding.identify_source_dependencies"
@@ -898,6 +1112,7 @@ def test_confirmation_resume__with_selected_resource__keeps_identity_authority()
                 "kind": "RESOURCE",
                 "field": "selected_resource_id",
                 "value": [selected.resource_id],
+                "work_unit_ids": ["work-1"],
             }
         ],
         "requested_effect_hints": ["READ"],
@@ -908,6 +1123,7 @@ def test_confirmation_resume__with_selected_resource__keeps_identity_authority()
                     "resource_type": "CALENDAR_EVENT",
                     "required_information": ["event_identity", "start", "end"],
                     "target_scope": "SINGULAR",
+                    "work_unit_ids": ["work-1"],
                 }
             ],
             "outputs": [],
@@ -1052,7 +1268,7 @@ def test_same_resource_read_update__single_responsibility__preserves_both_roles(
 
     assert candidate["requested_effect_hints"] == ["READ", "UPDATE"]
     assert candidate["requested_resource_hints"] == ["TASK"]
-    assert len(runtime.calls) == 5
+    assert len(runtime.calls) == 6
 
 
 def test_split_source_information__normalizes_once__before_finalize() -> None:
@@ -1104,16 +1320,23 @@ def test_split_source_information__normalizes_once__before_finalize() -> None:
     )
 
     assert raw_candidate == original_candidate
-    assert len(runtime.calls) == 4
+    assert len(runtime.calls) == 5
     assert candidate["resource_responsibilities"] == {
         "source_reads": [
             {
                 "resource_type": "GMAIL_DRAFT",
                 "required_information": ["기존 본문 확인", "기존 수신자 확인"],
                 "target_scope": "SINGULAR",
+                "work_unit_ids": ["work-1"],
             }
         ],
-        "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "UPDATE"}],
+        "outputs": [
+            {
+                "resource_type": "GMAIL_DRAFT",
+                "effect": "UPDATE",
+                "work_unit_ids": ["work-1"],
+            }
+        ],
     }
     assert intent["resource_responsibilities"] == candidate["resource_responsibilities"]
     assert intent["requested_effect_hints"] == ["READ", "UPDATE"]
@@ -1154,11 +1377,11 @@ def test_source_information_normalization__when_repeated__is_lossless_and_idempo
     goal_candidate = {
         key: value for key, value in raw_candidate.items() if key != "resource_responsibilities"
     }
-    normalized = goal_schema.validate_request_goal_candidate(
+    normalized = _validate_request_goal_candidate(
         goal_candidate,
         resource_responsibilities=raw_candidate["resource_responsibilities"],
     )
-    normalized_again = goal_schema.validate_request_goal_candidate(
+    normalized_again = _validate_request_goal_candidate(
         goal_candidate,
         resource_responsibilities=deepcopy(normalized["resource_responsibilities"]),
     )
@@ -1170,14 +1393,22 @@ def test_source_information_normalization__when_repeated__is_lossless_and_idempo
                 "resource_type": "GMAIL_DRAFT",
                 "required_information": ["기존 본문", "기존 수신자", "기존 제목"],
                 "target_scope": "SINGULAR",
+                "work_unit_ids": ["work-1"],
             },
             {
                 "resource_type": "GMAIL_THREAD",
                 "required_information": [],
                 "target_scope": "CRITERIA",
+                "work_unit_ids": ["work-1"],
             },
         ],
-        "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "UPDATE"}],
+        "outputs": [
+            {
+                "resource_type": "GMAIL_DRAFT",
+                "effect": "UPDATE",
+                "work_unit_ids": ["work-1"],
+            }
+        ],
     }
     assert normalized_again["resource_responsibilities"] == normalized["resource_responsibilities"]
     required_information = next(
@@ -1228,6 +1459,7 @@ def test_cross_source_draft__with_atomic_inference__keeps_separate_responsibilit
     )
 
     assert [call["prompt_ref"].prompt_id for call in runtime.calls] == [
+        "request_understanding.identify_requested_work",
         "request_understanding.identify_goal",
         "request_understanding.identify_effect_prohibitions",
         "request_understanding.identify_source_dependencies",
@@ -1235,13 +1467,14 @@ def test_cross_source_draft__with_atomic_inference__keeps_separate_responsibilit
         "request_understanding.identify_source_status",
     ]
     assert [call["output_schema"].schema_version for call in runtime.calls] == [
-        "request-goal-candidate-v16",
+        "requested-work-boundaries-v1",
+        "request-goal-candidate-v17",
         "request-effect-prohibition-decision-v1",
         "request-source-dependency-decision-v3",
         "request-output-responsibility-decision-v2",
         "request-source-status-v2",
     ]
-    assert runtime.calls[2]["prompt_input"]["goal_candidate"] == {
+    assert runtime.calls[3]["prompt_input"]["goal_candidate"] == {
         "goal": (
             "Atlas 할 일과 인쇄소 일정 보고 person@example.test에 준비 상황 메일 초안을 저장해줘."
         ),
@@ -1252,10 +1485,10 @@ def test_cross_source_draft__with_atomic_inference__keeps_separate_responsibilit
         ),
         "analysis_requirement": "NONE",
     }
-    assert runtime.calls[2]["prompt_input"]["source_candidates"] == list(
+    assert runtime.calls[3]["prompt_input"]["source_candidates"] == list(
         _SOURCE_DEPENDENCY_CANDIDATES
     )
-    assert runtime.calls[3]["prompt_input"]["output_candidates"] == list(
+    assert runtime.calls[4]["prompt_input"]["output_candidates"] == list(
         _OUTPUT_RESPONSIBILITY_CANDIDATES
     )
     assert candidate["resource_responsibilities"] == {
@@ -1264,14 +1497,22 @@ def test_cross_source_draft__with_atomic_inference__keeps_separate_responsibilit
                 "resource_type": "TASK",
                 "required_information": ["준비 상황"],
                 "target_scope": "CRITERIA",
+                "work_unit_ids": ["work-1"],
             },
             {
                 "resource_type": "CALENDAR_EVENT",
                 "required_information": ["인쇄소 일정"],
                 "target_scope": "CRITERIA",
+                "work_unit_ids": ["work-1"],
             },
         ],
-        "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
+        "outputs": [
+            {
+                "resource_type": "GMAIL_DRAFT",
+                "effect": "CREATE",
+                "work_unit_ids": ["work-1"],
+            }
+        ],
     }
     assert candidate["requested_effect_hints"] == ["READ", "CREATE"]
     assert candidate["requested_resource_hints"] == [
@@ -1279,22 +1520,28 @@ def test_cross_source_draft__with_atomic_inference__keeps_separate_responsibilit
         "CALENDAR_EVENT",
         "GMAIL_DRAFT",
     ]
-    assert runtime.calls[4]["prompt_input"]["source_reads"] == [
+    assert runtime.calls[5]["prompt_input"]["source_reads"] == [
         {
             "resource_type": "TASK",
             "required_information": ["준비 상황"],
             "target_scope": "CRITERIA",
+            "work_unit_ids": ["work-1"],
         },
         {
             "resource_type": "CALENDAR_EVENT",
             "required_information": ["인쇄소 일정"],
             "target_scope": "CRITERIA",
+            "work_unit_ids": ["work-1"],
         },
     ]
-    assert runtime.calls[4]["prompt_input"]["outputs"] == [
-        {"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}
+    assert runtime.calls[5]["prompt_input"]["outputs"] == [
+        {
+            "resource_type": "GMAIL_DRAFT",
+            "effect": "CREATE",
+            "work_unit_ids": ["work-1"],
+        }
     ]
-    assert runtime.calls[4]["prompt_input"]["allowed_status_values"] == [
+    assert runtime.calls[5]["prompt_input"]["allowed_status_values"] == [
         {
             "resource_type": "TASK",
             "values": ["COMPLETED", "INCOMPLETE"],
@@ -1350,6 +1597,7 @@ def test_explicit_send_prohibition__rejects_role_conflict__then_revises_once() -
     )
 
     assert [call["prompt_ref"].prompt_id for call in runtime.calls] == [
+        "request_understanding.identify_requested_work",
         "request_understanding.identify_goal",
         "request_understanding.identify_effect_prohibitions",
         "request_understanding.identify_source_dependencies",
@@ -1357,7 +1605,7 @@ def test_explicit_send_prohibition__rejects_role_conflict__then_revises_once() -
         "request_understanding.identify_output_responsibilities",
         "request_understanding.identify_source_status",
     ]
-    revision_input = runtime.calls[4]["prompt_input"]
+    revision_input = runtime.calls[5]["prompt_input"]
     assert revision_input["candidate_output"] == invalid_outputs
     failure_record = cast(dict[str, object], revision_input["failure_record"])
     assert failure_record["failure_reason_code"] == ("REQUEST_PROHIBITED_OUTPUT_EFFECT_SELECTED")
@@ -1367,14 +1615,22 @@ def test_explicit_send_prohibition__rejects_role_conflict__then_revises_once() -
                 "resource_type": "TASK",
                 "required_information": ["준비 상황"],
                 "target_scope": "CRITERIA",
+                "work_unit_ids": ["work-1"],
             },
             {
                 "resource_type": "CALENDAR_EVENT",
                 "required_information": ["인쇄소 일정"],
                 "target_scope": "CRITERIA",
+                "work_unit_ids": ["work-1"],
             },
         ],
-        "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
+        "outputs": [
+            {
+                "resource_type": "GMAIL_DRAFT",
+                "effect": "CREATE",
+                "work_unit_ids": ["work-1"],
+            }
+        ],
     }
     assert len(budget["semantic_revisions_used_by_failure"]) == 1
 
@@ -1405,12 +1661,13 @@ def test_source_status_inference__with_intrinsic_draft_status__skips_revision() 
         retry_budget=build_default_run_budget(),
     )
 
-    assert len(runtime.calls) == 4
+    assert len(runtime.calls) == 5
     assert candidate["resource_responsibilities"]["source_reads"] == [
         {
             "resource_type": "GMAIL_DRAFT",
             "required_information": ["기존 초안"],
             "target_scope": "SINGULAR",
+            "work_unit_ids": ["work-1"],
         }
     ]
     assert not any(item.get("field") == "status" for item in candidate["constraints"])
@@ -1512,7 +1769,7 @@ def test_request_goal_schema__additional_field__is_closed_and_has_no_kind_choice
     item = cast(dict[str, Any], additional)["items"]
     properties = cast(dict[str, Any], item)["properties"]
 
-    assert set(properties) == {"field", "value"}
+    assert set(properties) == {"field", "value", "work_unit_ids"}
     assert cast(dict[str, Any], properties["field"])["enum"] == [
         "date",
         "description",
@@ -1583,15 +1840,18 @@ def test_request_goal_schema__non_reserved_additional_field__remains_valid() -> 
         candidate, goal_schema.IDENTIFY_GOAL_OUTPUT_SCHEMA.json_schema
     )
 
-    normalized = goal_schema.validate_request_goal_candidate(
+    normalized = _validate_request_goal_candidate(
         candidate,
         resource_responsibilities=_resource_responsibilities(
             output_type="TASK", output_effect="CREATE"
         ),
     )
-    assert {"kind": "RESOURCE", "field": "title", "value": "draft"} in normalized[
-        "constraints"
-    ]
+    assert {
+        "kind": "RESOURCE",
+        "field": "title",
+        "value": "draft",
+        "work_unit_ids": ["work-1"],
+    } in normalized["constraints"]
 
 
 def test_request_goal_validator__unknown_additional_field__remains_defense_in_depth() -> None:
@@ -1622,7 +1882,7 @@ def test_request_goal_validator__unknown_additional_field__remains_defense_in_de
     )
 
     with pytest.raises(ValueError, match="unsupported additional constraint field"):
-        goal_schema.validate_request_goal_candidate(
+        _validate_request_goal_candidate(
             candidate,
             resource_responsibilities=_resource_responsibilities(),
             schema=permissive_schema,
@@ -1640,7 +1900,7 @@ def test_request_goal_schema__with_exhaustive_collection__preserves_model_scope(
         "analysis_requirement": "NONE",
     }
 
-    normalized = goal_schema.validate_request_goal_candidate(
+    normalized = _validate_request_goal_candidate(
         candidate,
         resource_responsibilities=_resource_responsibilities(
             source_type="GMAIL_THREAD",
@@ -1653,6 +1913,7 @@ def test_request_goal_schema__with_exhaustive_collection__preserves_model_scope(
         "kind": "SCOPE",
         "field": "coverage_requirement",
         "value": "EXHAUSTIVE",
+        "work_unit_ids": ["work-1"],
     } in normalized["constraints"]
 
 
@@ -1665,7 +1926,7 @@ def test_request_goal_schema__with_non_typed_collection_scope__rejects_candidate
     }
 
     with pytest.raises(ValueError, match="request goal candidate is invalid"):
-        goal_schema.validate_request_goal_candidate(
+        _validate_request_goal_candidate(
             candidate,
             resource_responsibilities=_resource_responsibilities(
                 source_type="GMAIL_THREAD",
@@ -1686,7 +1947,7 @@ def test_request_goal_schema__limited_collection__does_not_enable_exhaustive() -
         "analysis_requirement": "NONE",
     }
 
-    normalized = goal_schema.validate_request_goal_candidate(
+    normalized = _validate_request_goal_candidate(
         candidate,
         resource_responsibilities=_resource_responsibilities(
             source_type="GMAIL_THREAD",
@@ -1721,7 +1982,8 @@ def test_request_goal_schema__accepts_supported_output_pairs__before_application
         validate_output_schema(
             candidate,
             output_responsibilities.build_output_responsibility_output_schema(
-                _OUTPUT_RESPONSIBILITY_CANDIDATES
+                _OUTPUT_RESPONSIBILITY_CANDIDATES,
+                work_unit_ids=("work-1",),
             ).json_schema,
         )
         == []
@@ -1736,7 +1998,8 @@ def test_request_goal_schema__rejects_unsupported_output_pair__before_applicatio
     errors = validate_output_schema(
         candidate,
         output_responsibilities.build_output_responsibility_output_schema(
-            _OUTPUT_RESPONSIBILITY_CANDIDATES
+            _OUTPUT_RESPONSIBILITY_CANDIDATES,
+            work_unit_ids=("work-1",),
         ).json_schema,
     )
 
@@ -1759,7 +2022,7 @@ def test_request_goal_validator__with_empty_responsibility_text__rejects_candida
     }
 
     with pytest.raises(ValueError, match="has no semantic text"):
-        goal_schema.validate_request_goal_candidate(
+        _validate_request_goal_candidate(
             {key: value for key, value in candidate.items() if key != "resource_responsibilities"},
             resource_responsibilities=candidate["resource_responsibilities"],
         )
@@ -1796,9 +2059,11 @@ def test_default_repository__stays_system_owned__without_user_constraint_or_conf
         request=request,
         prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
     )
-    assert runtime.calls[0]["prompt_input"] == {
+    goal_call = _prompt_call(runtime, "request_understanding.identify_goal")
+    assert goal_call["prompt_input"] == {
         "user_request": request.request_text,
         "selected_resource_refs": [],
+        "requested_work": _single_requested_work(request.request_text),
         "run_reference_time": {
             "reference_time": "1970-01-01T09:00:00+09:00",
             "timezone": "Asia/Seoul",
@@ -2000,9 +2265,16 @@ def test_identify_goal__with_spaced_literal__restores_exact_semantic_fields() ->
                 "resource_type": "GMAIL_DRAFT",
                 "required_information": [f"초안 끝에 '{exact_sentence}'를 추가"],
                 "target_scope": "SINGULAR",
+                "work_unit_ids": ["work-1"],
             }
         ],
-        "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "UPDATE"}],
+        "outputs": [
+            {
+                "resource_type": "GMAIL_DRAFT",
+                "effect": "UPDATE",
+                "work_unit_ids": ["work-1"],
+            }
+        ],
     }
 
 
@@ -2029,17 +2301,19 @@ def test_identify_goal__canonical_call__uses_bounded_current_run_prompt() -> Non
 
     assert candidate["goal"] == "업무 메일 찾기"
     assert "ambiguity" not in candidate
-    assert runtime.calls[0]["prompt_input"] == {
+    goal_call = _prompt_call(runtime, "request_understanding.identify_goal")
+    assert goal_call["prompt_input"] == {
         "user_request": "관련 메일을 찾아줘",
         "selected_resource_refs": [],
+        "requested_work": _single_requested_work("관련 메일을 찾아줘"),
         "run_reference_time": {
             "reference_time": "1970-01-01T09:00:00+09:00",
             "timezone": "Asia/Seoul",
         },
     }
-    prompt = cast(PromptReference, runtime.calls[0]["prompt_ref"])
+    prompt = cast(PromptReference, goal_call["prompt_ref"])
     assert prompt.prompt_id == "request_understanding.identify_goal"
-    output_schema = cast(OutputSchemaDefinition, runtime.calls[0]["output_schema"])
+    output_schema = cast(OutputSchemaDefinition, goal_call["output_schema"])
     constraint_schema = cast(
         dict[str, Any],
         cast(dict[str, Any], output_schema.json_schema["properties"])["constraints"],
@@ -2088,6 +2362,7 @@ def test_identify_goal__selected_resource__preserves_trusted_read_identity() -> 
             "kind": "RESOURCE",
             "field": "selected_resource_id",
             "value": ["thread-42"],
+            "work_unit_ids": ["work-1"],
         }
     ]
 
@@ -2105,6 +2380,7 @@ def test_normalized_goal__existing_resource_update_without_source__rejects_contr
         ),
         "analysis_requirement": "NONE",
     }
+    candidate = _normalized_v3_candidate(candidate)
 
     with pytest.raises(
         goal_schema.RequestGoalSemanticValidationError,
@@ -2153,9 +2429,16 @@ def test_existing_resource_update__with_missing_source__revises_source_owner() -
                 "resource_type": "GITHUB_ISSUE",
                 "required_information": ["기존 issue identity와 현재 상태"],
                 "target_scope": "SINGULAR",
+                "work_unit_ids": ["work-1"],
             }
         ],
-        "outputs": [{"resource_type": "GITHUB_ISSUE", "effect": "UPDATE"}],
+        "outputs": [
+            {
+                "resource_type": "GITHUB_ISSUE",
+                "effect": "UPDATE",
+                "work_unit_ids": ["work-1"],
+            }
+        ],
     }
     prompt_ids = [call["prompt_ref"].prompt_id for call in runtime.calls]
     assert prompt_ids.count("request_understanding.identify_source_dependencies") == 2
@@ -2201,9 +2484,10 @@ def test_source_status_revision__with_independent_source_need__preserves_it() ->
             "resource_type": "GMAIL_THREAD",
             "required_information": ["발명된 기존 대화 identity"],
             "target_scope": "SINGULAR",
+            "work_unit_ids": ["work-1"],
         }
     ]
-    assert len(runtime.calls) == 6
+    assert len(runtime.calls) == 7
     assert len(budget["semantic_revisions_used_by_failure"]) == 1
 
 
@@ -2248,10 +2532,15 @@ def test_semantic_revision__user_required_source__remains_after_output_correctio
             "resource_type": "GMAIL_THREAD",
             "required_information": ["기존 메일의 납품 주소"],
             "target_scope": "SINGULAR",
+            "work_unit_ids": ["work-1"],
         }
     ]
-    assert len(runtime.calls) == 6
-    revision_input = runtime.calls[5]["prompt_input"]
+    assert len(runtime.calls) == 7
+    revision_input = next(
+        call["prompt_input"]
+        for call in runtime.calls
+        if "base_projection" in cast(dict[str, object], call["prompt_input"])
+    )
     base_projection = cast(dict[str, object], revision_input["base_projection"])
     assert base_projection["user_request"] == request.request_text
     assert base_projection["source_reads"] == [
@@ -2259,10 +2548,15 @@ def test_semantic_revision__user_required_source__remains_after_output_correctio
             "resource_type": "GMAIL_THREAD",
             "required_information": ["기존 메일의 납품 주소"],
             "target_scope": "SINGULAR",
+            "work_unit_ids": ["work-1"],
         }
     ]
     assert base_projection["outputs"] == [
-        {"resource_type": "GMAIL_MESSAGE", "effect": "SEND"}
+        {
+            "resource_type": "GMAIL_MESSAGE",
+            "effect": "SEND",
+            "work_unit_ids": ["work-1"],
+        }
     ]
 
 
@@ -2307,6 +2601,7 @@ def test_semantic_revision__validated_selected_resource__remains_bound() -> None
             "resource_type": "GMAIL_THREAD",
             "required_information": ["선택한 메일 내용"],
             "target_scope": "SINGULAR",
+            "work_unit_ids": ["work-1"],
         }
     ]
 
@@ -2520,7 +2815,10 @@ def test_identify_goal__validated_google_tasks_read__preserves_model_semantics()
 
     assert candidate["requested_effect_hints"] == ["READ"]
     assert candidate["requested_resource_hints"] == ["TASK"]
-    output_schema = cast(OutputSchemaDefinition, runtime.calls[0]["output_schema"])
+    output_schema = cast(
+        OutputSchemaDefinition,
+        _prompt_call(runtime, "request_understanding.identify_goal")["output_schema"],
+    )
     assert "allOf" not in output_schema.json_schema
 
 
@@ -2553,8 +2851,12 @@ def test_identify_goal__vague_mail_read__requires_original_search_semantics() ->
         "kind": "USER_REQUIREMENT",
         "field": "business_concepts",
         "value": ["회의"],
+        "work_unit_ids": ["work-1"],
     }
-    output_schema = cast(OutputSchemaDefinition, runtime.calls[0]["output_schema"])
+    output_schema = cast(
+        OutputSchemaDefinition,
+        _prompt_call(runtime, "request_understanding.identify_goal")["output_schema"],
+    )
     constraint_schema = cast(
         dict[str, Any],
         cast(dict[str, Any], output_schema.json_schema["properties"])["constraints"],
@@ -3014,6 +3316,7 @@ def test_external_answer__source_contradiction__uses_bounded_semantic_revision()
             "resource_type": "GMAIL_THREAD",
             "required_information": ["subject", "message_history", "timestamps"],
             "target_scope": "CRITERIA",
+            "work_unit_ids": ["work-1"],
         }
     ]
     source_calls = [

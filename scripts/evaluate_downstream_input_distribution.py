@@ -11,7 +11,7 @@ from evaluation.dataset_v8 import load_cases
 from scripts.evaluate_retrieval_plan_query_node import _load_latest_state
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
     ToolRoutePlanV2,
@@ -57,7 +57,7 @@ def main() -> None:
         has_review = isinstance(review, dict)
         analysis_required = (
             effective_analysis_required(
-                request_intent=cast(RequestIntentV2, intent),
+                request_intent=cast(RequestIntentV3, intent),
                 tool_route_plan=cast(ToolRoutePlanV2, plan),
             )
             if has_intent and has_plan

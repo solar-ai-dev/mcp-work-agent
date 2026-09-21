@@ -5,6 +5,9 @@ from typing import TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from google_work_agent.adapters.langgraph.main.routing.route_after_supervisor import (
+    RESUME_CONTRACT_VERSION,
+)
 from google_work_agent.adapters.langgraph.registry.node_registry import NodeRegistry
 from google_work_agent.adapters.langgraph.registry.resume_target_registry import (
     ResumeTargetRegistry,
@@ -64,10 +67,13 @@ def test_safe_resume_replays__same_hash_and__rejects_different_hash(tmp_path: Pa
         assert len(unit_of_work.workflow_handoffs.list_redriveable(limit=2)) == 1
 
 
-def test_safe_resume__binding_mismatch__enters_durable_recovery(tmp_path: Path) -> None:
+def test_safe_resume__persisted_v2_binding__enters_durable_recovery(tmp_path: Path) -> None:
     database_path, registry = _database_with_checkpoint(tmp_path)
     with connect_sqlite(database_path) as connection:
-        connection.execute("UPDATE workflow_bindings SET graph_version='v2' WHERE run_id='r-1';")
+        connection.execute(
+            "UPDATE workflow_bindings SET graph_version='resume-contract-v2' "
+            "WHERE run_id='r-1';"
+        )
         connection.commit()
     handler = ResumeSafeCheckpointHandler(
         unit_of_work_factory=sqlite_unit_of_work_factory(database_path),
@@ -109,11 +115,25 @@ def _database_with_checkpoint(tmp_path: Path) -> tuple[Path, ResumeTargetRegistr
         connection.commit()
     checkpoint = SqliteCheckpointAdapter(path, now_ms=lambda: 10)
     checkpoint.create_workflow_binding(
-        WorkflowBindingV1(1, "t-1", "r-1", "t-1", "SIX_ROLE_BASELINE", "v1", "AUTO", 1)
+        WorkflowBindingV1(
+            1,
+            "t-1",
+            "r-1",
+            "t-1",
+            "SIX_ROLE_BASELINE",
+            RESUME_CONTRACT_VERSION,
+            "AUTO",
+            1,
+        )
     )
     checkpoint.flush()
-    registry = ResumeTargetRegistry(NodeRegistry(graph_version="v1"), "v1")
-    target = registry.issue_main_stage("SIX_ROLE_BASELINE", "RETRIEVAL_ENTRY", "v1")
+    registry = ResumeTargetRegistry(
+        NodeRegistry(graph_version=RESUME_CONTRACT_VERSION),
+        RESUME_CONTRACT_VERSION,
+    )
+    target = registry.issue_main_stage(
+        "SIX_ROLE_BASELINE", "RETRIEVAL_ENTRY", RESUME_CONTRACT_VERSION
+    )
     admission = WorkflowExecutionAdmissionV1(
         1,
         "admission-1",
@@ -126,7 +146,7 @@ def _database_with_checkpoint(tmp_path: Path) -> tuple[Path, ResumeTargetRegistr
             "r-1",
             "t-1",
             "SIX_ROLE_BASELINE",
-            "v1",
+            RESUME_CONTRACT_VERSION,
             "AUTO",
             None,
             0,

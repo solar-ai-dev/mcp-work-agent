@@ -4,6 +4,8 @@
 
 # 입력의 의미
 
+`requested_work.work_units`는 앞 operation이 exact 원문 span으로 확정한 업무 경계다. 각 constraint는 적용되는 현재 `unit_id`를 `work_unit_ids`에 직접 기록하고 다른 업무의 의미를 복제하지 않는다.
+
 `user_request`는 현재 Run의 원문이고 `selected_resource_refs`는 사용자가 이번 요청에 선택한 대상이다. 선택은 identity의 근거이지 본문 사실을 이미 읽었다는 뜻은 아니다. `run_reference_time`은 날짜 해석의 기준이며 사용자 요구나 외부 사실이 아니다. `confirmation_response`가 있으면 이번에 확인한 선택만 반영한다. `request_reconsideration`이 있으면 현재 의도와 새 관측을 대조하되, 이전 모델 해석을 원문보다 우선하지 않는다. 이전 Run이나 입력에 없는 대화는 사용하지 않는다.
 
 # 의도 작성
@@ -21,7 +23,7 @@
 - `person`: identity가 미확정인 이름·직급. `sender`와 `recipient`는 명시된 역할이다. 일반 집합 명사를 특정 사람으로 만들지 않는다.
 - `subject`: 사용자가 제목으로 지정한 값. `period`: 사용자가 표현한 기간이며 시간축 판단은 별도 책임이다.
 - `coverage_requirement`: collection 전체가 답변 대상이면 `ALL_ITEMS`, 제한된 일부 항목이면 `LIMITED_ITEMS`, collection 요청이 아니면 `NOT_COLLECTION`을 둔다. 하나의 답을 위해 여러 자료를 비교하는 것과 collection 전체를 반환하는 것을 구분한다.
-- `additional_constraints`: 위 슬롯에 속하지 않는 명시적 실행 값은 supplied schema가 허용하는 `field`를 선택해 `field/value`로 보존한다. `kind`는 만들지 않는다.
+- `additional_constraints`: 위 슬롯에 속하지 않는 명시적 실행 값은 supplied schema가 허용하는 `field`를 선택해 `field/value/work_unit_ids`로 보존한다. `kind`는 만들지 않는다.
 
 같은 값을 의미 없이 여러 역할에 반복하지 않는다. 다만 관련 이름을 보존한다는 이유로 원문의 AND/OR 관계나 요청 범위를 바꾸지 않는다. 근거 없이 이메일·Resource ID·기간·상태를 보충하지 않는다.
 

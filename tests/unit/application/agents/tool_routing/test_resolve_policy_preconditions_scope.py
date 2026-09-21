@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Literal, cast
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.tool_routing.bind_registry_candidates import (
     coarse_resource_category,
@@ -37,9 +37,9 @@ _CALENDAR_READS = (
 
 def _request_intent(
     *, constraints: list[dict[str, object]] | None = None, revision: int = 1
-) -> RequestIntentV2:
+) -> RequestIntentV3:
     return cast(
-        RequestIntentV2,
+        RequestIntentV3,
         {
             "schema_version": 2,
             "meta": {"artifact_id": "intent-1", "revision": revision, "based_on": []},
@@ -133,7 +133,7 @@ def test_out_of__scope_reads_ignores__resource_kind_constraints() -> None:
 
 def _build_receipt(
     *,
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     interrupt_id: str = "interrupt-1",
     decision: Literal["APPROVED", "DECLINED"] = "APPROVED",
 ) -> PolicyConfirmationReceiptV1:

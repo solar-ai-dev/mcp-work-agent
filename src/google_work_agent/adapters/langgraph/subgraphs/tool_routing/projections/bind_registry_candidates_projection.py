@@ -5,7 +5,7 @@ from typing import TypedDict
 
 from google_work_agent.adapters.langgraph.subgraphs.tool_routing.state import ToolRouteStateV1
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.tool_routing.contracts.semantic_route_candidate import (
     SemanticRouteCandidate,
@@ -17,7 +17,7 @@ from google_work_agent.application.use_cases.run.policy_confirmation_receipt imp
 
 class BindRegistryCandidatesInput(TypedDict):
     candidate: SemanticRouteCandidate
-    request_intent: RequestIntentV2
+    request_intent: RequestIntentV3
     policy_confirmation_receipts: tuple[PolicyConfirmationReceiptV1, ...]
     current_interrupt_id: str | None
 

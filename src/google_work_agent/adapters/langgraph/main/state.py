@@ -26,7 +26,7 @@ from google_work_agent.application.agents.request_understanding.contracts import
     request_understanding_output,
 )
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
 from google_work_agent.application.agents.retrieval.contracts.query_plan import SourceFetchPlanV1
@@ -86,7 +86,7 @@ class GraphStateUpdateV1(TypedDict, total=False):
     """Typed partial update returned by workflow agents and the supervisor."""
 
     workflow_phase: str
-    request_intent: RequestIntentV2 | None
+    request_intent: RequestIntentV3 | None
     tool_route_plan: ToolRoutePlanV2 | None
     workflow_signal: WorkflowSignalV1 | ScopeExpansionRequiredV1 | None
     request_reconsideration: RequestReconsiderationRequiredV1 | None
@@ -189,7 +189,7 @@ class GraphState(TypedDict, total=False):
     graph_version: Required[str]
     run_input: Required[RunInputV1]
 
-    request_intent: Required[RequestIntentV2 | None]
+    request_intent: Required[RequestIntentV3 | None]
     tool_route_plan: Required[ToolRoutePlanV2 | None]
     workflow_signal: Required[WorkflowSignalV1 | ScopeExpansionRequiredV1 | None]
     request_reconsideration: NotRequired[RequestReconsiderationRequiredV1 | None]

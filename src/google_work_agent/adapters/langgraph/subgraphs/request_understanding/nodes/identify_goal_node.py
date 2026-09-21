@@ -29,6 +29,8 @@ def identify_goal_node(
     source_dependency_prompt_ref: PromptReference | None,
     output_responsibility_prompt_ref: PromptReference | None,
     source_status_prompt_ref: PromptReference | None,
+    requested_work_prompt_ref: PromptReference | None,
+    work_relation_prompt_ref: PromptReference | None,
     source_dependency_candidates: tuple[
         source_dependency_decision.SourceDependencyCandidateV1, ...
     ],
@@ -54,6 +56,8 @@ def identify_goal_node(
         source_dependency_prompt_ref=source_dependency_prompt_ref,
         output_responsibility_prompt_ref=output_responsibility_prompt_ref,
         source_status_prompt_ref=source_status_prompt_ref,
+        requested_work_prompt_ref=requested_work_prompt_ref,
+        work_relation_prompt_ref=work_relation_prompt_ref,
         confirmation_response=projection.get("confirmation_response"),
         request_reconsideration=projection.get("request_reconsideration"),
         prior_goal_candidate=projection.get("prior_goal_candidate"),
@@ -68,7 +72,7 @@ def identify_goal_node(
 def _provider_calls_requested(projection: IdentifyGoalInput) -> int:
     prior = projection.get("prior_goal_candidate")
     if prior is None:
-        return 5
+        return 7
     confirmation = projection.get("confirmation_response")
     ambiguity = projection.get("prior_ambiguity_candidate")
     target_confirmation = (

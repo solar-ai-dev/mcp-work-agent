@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     EvidenceDraftV1,
@@ -24,7 +24,7 @@ from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan
 def require_read_evidence_support(
     result: SufficiencyResultV2,
     *,
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     tool_route_plan: ToolRoutePlanV2 | None,
     evidence_drafts: Sequence[EvidenceDraftV1],
 ) -> SufficiencyResultV2:

@@ -103,7 +103,13 @@ def bind_registry_candidates(
     multiple eligible tools; semantic selection is a separate downstream authority.
     """
     output_candidates: list[BoundOutputRouteCandidateV1] = []
-    for resource_type, effect_type in candidate.output_pairs:
+    output_bindings = {
+        (resource_type, effect_type, index): work_unit_ids
+        for index, (resource_type, effect_type, work_unit_ids) in enumerate(
+            candidate.output_work_unit_bindings
+        )
+    }
+    for index, (resource_type, effect_type) in enumerate(candidate.output_pairs):
         connector_id, eligible_tool_ids = registry_candidates_for_route(
             tool_catalog=tool_catalog,
             resource_type=resource_type,
@@ -116,6 +122,10 @@ def bind_registry_candidates(
                 connector_id=connector_id,
                 effect=cast(ToolRouteEffect, effect_type.value),
                 eligible_tool_ids=eligible_tool_ids,
+                work_unit_ids=output_bindings.get(
+                    (resource_type, effect_type, index),
+                    (),
+                ),
             )
         )
     input_routes = _bind_input_routes(
@@ -124,6 +134,7 @@ def bind_registry_candidates(
         id_factory=id_factory,
         reason_code="REQUESTED_INPUT",
         reason_codes_by_resource=dict(candidate.input_reason_codes),
+        work_unit_ids_by_resource=dict(candidate.input_work_unit_bindings),
     )
     existing = {route["resource_type"] for route in input_routes}
     selected_resource_types = {
@@ -144,6 +155,12 @@ def bind_registry_candidates(
                 id_factory=id_factory,
                 reason_code=reason_code,
                 reason_codes_by_resource={},
+                work_unit_ids_by_resource={
+                    resource_type: _dependency_work_unit_ids(
+                        dependency_resource_type=resource_type,
+                        candidate=candidate,
+                    )
+                },
             )
         )
         existing.add(resource_type)
@@ -161,9 +178,15 @@ def _bind_input_routes(
     id_factory: Callable[[], str],
     reason_code: str,
     reason_codes_by_resource: Mapping[str, str],
+    work_unit_ids_by_resource: Mapping[str, tuple[str, ...]],
 ) -> list[InputToolRouteV1]:
     routes: list[InputToolRouteV1] = []
     for resource_type in sorted(set(resource_types)):
+        work_unit_ids = work_unit_ids_by_resource.get(resource_type, ())
+        if not work_unit_ids:
+            raise ToolRouteValidationError(
+                f"input route has no WorkUnit binding: {resource_type}"
+            )
         connector_id, candidates = _eligible_bindings(tool_catalog, resource_type, EffectType.READ)
         routes.append(
             {
@@ -173,9 +196,36 @@ def _bind_input_routes(
                 "allowed_read_tool_ids": list(candidates),
                 "required": True,
                 "reason_codes": [reason_codes_by_resource.get(resource_type, reason_code)],
+                "work_unit_ids": list(work_unit_ids),
             }
         )
     return routes
+
+
+def _dependency_work_unit_ids(
+    *,
+    dependency_resource_type: str,
+    candidate: SemanticRouteCandidate,
+) -> tuple[str, ...]:
+    direct_bindings = dict(candidate.input_work_unit_bindings)
+    refs: list[str] = []
+    for resource_type in candidate.input_resource_types:
+        if dependency_resource_type not in {
+            dependency for dependency, _reason in _READ_DEPENDENCIES_BY_RESOURCE.get(
+                resource_type, ()
+            )
+        }:
+            continue
+        refs.extend(
+            unit_id
+            for unit_id in direct_bindings.get(resource_type, ())
+            if unit_id not in refs
+        )
+    if not refs:
+        raise ToolRouteValidationError(
+            f"dependency route has no originating WorkUnit binding: {dependency_resource_type}"
+        )
+    return tuple(refs)
 
 
 def _eligible_bindings(

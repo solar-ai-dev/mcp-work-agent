@@ -3,7 +3,7 @@ from copy import deepcopy
 import pytest
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.tool_routing.bind_registry_candidates import (
     bind_registry_candidates,
@@ -32,13 +32,18 @@ def test_validate_route__mismatched_output_tool__fails_closed() -> None:
     ids = iter(f"id-{index}" for index in range(30))
     binding = bind_registry_candidates(
         candidate=SemanticRouteCandidate(
-            ("TASK",), (("TASK", EffectType.CREATE),), "ACTION", "REQUIRED"
+            ("TASK",),
+            (("TASK", EffectType.CREATE),),
+            "ACTION",
+            "REQUIRED",
+            input_work_unit_bindings=(("TASK", ("work-1",)),),
+            output_work_unit_bindings=(("TASK", EffectType.CREATE, ("work-1",)),),
         ),
         tool_catalog=catalog,
         id_factory=lambda: next(ids),
     )
-    intent: RequestIntentV2 = {
-        "schema_version": 2,
+    intent: RequestIntentV3 = {
+        "schema_version": 3,
         "meta": {"artifact_id": "intent-1", "revision": 1, "based_on": []},
         "goal": "goal",
         "completion_conditions": ["done"],
@@ -46,6 +51,23 @@ def test_validate_route__mismatched_output_tool__fails_closed() -> None:
         "requested_effect_hints": ["CREATE"],
         "requested_resource_hints": ["TASK"],
         "analysis_requirement": "REQUIRED",
+        "effect_prohibitions": [],
+        "requested_work": {
+            "work_units": [
+                {
+                    "unit_id": "work-1",
+                    "request_provenance": [
+                        {
+                            "source": "USER_REQUEST",
+                            "start_offset": 0,
+                            "end_offset": 4,
+                            "source_text": "goal",
+                        }
+                    ],
+                }
+            ],
+            "work_relations": [],
+        },
         "ambiguity": {"requires_confirmation": False, "reason_codes": [], "missing_fields": []},
     }
     selected_tools: dict[tuple[str, str], str] = {

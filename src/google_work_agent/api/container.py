@@ -59,7 +59,7 @@ class ApiContainer:
     local_session_manager: Any | None = None
     start_run_service: Any | None = None
     graph_profile: Any = "SIX_ROLE_BASELINE"
-    graph_version: str = "resume-contract-v2"
+    graph_version: str = "resume-contract-v3"
     schedule_run_execution: Any | None = None
     resume_target_registry: Any | None = None
     checkpoint_port: Any | None = None

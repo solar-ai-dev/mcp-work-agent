@@ -35,36 +35,52 @@
   ],
   "entries": [
     {
+      "prompt_slot_id": "request_understanding.identify_requested_work",
+      "runtime_node_id": "request.identify_goal",
+      "input_schema_version": 1,
+      "required_root_fields": ["user_request"],
+      "optional_root_fields": [],
+      "output_schema_version": 1
+    },
+    {
+      "prompt_slot_id": "request_understanding.identify_work_relations",
+      "runtime_node_id": "request.identify_goal",
+      "input_schema_version": 1,
+      "required_root_fields": ["user_request", "work_units", "constraints", "source_responsibilities", "output_responsibilities", "candidate_pairs"],
+      "optional_root_fields": [],
+      "output_schema_version": 1
+    },
+    {
       "prompt_slot_id": "request_understanding.identify_goal",
       "runtime_node_id": "request.identify_goal",
-      "input_schema_version": 2,
-      "required_root_fields": ["user_request", "selected_resource_refs"],
+      "input_schema_version": 3,
+      "required_root_fields": ["user_request", "selected_resource_refs", "requested_work"],
       "optional_root_fields": ["confirmation_response", "request_reconsideration", "run_reference_time"],
-      "output_schema_version": 16
+      "output_schema_version": 17
     },
     {
       "prompt_slot_id": "request_understanding.identify_effect_prohibitions",
       "runtime_node_id": "request.identify_goal",
-      "input_schema_version": 1,
-      "required_root_fields": ["user_request", "selected_resource_refs", "goal_candidate", "effect_candidates"],
+      "input_schema_version": 2,
+      "required_root_fields": ["user_request", "selected_resource_refs", "requested_work", "goal_candidate", "effect_candidates"],
       "optional_root_fields": ["confirmation_response", "request_reconsideration", "run_reference_time"],
-      "output_schema_version": 1
+      "output_schema_version": 2
     },
     {
       "prompt_slot_id": "request_understanding.identify_source_dependencies",
       "runtime_node_id": "request.identify_goal",
-      "input_schema_version": 2,
-      "required_root_fields": ["user_request", "selected_resource_refs", "goal_candidate", "source_candidates"],
+      "input_schema_version": 3,
+      "required_root_fields": ["user_request", "selected_resource_refs", "requested_work", "goal_candidate", "source_candidates"],
       "optional_root_fields": ["confirmation_response", "request_reconsideration", "run_reference_time"],
-      "output_schema_version": 3
+      "output_schema_version": 4
     },
     {
       "prompt_slot_id": "request_understanding.identify_output_responsibilities",
       "runtime_node_id": "request.identify_goal",
-      "input_schema_version": 1,
-      "required_root_fields": ["user_request", "selected_resource_refs", "goal_candidate", "output_candidates", "effect_prohibitions"],
+      "input_schema_version": 2,
+      "required_root_fields": ["user_request", "selected_resource_refs", "requested_work", "goal_candidate", "output_candidates", "effect_prohibitions"],
       "optional_root_fields": ["confirmation_response", "request_reconsideration", "run_reference_time"],
-      "output_schema_version": 2
+      "output_schema_version": 3
     },
     {
       "prompt_slot_id": "request_understanding.identify_source_status",

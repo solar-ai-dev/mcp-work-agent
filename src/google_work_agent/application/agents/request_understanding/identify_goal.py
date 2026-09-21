@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from pathlib import Path
+from typing import cast
 
 from google_work_agent.application.agents.preserve_exact_user_literals import (
     quoted_user_literals,
@@ -15,6 +16,7 @@ from google_work_agent.application.agents.project_run_reference_time import (
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     AmbiguityV1,
     ConstraintProvenanceSource,
+    RequestedWorkDefinitionV1,
     RequestGoalCandidateV1,
     ResourceResponsibilitiesV1,
     SourceResourceResponsibilityV1,
@@ -52,9 +54,9 @@ from .contracts.output_responsibility_decision import (
     OutputResponsibilityDecisionV2,
 )
 from .contracts.request_goal_candidate_schema import (
-    IDENTIFY_GOAL_OUTPUT_SCHEMA,
     RequestGoalSemanticValidationError,
     derive_requested_resource_fields,
+    identify_goal_output_schema,
     validate_normalized_request_goal_candidate,
     validate_request_goal_candidate,
 )
@@ -67,12 +69,14 @@ from .identify_output_responsibilities import (
     ProhibitedOutputResponsibilityDecisionError,
     identify_output_responsibilities,
 )
+from .identify_requested_work import identify_requested_work, work_unit_ids
 from .identify_source_dependencies import (
     SourceDependencyContradictionError,
     identify_source_dependencies,
     validate_source_dependency_semantics,
 )
 from .identify_source_status import identify_source_status
+from .identify_work_relations import identify_work_relations
 from .merge_resource_responsibilities import merge_resource_responsibilities
 from .preserve_explicit_search_anchors import (
     preserve_explicit_search_anchors,
@@ -91,6 +95,8 @@ def identify_goal(
     source_dependency_prompt_ref: PromptReference | None = None,
     output_responsibility_prompt_ref: PromptReference | None = None,
     source_status_prompt_ref: PromptReference | None = None,
+    requested_work_prompt_ref: PromptReference | None = None,
+    work_relation_prompt_ref: PromptReference | None = None,
     manifest_path: Path | None = None,
     confirmation_response: ConfirmationResponseProjectionV1 | None = None,
     request_reconsideration: Mapping[str, object] | None = None,
@@ -119,8 +125,22 @@ def identify_goal(
         "request_understanding.identify_source_status",
         resolved_manifest_path,
     )
+    resolved_requested_work_prompt_ref = requested_work_prompt_ref or load_prompt_reference(
+        "request_understanding.identify_requested_work", resolved_manifest_path
+    )
+    resolved_work_relation_prompt_ref = work_relation_prompt_ref or load_prompt_reference(
+        "request_understanding.identify_work_relations", resolved_manifest_path
+    )
+    requested_work = identify_requested_work(
+        llm_runtime=llm_runtime,
+        requested_mode=request.requested_mode,
+        prompt_ref=resolved_requested_work_prompt_ref,
+        user_request=request.request_text,
+    )
+    unit_ids = work_unit_ids(requested_work)
     prompt_input = _prompt_input(
         request=request,
+        requested_work=requested_work,
         confirmation_response=confirmation_response,
         request_reconsideration=request_reconsideration,
     )
@@ -128,7 +148,7 @@ def identify_goal(
         request.requested_mode,
         resolved_prompt_ref,
         prompt_input,
-        IDENTIFY_GOAL_OUTPUT_SCHEMA,
+        identify_goal_output_schema(unit_ids),
     )
     effect_prohibitions = identify_effect_prohibitions(
         llm_runtime=llm_runtime,
@@ -137,6 +157,7 @@ def identify_goal(
         prompt_input=prompt_input,
         goal_candidate=result.structured_output,
         effect_candidates=build_effect_prohibition_candidates(output_responsibility_candidates),
+        work_unit_ids=unit_ids,
     )
     source_decisions = identify_source_dependencies(
         llm_runtime=llm_runtime,
@@ -148,6 +169,7 @@ def identify_goal(
             request_text=request.request_text,
         ),
         source_candidates=source_dependency_candidates,
+        work_unit_ids=unit_ids,
     )
     output_decisions = identify_output_responsibilities(
         llm_runtime=llm_runtime,
@@ -157,6 +179,7 @@ def identify_goal(
         goal_candidate=result.structured_output,
         output_candidates=output_responsibility_candidates,
         effect_prohibitions=effect_prohibitions,
+        work_unit_ids=unit_ids,
     )
     validate_source_dependency_semantics(
         source_decisions,
@@ -181,13 +204,27 @@ def identify_goal(
         goal_candidate=result.structured_output,
         responsibilities=responsibilities,
     )
-    return _validated_candidate(
+    candidate = _validated_candidate(
         result.structured_output,
         resource_responsibilities=responsibilities,
         source_statuses=source_status_output,
         request=request,
         confirmation_response=confirmation_response,
+        effect_prohibitions=effect_prohibitions,
+        requested_work=requested_work,
     )
+    relations = identify_work_relations(
+        llm_runtime=llm_runtime,
+        requested_mode=request.requested_mode,
+        prompt_ref=resolved_work_relation_prompt_ref,
+        user_request=request.request_text,
+        requested_work=requested_work,
+        constraints=candidate["constraints"],
+        source_responsibilities=candidate["resource_responsibilities"]["source_reads"],
+        output_responsibilities=candidate["resource_responsibilities"]["outputs"],
+    )
+    candidate["requested_work"] = {**requested_work, "work_relations": relations}
+    return candidate
 
 
 def identify_goal_with_budget(
@@ -202,6 +239,8 @@ def identify_goal_with_budget(
     source_dependency_prompt_ref: PromptReference | None = None,
     output_responsibility_prompt_ref: PromptReference | None = None,
     source_status_prompt_ref: PromptReference | None = None,
+    requested_work_prompt_ref: PromptReference | None = None,
+    work_relation_prompt_ref: PromptReference | None = None,
     manifest_path: Path | None = None,
     confirmation_response: ConfirmationResponseProjectionV1 | None = None,
     request_reconsideration: Mapping[str, object] | None = None,
@@ -233,8 +272,31 @@ def identify_goal_with_budget(
         "request_understanding.identify_source_status",
         resolved_manifest_path,
     )
+    resolved_requested_work_prompt_ref = requested_work_prompt_ref or load_prompt_reference(
+        "request_understanding.identify_requested_work", resolved_manifest_path
+    )
+    resolved_work_relation_prompt_ref = work_relation_prompt_ref or load_prompt_reference(
+        "request_understanding.identify_work_relations", resolved_manifest_path
+    )
+    if (
+        confirmation_response is not None
+        and prior_goal_candidate is not None
+        and request_reconsideration is None
+    ):
+        requested_work = prior_goal_candidate["requested_work"]
+    else:
+        with provider_dispatch_budget_scope(retry_budget):
+            requested_work = identify_requested_work(
+                llm_runtime=llm_runtime,
+                requested_mode=request.requested_mode,
+                prompt_ref=resolved_requested_work_prompt_ref,
+                user_request=request.request_text,
+            )
+        retry_budget = merge_provider_dispatch_usage(retry_budget)
+    unit_ids = work_unit_ids(requested_work)
     prompt_input = _prompt_input(
         request=request,
+        requested_work=requested_work,
         confirmation_response=confirmation_response,
         request_reconsideration=request_reconsideration,
     )
@@ -255,13 +317,14 @@ def identify_goal_with_budget(
             prior_ambiguity_candidate=prior_ambiguity_candidate,
             source_dependency_candidates=source_dependency_candidates,
             output_responsibility_candidates=output_responsibility_candidates,
+            work_unit_ids=unit_ids,
         )
     with provider_dispatch_budget_scope(retry_budget):
         result = llm_runtime.infer(
             request.requested_mode,
             resolved_prompt_ref,
             prompt_input,
-            IDENTIFY_GOAL_OUTPUT_SCHEMA,
+            identify_goal_output_schema(unit_ids),
         )
         goal_output = result.structured_output
         effect_candidates = build_effect_prohibition_candidates(output_responsibility_candidates)
@@ -272,6 +335,7 @@ def identify_goal_with_budget(
             prompt_input=prompt_input,
             goal_candidate=goal_output,
             effect_candidates=effect_candidates,
+            work_unit_ids=unit_ids,
         )
         source_output = identify_source_dependencies(
             llm_runtime=llm_runtime,
@@ -283,6 +347,7 @@ def identify_goal_with_budget(
                 request_text=request.request_text,
             ),
             source_candidates=source_dependency_candidates,
+            work_unit_ids=unit_ids,
         )
         try:
             output_output = identify_output_responsibilities(
@@ -293,6 +358,7 @@ def identify_goal_with_budget(
                 goal_candidate=goal_output,
                 output_candidates=output_responsibility_candidates,
                 effect_prohibitions=prohibition_output,
+                work_unit_ids=unit_ids,
             )
         except ProhibitedOutputResponsibilityDecisionError as error:
             signature = build_semantic_failure_signature_v1(
@@ -319,6 +385,7 @@ def identify_goal_with_budget(
                 goal_candidate=goal_output,
                 output_candidates=output_responsibility_candidates,
                 effect_prohibitions=prohibition_output,
+                work_unit_ids=unit_ids,
                 candidate_output=error.candidate_output,
                 failure_record=failure_record,
             )
@@ -359,6 +426,7 @@ def identify_goal_with_budget(
                 prompt_input=prompt_input,
                 goal_candidate=source_goal,
                 source_candidates=source_dependency_candidates,
+                work_unit_ids=unit_ids,
                 candidate_output=error.candidate_output,
                 failure_record=failure_record,
             )
@@ -392,6 +460,8 @@ def identify_goal_with_budget(
                 source_statuses=source_status_output,
                 request=request,
                 confirmation_response=confirmation_response,
+                effect_prohibitions=prohibition_output,
+                requested_work=requested_work,
             )
         except RequestGoalSemanticValidationError as error:
             signature = build_semantic_failure_signature_v1(
@@ -421,6 +491,7 @@ def identify_goal_with_budget(
                         request_text=request.request_text,
                     ),
                     source_candidates=source_dependency_candidates,
+                    work_unit_ids=unit_ids,
                     candidate_output=source_output,
                     failure_record=failure_record,
                 )
@@ -447,29 +518,44 @@ def identify_goal_with_budget(
                     source_statuses=source_status_output,
                     request=request,
                     confirmation_response=confirmation_response,
+                    effect_prohibitions=prohibition_output,
+                    requested_work=requested_work,
                 )
                 retry_budget = decision["run_budget"]
-                return candidate, merge_provider_dispatch_usage(retry_budget)
-            if error.reason_code != "REQUEST_STATUS_PROVENANCE_MISMATCH":
+            elif error.reason_code != "REQUEST_STATUS_PROVENANCE_MISMATCH":
                 raise
-            source_status_output = identify_source_status(
-                llm_runtime=llm_runtime,
-                requested_mode=request.requested_mode,
-                prompt_ref=resolved_source_status_prompt_ref,
-                prompt_input=prompt_input,
-                goal_candidate=goal_output,
-                responsibilities=responsibilities,
-                candidate_output=source_status_output,
-                failure_record=failure_record,
-            )
-            candidate = _validated_candidate(
-                goal_output,
-                resource_responsibilities=responsibilities,
-                source_statuses=source_status_output,
-                request=request,
-                confirmation_response=confirmation_response,
-            )
-            retry_budget = decision["run_budget"]
+            else:
+                source_status_output = identify_source_status(
+                    llm_runtime=llm_runtime,
+                    requested_mode=request.requested_mode,
+                    prompt_ref=resolved_source_status_prompt_ref,
+                    prompt_input=prompt_input,
+                    goal_candidate=goal_output,
+                    responsibilities=responsibilities,
+                    candidate_output=source_status_output,
+                    failure_record=failure_record,
+                )
+                candidate = _validated_candidate(
+                    goal_output,
+                    resource_responsibilities=responsibilities,
+                    source_statuses=source_status_output,
+                    request=request,
+                    confirmation_response=confirmation_response,
+                    effect_prohibitions=prohibition_output,
+                    requested_work=requested_work,
+                )
+                retry_budget = decision["run_budget"]
+        relations = identify_work_relations(
+            llm_runtime=llm_runtime,
+            requested_mode=request.requested_mode,
+            prompt_ref=resolved_work_relation_prompt_ref,
+            user_request=request.request_text,
+            requested_work=requested_work,
+            constraints=candidate["constraints"],
+            source_responsibilities=candidate["resource_responsibilities"]["source_reads"],
+            output_responsibilities=candidate["resource_responsibilities"]["outputs"],
+        )
+        candidate["requested_work"] = {**requested_work, "work_relations": relations}
         return candidate, merge_provider_dispatch_usage(retry_budget)
 
 
@@ -486,6 +572,7 @@ def _resolve_confirmed_goal(
     prior_ambiguity_candidate: AmbiguityV1 | None,
     source_dependency_candidates: tuple[SourceDependencyCandidateV1, ...],
     output_responsibility_candidates: tuple[OutputResponsibilityCandidateV1, ...],
+    work_unit_ids: tuple[str, ...],
 ) -> tuple[RequestGoalCandidateV1, RunBudgetV2]:
     """Resolve only source-bound facts supplied by one confirmation response."""
 
@@ -516,6 +603,7 @@ def _resolve_confirmed_goal(
                 prompt_input=prompt_input,
                 goal_candidate=_confirmed_source_goal(candidate),
                 source_candidates=source_dependency_candidates,
+                work_unit_ids=work_unit_ids,
                 require_at_least_one_source=True,
             )
             responsibilities = merge_resource_responsibilities(
@@ -539,7 +627,7 @@ def _resolve_confirmed_goal(
             request.requested_mode,
             prompt_ref,
             prompt_input,
-            IDENTIFY_GOAL_OUTPUT_SCHEMA,
+            identify_goal_output_schema(work_unit_ids),
         )
         resolved = _validated_candidate(
             result.structured_output,
@@ -547,6 +635,13 @@ def _resolve_confirmed_goal(
             source_statuses=_project_preserved_source_statuses(prior_goal_candidate),
             request=request,
             confirmation_response=confirmation_response,
+            effect_prohibitions={
+                "effect_prohibitions": [
+                    {**item, "prohibition": "FORBIDDEN"}
+                    for item in prior_goal_candidate["effect_prohibitions"]
+                ]
+            },
+            requested_work=prior_goal_candidate["requested_work"],
         )
         candidate = _merge_confirmation_constraints(
             prior_goal_candidate,
@@ -630,6 +725,7 @@ def _bind_target_resource_confirmation(
     *,
     confirmation_text: str,
 ) -> RequestGoalCandidateV1:
+    unit_ids = [unit["unit_id"] for unit in prior["requested_work"]["work_units"]]
     return {
         **prior,
         "constraints": [
@@ -644,6 +740,7 @@ def _bind_target_resource_confirmation(
                     "end_offset": len(confirmation_text),
                     "source_text": confirmation_text,
                 },
+                "work_unit_ids": unit_ids,
             },
         ],
     }
@@ -675,6 +772,7 @@ def _project_preserved_output_decisions(
             {
                 "resource_type": output["resource_type"],
                 "effect": output["effect"],
+                "work_unit_ids": list(output["work_unit_ids"]),
             }
         )
     return {"output_responsibilities": decisions}
@@ -694,11 +792,19 @@ def _with_derived_resource_responsibilities(
         if constraint["field"] != "required_information"
     ]
     if source_information:
+        source_unit_ids = list(
+            dict.fromkeys(
+                unit_id
+                for source in responsibilities["source_reads"]
+                for unit_id in source["work_unit_ids"]
+            )
+        )
         constraints.append(
             {
                 "kind": "USER_REQUIREMENT",
                 "field": "required_information",
                 "value": source_information,
+                "work_unit_ids": source_unit_ids,
             }
         )
     return {
@@ -713,6 +819,7 @@ def _with_derived_resource_responsibilities(
 def _prompt_input(
     *,
     request: WorkflowStartRequest,
+    requested_work: object,
     confirmation_response: ConfirmationResponseProjectionV1 | None,
     request_reconsideration: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
@@ -728,6 +835,7 @@ def _prompt_input(
             }
             for ref in request.selected_resources
         ],
+        "requested_work": requested_work,
     }
     reference_time = project_run_reference_time(request.run_budget)
     if reference_time is not None:
@@ -746,6 +854,8 @@ def _validated_candidate(
     source_statuses: object,
     request: WorkflowStartRequest,
     confirmation_response: ConfirmationResponseProjectionV1 | None,
+    effect_prohibitions: object,
+    requested_work: object,
 ) -> RequestGoalCandidateV1:
     provenance_sources: dict[ConstraintProvenanceSource, str] = {
         "USER_REQUEST": request.request_text
@@ -758,6 +868,11 @@ def _validated_candidate(
             value,
             resource_responsibilities=resource_responsibilities,
             source_statuses=source_statuses,
+            effect_prohibitions=effect_prohibitions,
+            requested_work=requested_work,
+            work_unit_ids=work_unit_ids(
+                cast(RequestedWorkDefinitionV1, requested_work)
+            ),
             provenance_sources=provenance_sources,
         ),
         request_text=request.request_text,
@@ -823,6 +938,7 @@ def _apply_quoted_literal_authority(
                 for item in source["required_information"]
             ],
             target_scope=source["target_scope"],
+            work_unit_ids=list(source["work_unit_ids"]),
         )
         for source in responsibilities["source_reads"]
     ]
@@ -875,6 +991,7 @@ def _apply_selected_resource_authority(
         return candidate
 
     resource_ids = list(dict.fromkeys(ref.resource_id for ref in request.selected_resources))
+    unit_ids = [unit["unit_id"] for unit in candidate["requested_work"]["work_units"]]
     constraints = list(candidate["constraints"])
     selected_repositories = {
         ref.parent_resource_id
@@ -911,6 +1028,7 @@ def _apply_selected_resource_authority(
                 "kind": "RESOURCE",
                 "field": "selected_resource_id",
                 "value": missing_resource_ids,
+                "work_unit_ids": unit_ids,
             }
         )
 
@@ -924,6 +1042,7 @@ def _apply_selected_resource_authority(
                     "resource_type": hint,
                     "required_information": [],
                     "target_scope": "SINGULAR",
+                    "work_unit_ids": unit_ids,
                 }
             )
     responsibilities = ResourceResponsibilitiesV1(

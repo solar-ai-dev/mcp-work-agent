@@ -17,6 +17,24 @@ from google_work_agent.ports.llm.output_schema_validation import validate_output
 _CANDIDATES = source_dependencies.build_source_dependency_candidates(load_signed_tool_registry())
 
 
+def _source_schema(*, require_at_least_one_source: bool = False):
+    return source_dependencies.build_source_dependency_output_schema(
+        _CANDIDATES,
+        require_at_least_one_source=require_at_least_one_source,
+        work_unit_ids=("work-1",),
+    )
+
+
+def _validate_source_dependency_candidate(value: object, **kwargs: object):
+    kwargs.pop("source_candidates", None)
+    return source_dependencies.validate_source_dependency_candidate(
+        value,
+        source_candidates=_CANDIDATES,
+        work_unit_ids=("work-1",),
+        **kwargs,
+    )
+
+
 def _decisions(
     *,
     sources: dict[str, tuple[list[str], str]] | None = None,
@@ -30,6 +48,7 @@ def _decisions(
                     "dependency": "SOURCE_REQUIRED",
                     "required_information": sources[candidate["resource_type"]][0],
                     "target_scope": sources[candidate["resource_type"]][1],
+                    "work_unit_ids": ["work-1"],
                 }
                 if candidate["resource_type"] in sources
                 else {
@@ -97,7 +116,7 @@ def test_source_schema__with_non_exact_or_invalid_decisions__rejects_candidate(
 
     assert validate_output_schema(
         candidate,
-        source_dependencies.build_source_dependency_output_schema(_CANDIDATES).json_schema,
+        _source_schema().json_schema,
     )
 
 
@@ -110,7 +129,7 @@ def test_source_validation__with_cross_resource_request__preserves_dependencies(
     )
 
     assert (
-        source_dependencies.validate_source_dependency_candidate(
+        _validate_source_dependency_candidate(
             candidate,
             source_candidates=_CANDIDATES,
         )
@@ -125,9 +144,9 @@ def test_source_validation__singular_event__preserves_requested_facts_without_id
 
     assert not validate_output_schema(
         candidate,
-        source_dependencies.build_source_dependency_output_schema(_CANDIDATES).json_schema,
+        _source_schema().json_schema,
     )
-    validated = source_dependencies.validate_source_dependency_candidate(
+    validated = _validate_source_dependency_candidate(
         candidate,
         source_candidates=_CANDIDATES,
     )
@@ -147,10 +166,10 @@ def test_source_validation__criteria_event__allows_fact_without_identity() -> No
 
     assert not validate_output_schema(
         candidate,
-        source_dependencies.build_source_dependency_output_schema(_CANDIDATES).json_schema,
+        _source_schema().json_schema,
     )
     assert (
-        source_dependencies.validate_source_dependency_candidate(
+        _validate_source_dependency_candidate(
             candidate,
             source_candidates=_CANDIDATES,
         )
@@ -163,7 +182,7 @@ def test_source_schema__source_required__requires_non_empty_information() -> Non
 
     assert validate_output_schema(
         candidate,
-        source_dependencies.build_source_dependency_output_schema(_CANDIDATES).json_schema,
+        _source_schema().json_schema,
     )
 
 
@@ -172,12 +191,12 @@ def test_source_schema__general_request__allows_no_existing_source() -> None:
 
     assert not validate_output_schema(
         candidate,
-        source_dependencies.build_source_dependency_output_schema(_CANDIDATES).json_schema,
+        _source_schema().json_schema,
     )
 
 
 def test_source_semantics__source_free_answer__allows_all_not_required() -> None:
-    candidate = source_dependencies.validate_source_dependency_candidate(
+    candidate = _validate_source_dependency_candidate(
         _decisions(),
         source_candidates=_CANDIDATES,
     )
@@ -190,7 +209,7 @@ def test_source_semantics__source_free_answer__allows_all_not_required() -> None
 
 
 def test_source_semantics__standalone_output__does_not_force_retrieval() -> None:
-    candidate = source_dependencies.validate_source_dependency_candidate(
+    candidate = _validate_source_dependency_candidate(
         _decisions(),
         source_candidates=_CANDIDATES,
     )
@@ -203,7 +222,7 @@ def test_source_semantics__standalone_output__does_not_force_retrieval() -> None
 
 
 def test_source_semantics__external_answer_facts__reject_all_not_required() -> None:
-    candidate = source_dependencies.validate_source_dependency_candidate(
+    candidate = _validate_source_dependency_candidate(
         _decisions(),
         source_candidates=_CANDIDATES,
     )
@@ -227,10 +246,7 @@ def test_source_semantics__external_answer_facts__reject_all_not_required() -> N
 
 
 def test_source_schema__confirmed_target__requires_a_source_without_choosing_its_type() -> None:
-    schema = source_dependencies.build_source_dependency_output_schema(
-        _CANDIDATES,
-        require_at_least_one_source=True,
-    ).json_schema
+    schema = _source_schema(require_at_least_one_source=True).json_schema
 
     assert validate_output_schema(_decisions(), schema)
     assert not validate_output_schema(
@@ -261,7 +277,7 @@ def test_source_validation__distinct_resource_fact_owner__is_preserved(
         sources={required_resource: ([required_information], "CRITERIA")}
     )
 
-    validated = source_dependencies.validate_source_dependency_candidate(
+    validated = _validate_source_dependency_candidate(
         candidate,
         source_candidates=_CANDIDATES,
     )
@@ -281,7 +297,7 @@ def test_source_schema__source_required__accepts_known_target_scope(
 
     assert not validate_output_schema(
         candidate,
-        source_dependencies.build_source_dependency_output_schema(_CANDIDATES).json_schema,
+        _source_schema().json_schema,
     )
 
 
@@ -290,7 +306,7 @@ def test_source_schema__source_required__rejects_missing_or_unknown_target_scope
     decisions = cast(list[dict[str, object]], candidate["source_dependencies"])
     required = next(item for item in decisions if item["dependency"] == "SOURCE_REQUIRED")
     required.pop("target_scope")
-    schema = source_dependencies.build_source_dependency_output_schema(_CANDIDATES).json_schema
+    schema = _source_schema().json_schema
     assert validate_output_schema(candidate, schema)
 
     required["target_scope"] = "UNKNOWN"
@@ -304,5 +320,5 @@ def test_source_schema__source_not_required__rejects_target_scope() -> None:
 
     assert validate_output_schema(
         candidate,
-        source_dependencies.build_source_dependency_output_schema(_CANDIDATES).json_schema,
+        _source_schema().json_schema,
     )

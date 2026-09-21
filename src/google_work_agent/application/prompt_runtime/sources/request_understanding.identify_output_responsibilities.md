@@ -4,6 +4,8 @@
 
 # 입력의 의미
 
+`requested_work.work_units`는 확정된 업무 경계이며 각 output에는 그 사용자 결과를 요청한 현재 `unit_id`를 `work_unit_ids`에 직접 기록한다. 같은 Resource/effect라도 서로 다른 사용자 결과면 별도 항목으로 유지한다.
+
 `user_request`는 현재 Run의 원문이고 `goal_candidate`는 바로 앞의 goal/completion/explicit-constraint 해석이다. 두 입력이 충돌하면 원문을 우선한다. `output_candidates`는 현재 Runtime이 변경 가능한 Resource와 Resource별 허용 effect의 닫힌 목록이다. `effect_prohibitions`에서 `FORBIDDEN`인 effect는 Schema 선택지에서도 제외된다. 후보 밖 Resource를 추가하거나 같은 후보를 중복하지 않는다. 요청된 output이 아닌 후보는 반환하지 않는다.
 
 `selected_resource_refs`는 현재 선택된 기존 identity이며 output 요청의 근거를 대신하지 않는다. `confirmation_response`가 있으면 이번에 확인된 선택만 반영한다. `request_reconsideration`이 있으면 새 관측과 현재 요청을 함께 보되 이전 모델 해석을 원문보다 우선하지 않는다. `run_reference_time`은 output effect의 근거가 아니다. 이전 Run이나 입력에 없는 대화는 사용하지 않는다.

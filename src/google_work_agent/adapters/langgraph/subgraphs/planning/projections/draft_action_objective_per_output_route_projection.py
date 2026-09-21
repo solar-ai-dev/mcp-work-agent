@@ -12,6 +12,7 @@ class DraftActionObjectiveInputV1(TypedDict):
     output_routes: list[dict[str, object]]
     evidence: list[dict[str, object]]
     work_analysis: NotRequired[dict[str, object]]
+    retrieval_result: NotRequired[dict[str, object]]
 
 
 def project_draft_action_objective_per_output_route_input(
@@ -29,9 +30,12 @@ def project_draft_action_objective_per_output_route_input(
     if not isinstance(routes, Sequence) or isinstance(routes, (str, bytes)):
         raise ValueError("ACTION output_plan.output_routes is required")
     work_analysis = state.get("work_analysis")
+    retrieval_result = state.get("retrieval_result")
     evidence = state.get("evidence", ())
     if work_analysis is not None and not isinstance(work_analysis, Mapping):
         raise ValueError("work_analysis must be an object")
+    if retrieval_result is not None and not isinstance(retrieval_result, Mapping):
+        raise ValueError("retrieval_result must be an object")
     if not isinstance(evidence, Sequence) or isinstance(evidence, (str, bytes)):
         raise ValueError("evidence must be a sequence")
     output_routes = [dict(item) for item in routes if isinstance(item, Mapping)]
@@ -45,6 +49,8 @@ def project_draft_action_objective_per_output_route_input(
     }
     if work_analysis is not None:
         result["work_analysis"] = dict(work_analysis)
+    if retrieval_result is not None:
+        result["retrieval_result"] = dict(retrieval_result)
     return result
 
 

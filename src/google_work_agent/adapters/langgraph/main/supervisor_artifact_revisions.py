@@ -11,7 +11,7 @@ from google_work_agent.adapters.langgraph.main.state import (
     WorkflowPhase,
 )
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.state_artifact import StateArtifactRefV1
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
@@ -27,7 +27,7 @@ def is_work_analysis_required(*, state: GraphState, plan: ToolRoutePlanV2) -> bo
     if not isinstance(intent, Mapping):
         raise ValueError("request_intent must be an object")
     return effective_analysis_required(
-        request_intent=cast(RequestIntentV2, intent),
+        request_intent=cast(RequestIntentV3, intent),
         tool_route_plan=plan,
     )
 

@@ -34,10 +34,7 @@ def merge_resource_responsibilities(
     source_by_resource = {
         decision["resource_type"]: decision for decision in source_decisions["source_dependencies"]
     }
-    output_by_resource = {
-        decision["resource_type"]: decision
-        for decision in output_decisions["output_responsibilities"]
-    }
+    output_items = list(output_decisions["output_responsibilities"])
     source_information = {
         resource_type: list(decision["required_information"])
         for resource_type, decision in source_by_resource.items()
@@ -48,10 +45,17 @@ def merge_resource_responsibilities(
         for resource_type, decision in source_by_resource.items()
         if decision["dependency"] == "SOURCE_REQUIRED"
     }
-    for resource_type, effect in output_by_resource.items():
-        if effect["effect"] == "CREATE":
+    source_work_unit_ids = {
+        resource_type: list(decision["work_unit_ids"])
+        for resource_type, decision in source_by_resource.items()
+        if decision["dependency"] == "SOURCE_REQUIRED"
+    }
+    for output in output_items:
+        resource_type = output["resource_type"]
+        if output["effect"] == "CREATE":
             source_information.pop(resource_type, None)
             source_scopes.pop(resource_type, None)
+            source_work_unit_ids.pop(resource_type, None)
     source_information = _without_access_only_parents(
         source_information,
         request_text=request_text or "",
@@ -61,20 +65,20 @@ def merge_resource_responsibilities(
             resource_type=candidate["resource_type"],
             required_information=list(source_information[candidate["resource_type"]]),
             target_scope=source_scopes[candidate["resource_type"]],
+            work_unit_ids=source_work_unit_ids[candidate["resource_type"]],
         )
         for candidate in source_candidates
         if candidate["resource_type"] in source_information
     ]
+    allowed_output_resources = {candidate["resource_type"] for candidate in output_candidates}
     outputs = [
         OutputResourceResponsibilityV1(
-            resource_type=candidate["resource_type"],
-            effect=cast(
-                WriteEffectValue,
-                output_by_resource[candidate["resource_type"]]["effect"],
-            ),
+            resource_type=decision["resource_type"],
+            effect=cast(WriteEffectValue, decision["effect"]),
+            work_unit_ids=list(decision["work_unit_ids"]),
         )
-        for candidate in output_candidates
-        if candidate["resource_type"] in output_by_resource
+        for decision in output_items
+        if decision["resource_type"] in allowed_output_resources
     ]
     return ResourceResponsibilitiesV1(source_reads=source_reads, outputs=outputs)
 

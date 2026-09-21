@@ -37,6 +37,9 @@ ActionEffectValue = Literal["READ", "CREATE", "UPDATE", "SEND", "DELETE"]
 WriteEffectValue = Literal["CREATE", "UPDATE", "SEND", "DELETE"]
 TargetScopeValue = Literal["SINGULAR", "CRITERIA"]
 ConstraintProvenanceSource = Literal["USER_REQUEST", "CONFIRMATION_RESPONSE"]
+RequestedWorkRelationKind = Literal[
+    "CONSUMES_WORK_PRODUCT", "CONSUMES_PLANNED_SPECIFICATION"
+]
 REQUEST_RESOURCE_TYPES: tuple[str, ...] = (
     "GMAIL_THREAD",
     "GMAIL_MESSAGE",
@@ -73,12 +76,29 @@ class ConstraintProvenanceV1(TypedDict):
     source_text: NotRequired[str]
 
 
+class RequestedWorkUnitV1(TypedDict):
+    unit_id: str
+    request_provenance: list[ConstraintProvenanceV1]
+
+
+class RequestedWorkRelationV1(TypedDict):
+    source_work_unit_id: str
+    target_work_unit_id: str
+    kind: RequestedWorkRelationKind
+
+
+class RequestedWorkDefinitionV1(TypedDict):
+    work_units: list[RequestedWorkUnitV1]
+    work_relations: list[RequestedWorkRelationV1]
+
+
 class ConstraintV1(TypedDict):
     kind: ConstraintKindValue
     field: str
     value: str | list[str]
     provenance: NotRequired[ConstraintProvenanceV1]
     source_resource_type: NotRequired[str]
+    work_unit_ids: list[str]
 
 
 class AmbiguityV1(TypedDict):
@@ -91,11 +111,18 @@ class SourceResourceResponsibilityV1(TypedDict):
     resource_type: str
     required_information: list[str]
     target_scope: TargetScopeValue
+    work_unit_ids: list[str]
 
 
 class OutputResourceResponsibilityV1(TypedDict):
     resource_type: str
     effect: WriteEffectValue
+    work_unit_ids: list[str]
+
+
+class EffectProhibitionV1(TypedDict):
+    effect: WriteEffectValue
+    work_unit_ids: list[str]
 
 
 class ResourceResponsibilitiesV1(TypedDict):
@@ -111,14 +138,16 @@ class RequestGoalCandidateV1(TypedDict):
     requested_resource_hints: list[str]
     resource_responsibilities: NotRequired[ResourceResponsibilitiesV1]
     analysis_requirement: Literal["NONE", "REQUIRED"]
+    effect_prohibitions: list[EffectProhibitionV1]
+    requested_work: RequestedWorkDefinitionV1
 
 
 class RequestIntentCandidateV1(RequestGoalCandidateV1):
-    schema_version: Required[Literal[2]]
+    schema_version: Required[Literal[3]]
     ambiguity: AmbiguityV1
 
 
-class RequestIntentV2(RequestIntentCandidateV1):
+class RequestIntentV3(RequestIntentCandidateV1):
     meta: StateArtifactMetaV1
     repository_default: NotRequired[dict[str, object]]
 
@@ -128,7 +157,7 @@ def is_source_status_constraint(constraint: ConstraintV1) -> bool:
 
 
 def validated_repository_authority(
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     *,
     selected_resources: Sequence[SelectedResourceRef],
 ) -> str | None:
@@ -211,7 +240,7 @@ def is_repository_constraint(constraint: ConstraintV1) -> bool:
     return constraint["kind"] == "RESOURCE" and constraint["field"] == "repository"
 
 
-def validated_gmail_draft_anchor(request_intent: RequestIntentV2) -> str | None:
+def validated_gmail_draft_anchor(request_intent: RequestIntentV3) -> str | None:
     """Return one explicit, source-proven Gmail Draft identifier for bounded lookup."""
     if request_intent["ambiguity"]["requires_confirmation"]:
         raise RequestUnderstandingValidationError(

@@ -1,3 +1,4 @@
+from copy import deepcopy
 from typing import cast
 
 from tests.support.context_retrieval import (
@@ -8,6 +9,9 @@ from tests.support.context_retrieval import (
     tool_route_plan,
 )
 
+from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
+    RequestIntentV3,
+)
 from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     AcquisitionResultV1,
@@ -63,6 +67,63 @@ def test_finalize_retrieval__unresolved_event_year__cannot_report_sufficient_cov
     assert result["unresolved_event_dates"] == [{"evidence_id": "e1", "source_text": "9월 4일"}]
     assert result["coverage"] == "PARTIAL"
     assert result["evidence_refs"] == ["e1"]
+
+
+def test_finalize_retrieval__shared_read__binds_one_evidence_to_each_work_unit() -> None:
+    intent = deepcopy(request_intent())
+    intent["requested_work"]["work_units"].append(
+        {
+            "unit_id": "work-2",
+            "request_provenance": [
+                {
+                    "source": "USER_REQUEST",
+                    "start_offset": 0,
+                    "end_offset": 31,
+                    "source_text": "Summarize Kim's project updates",
+                }
+            ],
+        }
+    )
+    route_plan = tool_route_plan(
+        [
+            {
+                "route_id": "route-gmail",
+                "resource_type": "GMAIL_THREAD",
+                "connector_id": "google_workspace",
+                "allowed_read_tool_ids": ["gmail_search_threads"],
+                "required": True,
+                "reason_codes": [],
+                "work_unit_ids": ["work-1", "work-2"],
+            }
+        ]
+    )
+    result = finalize_retrieval(
+        artifact_id="retrieval-shared",
+        request_intent=cast(RequestIntentV3, intent),
+        tool_route_plan=route_plan,
+        acquisition_result=acquisition_result(),
+        selection_result=selection_output(["segment-1"]),
+        evidence_drafts=[
+            {
+                "schema_version": 1,
+                "evidence_id": "e-shared",
+                "resource_handle": "gmail_thread:thread-kim",
+                "segment_id": "segment-1",
+                "kind": "excerpt",
+                "excerpt": "Project Alpha update",
+                "locator": {},
+                "reason_codes": ["SUPPORTS"],
+            }
+        ],
+        sufficiency_result=sufficiency_result_fixture("SUFFICIENT"),
+        current_round_no=0,
+    )
+
+    assert result["evidence_refs"] == ["e-shared"]
+    assert result["evidence_by_work_unit"] == [
+        {"work_unit_id": "work-1", "evidence_refs": ["e-shared"]},
+        {"work_unit_id": "work-2", "evidence_refs": ["e-shared"]},
+    ]
 
 
 def test_finalize_retrieval__preserves_full_contract__and_revision_lineage() -> None:
@@ -136,6 +197,7 @@ def test_finalize_retrieval__preserves_full_contract__and_revision_lineage() -> 
         "excluded_segment_ids",
         "source_resource_refs",
         "source_statuses",
+        "evidence_by_work_unit",
         "collection_results",
         "availability_results",
         "missing_information",
@@ -250,6 +312,7 @@ def test_finalize_retrieval__with_github_issue__preserves_exact_resource_type() 
             "resource_type": "github_issue",
             "status": "COMPLETE",
             "evidence_refs": ["evidence-segment-7"],
+            "work_unit_ids": ["work-1"],
             "observed_resource_count": 2,
             "checked_read_count": 0,
             "known_scope_count": 0,

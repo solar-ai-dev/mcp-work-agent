@@ -133,6 +133,35 @@ def test_outline_rejects__evidence_outside__current_projection() -> None:
         )
 
 
+def test_outline_multi_work__uses_one_call__with_work_unit_evidence_binding() -> None:
+    calls: list[Mapping[str, object]] = []
+
+    def invoke(_prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        calls.append(prompt_input)
+        return {"sections": ["두 업무 답변"], "evidence_refs": ["e1", "e2"]}
+
+    result = outline_answer(
+        user_request="메일을 요약하고 담당자를 알려줘.",
+        request_intent={"ambiguity": {"requires_confirmation": False}},
+        work_analysis={"action_necessity": "NOT_REQUIRED"},
+        evidence=[{"evidence_id": "e1"}, {"evidence_id": "e2"}],
+        retrieval_result={
+            "evidence_by_work_unit": [
+                {"work_unit_id": "work-1", "evidence_refs": ["e1"]},
+                {"work_unit_id": "work-2", "evidence_refs": ["e2"]},
+            ]
+        },
+        invoke=cast(PlanningSemanticInvoker, invoke),
+    )
+
+    assert result["evidence_refs"] == ["e1", "e2"]
+    assert len(calls) == 1
+    assert calls[0]["evidence_by_work_unit"] == [
+        {"work_unit_id": "work-1", "evidence_refs": ["e1"]},
+        {"work_unit_id": "work-2", "evidence_refs": ["e2"]},
+    ]
+
+
 def test_outline_collection__allows_relevant_subset_and_order__without_rewriting_output() -> None:
     captured: dict[str, object] = {}
 

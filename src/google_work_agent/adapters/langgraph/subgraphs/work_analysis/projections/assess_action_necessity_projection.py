@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from typing import TypedDict, cast
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_candidates import (
     DuplicateConflictAssessmentV1,
@@ -17,7 +17,7 @@ from .retrieval_source_statuses_projection import project_retrieval_source_statu
 
 
 class AssessActionNecessityInput(TypedDict):
-    request_intent: RequestIntentV2
+    request_intent: RequestIntentV3
     output_routes: list[dict[str, object]]
     work_facts: list[WorkFactV1]
     evidence: list[dict[str, object]]
@@ -59,7 +59,7 @@ def project_assess_action_necessity_input(
     ):
         raise ValueError("Task review candidate projection is invalid")
     return {
-        "request_intent": cast(RequestIntentV2, state["request_intent"]),
+        "request_intent": cast(RequestIntentV3, state["request_intent"]),
         "output_routes": [dict(item) for item in routes if isinstance(item, Mapping)],
         "work_facts": cast(list[WorkFactV1], state["fact_candidates"]),
         "evidence": [dict(item) for item in cast(list[dict[str, object]], state["evidence"])],

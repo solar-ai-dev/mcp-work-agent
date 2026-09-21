@@ -19,6 +19,9 @@ from google_work_agent.application.agents.request_understanding.contracts.reques
     RequestUnderstandingValidationError,
     ResourceResponsibilitiesV1,
 )
+from google_work_agent.application.agents.request_understanding.contracts.work_unit_binding import (
+    work_unit_id_schema,
+)
 from google_work_agent.application.agents.request_understanding.identify_source_status import (
     normalize_source_status_constraints,
 )
@@ -62,7 +65,20 @@ _NAMED_SEARCH_CONSTRAINT_PROPERTIES: dict[str, object] = {
     field: {
         "type": "array",
         "maxItems": 8,
-        "items": dict(_NONEMPTY_CONSTRAINT_VALUE_SCHEMA),
+        "items": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["value", "work_unit_ids"],
+            "properties": {
+                "value": dict(_NONEMPTY_CONSTRAINT_VALUE_SCHEMA),
+                "work_unit_ids": {
+                    "type": "array",
+                    "minItems": 1,
+                    "uniqueItems": True,
+                    "items": {"type": "string", "minLength": 1},
+                },
+            },
+        },
     }
     for field in _MODEL_CONSTRAINT_SLOT_KINDS
 }
@@ -85,7 +101,18 @@ for _field, _description in {
         _description
     )
 _NAMED_SEARCH_CONSTRAINT_PROPERTIES["coverage_requirement"] = {
-    "enum": ["ALL_ITEMS", "LIMITED_ITEMS", "NOT_COLLECTION"],
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["value", "work_unit_ids"],
+    "properties": {
+        "value": {"enum": ["ALL_ITEMS", "LIMITED_ITEMS", "NOT_COLLECTION"]},
+        "work_unit_ids": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": True,
+            "items": {"type": "string", "minLength": 1},
+        },
+    },
     "description": (
         "collection 전체가 답변 대상이면 ALL_ITEMS, 제한된 일부 항목이 대상이면 "
         "LIMITED_ITEMS, collection 요청이 아니면 NOT_COLLECTION을 둔다."
@@ -97,7 +124,7 @@ _CONSTRAINT_LIST_SCHEMA = {
     "type": "array",
     "items": {
         "type": "object",
-        "required": ["kind", "field", "value"],
+        "required": ["kind", "field", "value", "work_unit_ids"],
         "additionalProperties": False,
         "allOf": [
             {
@@ -175,6 +202,12 @@ _CONSTRAINT_LIST_SCHEMA = {
                 ]
             },
             "source_resource_type": {"type": "string", "minLength": 1},
+            "work_unit_ids": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": True,
+                "items": {"type": "string", "minLength": 1},
+            },
             "provenance": {
                 "type": "object",
                 "required": ["source", "start_offset", "end_offset"],
@@ -194,7 +227,7 @@ _ADDITIONAL_CONSTRAINT_LIST_SCHEMA = {
     "maxItems": 8,
     "items": {
         "type": "object",
-        "required": ["field", "value"],
+        "required": ["field", "value", "work_unit_ids"],
         "additionalProperties": False,
         "properties": {
             "field": {
@@ -210,6 +243,12 @@ _ADDITIONAL_CONSTRAINT_LIST_SCHEMA = {
                         "items": dict(_NONEMPTY_CONSTRAINT_VALUE_SCHEMA),
                     },
                 ]
+            },
+            "work_unit_ids": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": True,
+                "items": {"type": "string", "minLength": 1},
             },
         },
     },
@@ -248,7 +287,12 @@ _RESOURCE_RESPONSIBILITY_SCHEMA = {
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["resource_type", "required_information", "target_scope"],
+                "required": [
+                    "resource_type",
+                    "required_information",
+                    "target_scope",
+                    "work_unit_ids",
+                ],
                 "properties": {
                     "resource_type": {"enum": list(REQUEST_RESOURCE_TYPES)},
                     "required_information": {
@@ -257,6 +301,12 @@ _RESOURCE_RESPONSIBILITY_SCHEMA = {
                         "items": dict(_NONEMPTY_CONSTRAINT_VALUE_SCHEMA),
                     },
                     "target_scope": {"enum": ["SINGULAR", "CRITERIA"]},
+                    "work_unit_ids": {
+                        "type": "array",
+                        "minItems": 1,
+                        "uniqueItems": True,
+                        "items": {"type": "string", "minLength": 1},
+                    },
                 },
             },
         },
@@ -270,7 +320,7 @@ _RESOURCE_RESPONSIBILITY_SCHEMA = {
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["resource_type", "effect"],
+                "required": ["resource_type", "effect", "work_unit_ids"],
                 "allOf": [
                     {
                         "if": {
@@ -290,6 +340,12 @@ _RESOURCE_RESPONSIBILITY_SCHEMA = {
                 "properties": {
                     "resource_type": {"enum": list(REQUEST_RESOURCE_TYPES)},
                     "effect": {"enum": ["CREATE", "UPDATE", "SEND", "DELETE"]},
+                    "work_unit_ids": {
+                        "type": "array",
+                        "minItems": 1,
+                        "uniqueItems": True,
+                        "items": {"type": "string", "minLength": 1},
+                    },
                 },
             },
         },
@@ -307,7 +363,7 @@ _DERIVED_RESOURCE_HINTS_SCHEMA = {
 }
 
 IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
-    schema_version="request-goal-candidate-v16",
+    schema_version="request-goal-candidate-v17",
     json_schema={
         "type": "object",
         "required": [
@@ -364,13 +420,42 @@ IDENTIFY_GOAL_OUTPUT_SCHEMA = OutputSchemaDefinition(
     },
 )
 
+
+def identify_goal_output_schema(work_unit_ids: Sequence[str]) -> OutputSchemaDefinition:
+    schema = cast(dict[str, object], deepcopy(IDENTIFY_GOAL_OUTPUT_SCHEMA.json_schema))
+    properties = cast(dict[str, object], schema["properties"])
+    constraints = cast(dict[str, object], properties["constraints"])
+    constraint_properties = cast(dict[str, object], constraints["properties"])
+    binding_schema = work_unit_id_schema(work_unit_ids)
+    for field in _MODEL_CONSTRAINT_SLOT_KINDS:
+        field_schema = cast(dict[str, object], constraint_properties[field])
+        if field == "coverage_requirement":
+            field_properties = cast(dict[str, object], field_schema["properties"])
+        else:
+            item_schema = cast(dict[str, object], field_schema["items"])
+            field_properties = cast(dict[str, object], item_schema["properties"])
+        field_properties["work_unit_ids"] = deepcopy(binding_schema)
+    additional_schema = cast(
+        dict[str, object], constraint_properties["additional_constraints"]
+    )
+    additional_item = cast(dict[str, object], additional_schema["items"])
+    additional_properties = cast(dict[str, object], additional_item["properties"])
+    additional_properties["work_unit_ids"] = deepcopy(binding_schema)
+    return OutputSchemaDefinition(
+        schema_version="request-goal-candidate-v17",
+        json_schema=schema,
+    )
+
 def validate_request_goal_candidate(
     value: object,
     *,
     resource_responsibilities: object,
     source_statuses: object | None = None,
+    effect_prohibitions: object,
+    requested_work: object,
     schema: OutputSchemaDefinition = IDENTIFY_GOAL_OUTPUT_SCHEMA,
     provenance_sources: Mapping[ConstraintProvenanceSource, str] | None = None,
+    work_unit_ids: Sequence[str],
 ) -> RequestGoalCandidateV1:
     errors = validate_output_schema(value, schema.json_schema)
     if errors:
@@ -381,9 +466,26 @@ def validate_request_goal_candidate(
     normalized_responsibilities = _validate_resource_responsibilities_shape(
         resource_responsibilities
     )
+    if not isinstance(effect_prohibitions, Mapping):
+        raise ValueError("effect prohibition candidate is invalid")
+    raw_prohibitions = effect_prohibitions.get("effect_prohibitions")
+    if not isinstance(raw_prohibitions, Sequence) or isinstance(
+        raw_prohibitions, (str, bytes)
+    ):
+        raise ValueError("effect prohibition candidate is invalid")
+    normalized_prohibitions = [
+        {
+            "effect": cast(str, item["effect"]),
+            "work_unit_ids": list(cast(Sequence[str], item["work_unit_ids"])),
+        }
+        for item in cast(Sequence[Mapping[str, object]], raw_prohibitions)
+        if item.get("prohibition") == "FORBIDDEN"
+    ]
     normalized_root = {
         **root,
         "resource_responsibilities": normalized_responsibilities,
+        "effect_prohibitions": normalized_prohibitions,
+        "requested_work": deepcopy(requested_work),
     }
     effects, resources, source_information = derive_requested_resource_fields(
         normalized_responsibilities
@@ -402,6 +504,7 @@ def validate_request_goal_candidate(
                     ),
                     "field": cast(str, constraint["field"]),
                     "value": cast(str | list[str], constraint["value"]),
+                    "work_unit_ids": list(cast(Sequence[str], constraint["work_unit_ids"])),
                 }
                 for constraint in raw_additional
             ],
@@ -410,38 +513,31 @@ def validate_request_goal_candidate(
         raise ValueError(
             "request goal candidate is invalid: unsupported additional constraint field"
         ) from error
-    normalized_constraints = cast(
-        list[ConstraintV1],
-        [
-            {
-                "kind": _MODEL_CONSTRAINT_SLOT_KINDS[field],
-                "field": field,
-                "value": (
-                    cast(list[str], values)[0]
-                    if field == "coverage_requirement"
-                    else values
-                ),
-            }
-            for field, values in slots.items()
-            if field in _MODEL_CONSTRAINT_SLOT_KINDS
-            and field != "coverage_requirement"
-            and values
-        ],
-    )
-    if slots["coverage_requirement"] == "ALL_ITEMS":
+    normalized_constraints = _normalize_model_constraints(slots)
+    coverage = cast(Mapping[str, object], slots["coverage_requirement"])
+    if coverage["value"] == "ALL_ITEMS":
         normalized_constraints.append(
             {
                 "kind": "SCOPE",
                 "field": "coverage_requirement",
                 "value": "EXHAUSTIVE",
+                "work_unit_ids": list(cast(Sequence[str], coverage["work_unit_ids"])),
             }
         )
     if source_information:
+        source_unit_ids = list(
+            dict.fromkeys(
+                unit_id
+                for source in normalized_responsibilities["source_reads"]
+                for unit_id in source["work_unit_ids"]
+            )
+        )
         normalized_constraints.append(
             {
                 "kind": "USER_REQUIREMENT",
                 "field": "required_information",
                 "value": source_information,
+                "work_unit_ids": source_unit_ids,
             }
         )
     normalized_constraints.extend(
@@ -463,6 +559,7 @@ def validate_request_goal_candidate(
             effects=effects,
             resource_hints=resources,
             constraints=cast(list[ConstraintV1], [*normalized_constraints, *additional]),
+            known_unit_ids=work_unit_ids,
             required=True,
         )
     except RequestUnderstandingValidationError as error:
@@ -481,6 +578,29 @@ def validate_request_goal_candidate(
         "resource_responsibilities": responsibilities,
     }
     return cast(RequestGoalCandidateV1, value)
+
+
+def _normalize_model_constraints(slots: Mapping[str, object]) -> list[ConstraintV1]:
+    """Keep the existing constraint item shape while adding WorkUnit ownership."""
+    grouped: dict[tuple[str, tuple[str, ...]], list[str]] = {}
+    for field, values in slots.items():
+        if field not in _MODEL_CONSTRAINT_SLOT_KINDS or field == "coverage_requirement":
+            continue
+        for item in cast(Sequence[Mapping[str, object]], values):
+            unit_ids = tuple(cast(Sequence[str], item["work_unit_ids"]))
+            grouped.setdefault((field, unit_ids), []).append(cast(str, item["value"]))
+    return cast(
+        list[ConstraintV1],
+        [
+            {
+                "kind": _MODEL_CONSTRAINT_SLOT_KINDS[field],
+                "field": field,
+                "value": values,
+                "work_unit_ids": list(unit_ids),
+            }
+            for (field, unit_ids), values in grouped.items()
+        ],
+    )
 
 
 def _validate_resource_responsibilities_shape(
@@ -504,31 +624,27 @@ def _normalize_source_read_responsibilities(
 ) -> ResourceResponsibilitiesV1:
     source_reads = cast(Sequence[Mapping[str, object]], responsibilities["source_reads"])
     normalized_sources: list[dict[str, object]] = []
-    source_index_by_resource_type: dict[str, int] = {}
+    source_index_by_binding: dict[tuple[str, tuple[str, ...]], int] = {}
     for source in source_reads:
         resource_type = cast(str, source["resource_type"])
-        information = list(cast(Sequence[str], source["required_information"]))
         target_scope = cast(str, source["target_scope"])
-        source_index = source_index_by_resource_type.get(resource_type)
-        if source_index is None:
-            source_index_by_resource_type[resource_type] = len(normalized_sources)
-            normalized_sources.append(
-                {
-                    "resource_type": resource_type,
-                    "required_information": information,
-                    "target_scope": target_scope,
-                }
-            )
+        unit_ids = tuple(cast(Sequence[str], source["work_unit_ids"]))
+        binding_key = (resource_type, unit_ids)
+        existing_index = source_index_by_binding.get(binding_key)
+        if existing_index is None:
+            source_index_by_binding[binding_key] = len(normalized_sources)
+            normalized_sources.append(deepcopy(dict(source)))
             continue
-        if normalized_sources[source_index]["target_scope"] != target_scope:
+        existing = normalized_sources[existing_index]
+        if existing["target_scope"] != target_scope:
             raise ValueError(
                 "resource responsibility candidate is invalid: duplicate source scopes conflict"
             )
-        existing_information = cast(
-            list[str], normalized_sources[source_index]["required_information"]
-        )
+        existing_information = cast(list[str], existing["required_information"])
         existing_information.extend(
-            value for value in information if value not in existing_information
+            information
+            for information in cast(Sequence[str], source["required_information"])
+            if information not in existing_information
         )
     return cast(
         ResourceResponsibilitiesV1,
@@ -571,9 +687,11 @@ def _validate_semantic_constraint_text(
     for field in _MODEL_CONSTRAINT_SLOT_KINDS:
         if field == "coverage_requirement":
             continue
-        values = cast(list[str], slots[field])
-        for index, text_value in enumerate(values):
-            _require_semantic_text(text_value, f"$.constraints.{field}[{index}]")
+        values = cast(Sequence[Mapping[str, object]], slots[field])
+        for index, item in enumerate(values):
+            _require_semantic_text(
+                cast(str, item["value"]), f"$.constraints.{field}[{index}].value"
+            )
 
     additional = cast(list[Mapping[str, object]], slots["additional_constraints"])
     for index, additional_value in enumerate(additional):
@@ -623,12 +741,72 @@ def validate_normalized_request_goal_candidate(value: object) -> RequestGoalCand
     properties["resource_responsibilities"] = _RESOURCE_RESPONSIBILITY_SCHEMA
     properties["requested_effect_hints"] = _DERIVED_EFFECT_HINTS_SCHEMA
     properties["requested_resource_hints"] = _DERIVED_RESOURCE_HINTS_SCHEMA
+    properties["effect_prohibitions"] = {
+        "type": "array",
+        "uniqueItems": True,
+        "items": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["effect", "work_unit_ids"],
+            "properties": {
+                "effect": {"enum": ["CREATE", "UPDATE", "SEND", "DELETE"]},
+                "work_unit_ids": {
+                    "type": "array",
+                    "minItems": 1,
+                    "uniqueItems": True,
+                    "items": {"type": "string", "minLength": 1},
+                },
+            },
+        },
+    }
+    properties["requested_work"] = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["work_units", "work_relations"],
+        "properties": {
+            "work_units": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["unit_id", "request_provenance"],
+                    "properties": {
+                        "unit_id": {"type": "string", "minLength": 1},
+                        "request_provenance": {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": {
+                                "type": "object",
+                                "additionalProperties": False,
+                                "required": [
+                                    "source",
+                                    "start_offset",
+                                    "end_offset",
+                                    "source_text",
+                                ],
+                                "properties": {
+                                    "source": {"const": "USER_REQUEST"},
+                                    "start_offset": {"type": "integer", "minimum": 0},
+                                    "end_offset": {"type": "integer", "minimum": 1},
+                                    "source_text": {"type": "string", "minLength": 1},
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+            "work_relations": {"type": "array"},
+        },
+    }
     required = cast(list[str], schema["required"])
     required.extend(
         [
             "resource_responsibilities",
             "requested_effect_hints",
             "requested_resource_hints",
+            "effect_prohibitions",
+            "requested_work",
         ]
     )
     errors = validate_output_schema(value, schema)
@@ -665,6 +843,7 @@ def _validate_existing_resource_mutation_sources(
 
 __all__ = [
     "IDENTIFY_GOAL_OUTPUT_SCHEMA",
+    "identify_goal_output_schema",
     "RequestGoalSemanticValidationError",
     "REQUEST_GOAL_SLOT_KINDS",
     "validate_normalized_request_goal_candidate",

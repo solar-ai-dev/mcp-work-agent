@@ -39,6 +39,7 @@ def _source(
                     "dependency": "SOURCE_REQUIRED",
                     "required_information": values[candidate["resource_type"]][0],
                     "target_scope": values[candidate["resource_type"]][1],
+                    "work_unit_ids": ["work-1"],
                 }
                 if candidate["resource_type"] in values
                 else {
@@ -60,6 +61,7 @@ def _output(
             {
                 "resource_type": candidate["resource_type"],
                 "effect": values[candidate["resource_type"]],
+                "work_unit_ids": ["work-1"],
             }
             for candidate in _OUTPUT_CANDIDATES
             if candidate["resource_type"] in values
@@ -139,7 +141,13 @@ def test_merge_resource_responsibilities__with_explicit_item_sources__restores_c
         "TASK",
         "CALENDAR_EVENT",
     ]
-    assert merged["outputs"] == [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}]
+    assert merged["outputs"] == [
+        {
+            "resource_type": "GMAIL_DRAFT",
+            "effect": "CREATE",
+            "work_unit_ids": ["work-1"],
+        }
+    ]
 
 
 def test_merge_resource_responsibilities__with_typed_mail_fact_source__preserves_source(
@@ -169,6 +177,7 @@ def test_merge_resource_responsibilities__with_typed_mail_fact_source__preserves
                 "timestamps",
             ],
             "target_scope": "CRITERIA",
+            "work_unit_ids": ["work-1"],
         }
     ]
 
@@ -190,5 +199,6 @@ def test_merge_resource_responsibilities__with_singular_source__preserves_scope_
             "resource_type": "CALENDAR_EVENT",
             "required_information": ["start", "end"],
             "target_scope": "SINGULAR",
+            "work_unit_ids": ["work-1"],
         }
     ]

@@ -27,7 +27,8 @@ def _source_schema() -> dict[str, object]:
                     "read_tool_ids": ["draft-search"],
                     "owned_fact_kinds": ["body"],
                 },
-            ]
+            ],
+            work_unit_ids=("work-1",),
         ).json_schema
     )
 
@@ -38,6 +39,7 @@ def _required(resource_type: str, information: str) -> dict[str, object]:
         "dependency": "SOURCE_REQUIRED",
         "required_information": [information],
         "target_scope": "CRITERIA",
+        "work_unit_ids": ["work-1"],
     }
 
 
@@ -96,6 +98,7 @@ def test_array_shape_repair__unaffected_semantic_decision__is_rejected() -> None
         "$.source_dependencies[2].dependency",
         "$.source_dependencies[2].required_information",
         "$.source_dependencies[2].target_scope",
+        "$.source_dependencies[2].work_unit_ids",
     )
 
 
@@ -108,6 +111,7 @@ def test_source_dependency_reorder__resource_type_identity__is_stable() -> None:
                 "dependency": "SOURCE_REQUIRED",
                 "required_information": "start",
                 "target_scope": "CRITERIA",
+                "work_unit_ids": ["work-1"],
             },
             _required("GMAIL_DRAFT", "body"),
         ]

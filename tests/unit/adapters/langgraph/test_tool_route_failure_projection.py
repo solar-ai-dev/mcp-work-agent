@@ -7,7 +7,7 @@ from google_work_agent.adapters.langgraph.subgraphs.tool_routing.nodes import (
 )
 from google_work_agent.adapters.langgraph.subgraphs.tool_routing.state import ToolRouteStateV1
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.tool_registry.load_signed_tool_registry import (
     load_signed_tool_registry,
@@ -22,9 +22,9 @@ from google_work_agent.ports.system.contracts.workflow_execution import (
 
 def test_exhausted_route_validation__with_structured_failure__preserves_cause() -> None:
     intent = cast(
-        RequestIntentV2,
+        RequestIntentV3,
         {
-            "schema_version": 2,
+            "schema_version": 3,
             "meta": {"artifact_id": "intent-1", "revision": 1, "based_on": []},
             "goal": "reply to an existing Gmail thread",
             "completion_conditions": ["reply sent"],
@@ -36,6 +36,23 @@ def test_exhausted_route_validation__with_structured_failure__preserves_cause() 
                 "GMAIL_DRAFT",
             ],
             "analysis_requirement": "NONE",
+            "effect_prohibitions": [],
+            "requested_work": {
+                "work_units": [
+                    {
+                        "unit_id": "work-1",
+                        "request_provenance": [
+                            {
+                                "source": "USER_REQUEST",
+                                "start_offset": 0,
+                                "end_offset": len("Quartz 납품 일정 확인했다고 답장 보내줘."),
+                                "source_text": "Quartz 납품 일정 확인했다고 답장 보내줘.",
+                            }
+                        ],
+                    }
+                ],
+                "work_relations": [],
+            },
             "ambiguity": {
                 "requires_confirmation": False,
                 "reason_codes": [],

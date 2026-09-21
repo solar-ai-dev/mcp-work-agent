@@ -6,7 +6,7 @@ import pytest
 from tests.support.fakes.llm import FakeStructuredInferencePort
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.retrieval.build_query import (
     RouteConstraintPolicy,
@@ -193,7 +193,7 @@ def test_initial_retrieval_planner_input__includes_current_run__user_request() -
     prompt_input = initial_retrieval_planner_input(
         user_request="Atlas final shipment date",
         request_intent=cast(
-            RequestIntentV2,
+            RequestIntentV3,
             {
                 "constraints": [
                     {
@@ -248,7 +248,7 @@ def test_followup_retrieval_planner_input__preserves_observed__evidence_projecti
 
     prompt_input = followup_retrieval_planner_input(
         user_request="Find the Lumen migration date",
-        request_intent=cast(RequestIntentV2, {"constraints": []}),
+        request_intent=cast(RequestIntentV3, {"constraints": []}),
         input_routes=[route],
         retrieval_budget=RetrievalBudget(),
         followup={
@@ -854,7 +854,7 @@ def test_plan_query__multiple_user_anchors__does_not_force_all_match_mode() -> N
 
 def test_retrieval_followup_path__exhausted_selected_read__rejects() -> None:
     assert not has_retrieval_followup_path(
-        request_intent=cast(RequestIntentV2, {"constraints": []}),
+        request_intent=cast(RequestIntentV3, {"constraints": []}),
         tool_route_plan=_tool_route_plan(allowed_read_tool_ids=["gmail_get_thread"]),
         route_policies={"route-1": RouteConstraintPolicy(frozenset({"KEYWORD"}))},
         unresolved_sufficiency_issues=[],
@@ -865,7 +865,7 @@ def test_retrieval_followup_path__exhausted_selected_read__rejects() -> None:
 
 def test_retrieval_followup_path__lexical_anchor_or_unread_page__distinguishes() -> None:
     assert not has_retrieval_followup_path(
-        request_intent=cast(RequestIntentV2, {"constraints": []}),
+        request_intent=cast(RequestIntentV3, {"constraints": []}),
         tool_route_plan=_tool_route_plan(
             allowed_read_tool_ids=["gmail_search_threads", "gmail_get_thread"]
         ),
@@ -891,7 +891,7 @@ def test_retrieval_followup_path__lexical_anchor_or_unread_page__distinguishes()
         ],
     )
     assert has_retrieval_followup_path(
-        request_intent=cast(RequestIntentV2, {"constraints": []}),
+        request_intent=cast(RequestIntentV3, {"constraints": []}),
         tool_route_plan=_tool_route_plan(allowed_read_tool_ids=["gmail_get_thread"]),
         route_policies={"route-1": RouteConstraintPolicy(frozenset({"KEYWORD"}))},
         unresolved_sufficiency_issues=[{"required": True, "resolution_source": "GOOGLE"}],
@@ -902,7 +902,7 @@ def test_retrieval_followup_path__lexical_anchor_or_unread_page__distinguishes()
 
 def test_retrieval_followup_path__selected_detail__does_not_expand_to_search() -> None:
     assert not has_retrieval_followup_path(
-        request_intent=cast(RequestIntentV2, {"constraints": []}),
+        request_intent=cast(RequestIntentV3, {"constraints": []}),
         tool_route_plan=_tool_route_plan(
             allowed_read_tool_ids=["gmail_search_threads", "gmail_get_thread"]
         ),
@@ -920,7 +920,7 @@ def test_retrieval_followup_path__selected_detail__does_not_expand_to_search() -
 
 def test_retrieval_followup_path__exhausted_identity_search__rejects() -> None:
     assert not has_retrieval_followup_path(
-        request_intent=cast(RequestIntentV2, {"constraints": []}),
+        request_intent=cast(RequestIntentV3, {"constraints": []}),
         tool_route_plan=_tool_route_plan(allowed_read_tool_ids=["tasks_list_tasks"]),
         route_policies={
             "route-1": RouteConstraintPolicy(
@@ -966,7 +966,7 @@ def test_retrieval_followup__with_format_change__preserves_progress_budget(
 
     assert (
         has_retrieval_followup_path(
-            request_intent=cast(RequestIntentV2, {"constraints": constraints}),
+            request_intent=cast(RequestIntentV3, {"constraints": constraints}),
             tool_route_plan=_tool_route_plan(
                 allowed_read_tool_ids=["gmail_search_threads", "gmail_get_thread"]
             ),
@@ -1343,7 +1343,7 @@ def test_plan_query__with_exhaustive_gmail_subject_collection__uses_request_pref
         },
     )
     intent = cast(
-        RequestIntentV2,
+        RequestIntentV3,
         {
             "goal": "Orion rollout planning email titles",
             "completion_conditions": ["return every title"],
@@ -1531,7 +1531,7 @@ def test_plan_query__page_and_detail_candidate__uses_coverage_aware_priority(
         output_schema=RETRIEVAL_QUERY_PLAN_V2_OUTPUT_SCHEMA,
         prompt_input={
             "request_intent": cast(
-                RequestIntentV2,
+                RequestIntentV3,
                 {
                     "constraints": (
                         []

@@ -11,7 +11,7 @@ from google_work_agent.application.agents.project_run_reference_time import (
     project_run_reference_time,
 )
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.ports.system.contracts.workflow_execution import SelectedResourceRef
 
@@ -20,12 +20,13 @@ class ComposeArgumentsInputV1(TypedDict):
     output_routes: list[dict[str, object]]
     objectives: list[dict[str, object]]
     evidence: list[dict[str, object]]
-    request_intent: RequestIntentV2
+    request_intent: RequestIntentV3
     selected_resources: list[SelectedResourceRef]
     work_analysis: NotRequired[dict[str, object]]
     confirmation_response: NotRequired[dict[str, object]]
     run_reference_time: NotRequired[RunReferenceTimeV1]
     source_snapshots: NotRequired[dict[str, dict[str, object]]]
+    retrieval_result: NotRequired[dict[str, object]]
 
 
 def project_compose_arguments_per_output_route_input(
@@ -50,7 +51,7 @@ def project_compose_arguments_per_output_route_input(
         "output_routes": routes,
         "objectives": objective_items,
         "evidence": evidence_items,
-        "request_intent": cast(RequestIntentV2, request_intent),
+        "request_intent": cast(RequestIntentV3, request_intent),
         "selected_resources": _selected_resources(state),
     }
     try:
@@ -63,6 +64,7 @@ def project_compose_arguments_per_output_route_input(
     work_analysis = state.get("work_analysis")
     confirmation = state.get("confirmation_response")
     snapshots = state.get("source_snapshots")
+    retrieval_result = state.get("retrieval_result")
     if work_analysis is not None:
         if not isinstance(work_analysis, Mapping):
             raise ValueError("work_analysis must be an object")
@@ -81,6 +83,10 @@ def project_compose_arguments_per_output_route_input(
             str(handle): dict(cast(Mapping[str, object], snapshot))
             for handle, snapshot in snapshots.items()
         }
+    if retrieval_result is not None:
+        if not isinstance(retrieval_result, Mapping):
+            raise ValueError("retrieval_result must be an object")
+        result["retrieval_result"] = dict(retrieval_result)
     return result
 
 

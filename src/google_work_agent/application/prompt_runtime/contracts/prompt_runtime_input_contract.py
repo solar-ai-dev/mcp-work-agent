@@ -10,6 +10,8 @@ from typing import Final
 PROMPT_RUNTIME_INPUT_CONTRACT_SCHEMA_VERSION: Final = 1
 
 REQUIRED_PROMPT_RUNTIME_NODE_BY_SLOT: Final[dict[str, str]] = {
+    "request_understanding.identify_requested_work": "request.identify_goal",
+    "request_understanding.identify_work_relations": "request.identify_goal",
     "request_understanding.identify_goal": "request.identify_goal",
     "request_understanding.identify_effect_prohibitions": "request.identify_goal",
     "request_understanding.identify_source_dependencies": "request.identify_goal",
@@ -68,9 +70,10 @@ class PromptRuntimeInputContractEntryV1:
             raise PromptRuntimeInputContractError("prompt slot and runtime node are required")
         output_version = {
             "retrieval.select_evidence": 3,
-            "request_understanding.identify_goal": 16,
-            "request_understanding.identify_source_dependencies": 3,
-            "request_understanding.identify_output_responsibilities": 2,
+            "request_understanding.identify_goal": 17,
+            "request_understanding.identify_effect_prohibitions": 2,
+            "request_understanding.identify_source_dependencies": 4,
+            "request_understanding.identify_output_responsibilities": 3,
             "request_understanding.identify_source_status": 2,
             "request_understanding.detect_ambiguity": 2,
             "work_analysis.detect_duplicate_conflict_candidates": 4,
@@ -84,6 +87,8 @@ class PromptRuntimeInputContractEntryV1:
             input_versions = {1, 2, 3, 4, 5}
         elif self.prompt_slot_id == "request_understanding.identify_source_status":
             input_versions = {1}
+        elif self.prompt_slot_id.startswith("request_understanding."):
+            input_versions = {1, 2, 3}
         else:
             input_versions = {1, 2}
         if (

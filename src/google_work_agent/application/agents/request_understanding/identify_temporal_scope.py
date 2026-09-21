@@ -73,6 +73,14 @@ def identify_temporal_scope(
         if item["kind"] == "DATE" and item["field"] == "period"
         for value in (item["value"] if isinstance(item["value"], list) else [item["value"]])
     ]
+    period_work_unit_ids = list(
+        dict.fromkeys(
+            unit_id
+            for item in candidate["constraints"]
+            if item["kind"] == "DATE" and item["field"] == "period"
+            for unit_id in item["work_unit_ids"]
+        )
+    )
     semantic_context = [
         item
         for item in candidate["constraints"]
@@ -106,6 +114,7 @@ def identify_temporal_scope(
                     "kind": "TIME",
                     "field": "temporal_axis",
                     "value": [output["temporal_axis"]],
+                    "work_unit_ids": period_work_unit_ids,
                 },
             ],
         }

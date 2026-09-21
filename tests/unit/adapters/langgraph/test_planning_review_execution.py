@@ -48,6 +48,46 @@ def _finding(
     }
 
 
+def _action_intent(*, user_request: str, resource_type: str, effect: str) -> dict[str, object]:
+    return {
+        "schema_version": 3,
+        "goal": user_request,
+        "completion_conditions": ["Requested preview is prepared."],
+        "constraints": [],
+        "requested_effect_hints": [effect],
+        "requested_resource_hints": [resource_type],
+        "resource_responsibilities": {
+            "source_reads": [],
+            "outputs": [
+                {
+                    "resource_type": resource_type,
+                    "effect": effect,
+                    "work_unit_ids": ["work-1"],
+                }
+            ],
+        },
+        "analysis_requirement": "NONE",
+        "effect_prohibitions": [],
+        "requested_work": {
+            "work_units": [
+                {
+                    "unit_id": "work-1",
+                    "request_provenance": [
+                        {
+                            "source": "USER_REQUEST",
+                            "start_offset": 0,
+                            "end_offset": len(user_request),
+                            "source_text": user_request,
+                        }
+                    ],
+                }
+            ],
+            "work_relations": [],
+        },
+        "ambiguity": {"requires_confirmation": False, "reason_codes": [], "missing_fields": []},
+    }
+
+
 def test_compiled_planning__answer_executes__canonical_operations() -> None:
     calls: list[str] = []
 
@@ -156,6 +196,7 @@ def test_compiled_planning__action_executes_exact__four_node_path() -> None:
         "effect": "CREATE",
         "selected_tool_id": "gmail_create_draft",
         "reason_codes": ["USER_REQUEST"],
+        "work_unit_ids": ["work-1"],
     }
     calls: list[str] = []
 
@@ -183,7 +224,11 @@ def test_compiled_planning__action_executes_exact__four_node_path() -> None:
     result = graph.invoke(
         {
             "user_request": "Create a draft",
-            "request_intent": {"goal": "create draft"},
+            "request_intent": _action_intent(
+                user_request="Create a draft",
+                resource_type="GMAIL_DRAFT",
+                effect="CREATE",
+            ),
             "tool_route_plan": {"output_plan": {"output_mode": "ACTION", "output_routes": [route]}},
             "evidence": [{"evidence_ref": "e1"}],
         }
@@ -203,6 +248,7 @@ def test_compiled_planning__unchanged_draft_update__returns_answer_without_actio
         "effect": "UPDATE",
         "selected_tool_id": "gmail_update_draft",
         "reason_codes": ["USER_REQUEST"],
+        "work_unit_ids": ["work-1"],
     }
     snapshot = {
         "to": ["recipient@example.com"],
@@ -248,7 +294,11 @@ def test_compiled_planning__unchanged_draft_update__returns_answer_without_actio
         {
             "run_id": "run-1",
             "user_request": "기존 초안을 요청한 내용으로 수정해줘",
-            "request_intent": {"goal": "update draft"},
+            "request_intent": _action_intent(
+                user_request="기존 초안을 요청한 내용으로 수정해줘",
+                resource_type="GMAIL_DRAFT",
+                effect="UPDATE",
+            ),
             "tool_route_plan": {
                 "output_plan": {"output_mode": "ACTION", "output_routes": [route]}
             },

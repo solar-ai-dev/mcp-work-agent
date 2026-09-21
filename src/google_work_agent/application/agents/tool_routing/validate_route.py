@@ -59,6 +59,7 @@ def validate_route(value: object, *, tool_catalog: SignedToolRegistry) -> ToolRo
             "allowed_read_tool_ids",
             "required",
             "reason_codes",
+            "work_unit_ids",
         }:
             raise ToolRouteValidationError("input route fields are invalid")
         _validate_route_id(route, route_ids)
@@ -70,6 +71,7 @@ def validate_route(value: object, *, tool_catalog: SignedToolRegistry) -> ToolRo
         if not isinstance(route.get("required"), bool):
             raise ToolRouteValidationError("input route required must be boolean")
         _validate_reason_codes(route)
+        _validate_work_unit_ids(route)
         for tool_id in tool_ids:
             if not isinstance(tool_id, str):
                 raise ToolRouteValidationError("allowed_read_tool_ids must contain strings")
@@ -98,10 +100,12 @@ def validate_route(value: object, *, tool_catalog: SignedToolRegistry) -> ToolRo
                 "effect",
                 "selected_tool_id",
                 "reason_codes",
+                "work_unit_ids",
             }:
                 raise ToolRouteValidationError("output route fields are invalid")
             _validate_route_id(route, route_ids)
             _validate_reason_codes(route)
+            _validate_work_unit_ids(route)
             connector_id = _string(route, "connector_id")
             resource_type = _string(route, "resource_type")
             tool_id = _string(route, "selected_tool_id")
@@ -173,3 +177,13 @@ def _validate_reason_codes(route: Mapping[str, object]) -> None:
         isinstance(item, str) for item in reason_codes
     ):
         raise ToolRouteValidationError("route reason_codes must contain strings")
+
+
+def _validate_work_unit_ids(route: Mapping[str, object]) -> None:
+    work_unit_ids = route.get("work_unit_ids")
+    if not isinstance(work_unit_ids, list) or not work_unit_ids or not all(
+        isinstance(item, str) and item for item in work_unit_ids
+    ):
+        raise ToolRouteValidationError("route work_unit_ids must contain non-empty strings")
+    if len(work_unit_ids) != len(set(work_unit_ids)):
+        raise ToolRouteValidationError("route work_unit_ids must be unique")

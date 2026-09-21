@@ -5,30 +5,102 @@ from typing import cast
 import pytest
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
     RequestUnderstandingValidationError,
     validated_gmail_draft_anchor,
     validated_repository_authority,
 )
 from google_work_agent.application.agents.request_understanding.validate_intent import (
     repository_authority_requires_confirmation,
-    validate_intent,
+)
+from google_work_agent.application.agents.request_understanding.validate_intent import (
+    validate_intent as _validate_intent,
 )
 from google_work_agent.ports.system.contracts.workflow_execution import SelectedResourceRef
 from google_work_agent.ports.system.settings_port import GitHubRepositoryDefaultV1
 
 
 def _candidate() -> dict[str, object]:
+    user_request = "김대리 관련 메일에서 할 일 정리"
     return {
-        "schema_version": 2,
-        "goal": "김대리 관련 메일에서 할 일 정리",
+        "schema_version": 3,
+        "goal": user_request,
         "completion_conditions": ["할 일을 요약한다"],
-        "constraints": [{"kind": "PERSON", "field": "person", "value": "김대리"}],
+        "constraints": [
+            {
+                "kind": "PERSON",
+                "field": "person",
+                "value": "김대리",
+                "work_unit_ids": ["work-1"],
+            }
+        ],
         "requested_effect_hints": ["READ"],
         "requested_resource_hints": ["GMAIL_THREAD"],
         "analysis_requirement": "REQUIRED",
+        "effect_prohibitions": [],
+        "requested_work": {
+            "work_units": [
+                {
+                    "unit_id": "work-1",
+                    "request_provenance": [
+                        {
+                            "source": "USER_REQUEST",
+                            "start_offset": 0,
+                            "end_offset": len(user_request),
+                            "source_text": user_request,
+                        }
+                    ],
+                }
+            ],
+            "work_relations": [],
+        },
         "ambiguity": {"requires_confirmation": False, "reason_codes": [], "missing_fields": []},
     }
+
+
+def validate_intent(
+    value: object,
+    *,
+    require_meta: bool = False,
+    provenance_sources: dict[str, str] | None = None,
+) -> RequestIntentV3 | dict[str, object]:
+    normalized = deepcopy(cast(dict[str, object], value))
+    for constraint in cast(list[dict[str, object]], normalized.get("constraints", [])):
+        constraint.setdefault("work_unit_ids", ["work-1"])
+    responsibilities = cast(
+        dict[str, list[dict[str, object]]],
+        normalized.get("resource_responsibilities", {}),
+    )
+    for item in [
+        *responsibilities.get("source_reads", []),
+        *responsibilities.get("outputs", []),
+    ]:
+        item.setdefault("work_unit_ids", ["work-1"])
+    root = normalized
+    requested_work = cast(dict[str, object], root["requested_work"])
+    work_units = cast(list[dict[str, object]], requested_work["work_units"])
+    provenance = cast(list[dict[str, object]], work_units[0]["request_provenance"])[0]
+    sources = provenance_sources or {
+        "USER_REQUEST": cast(str, provenance["source_text"]),
+    }
+    if provenance_sources is not None:
+        user_request = provenance_sources["USER_REQUEST"]
+        work_units[0]["request_provenance"] = [
+            {
+                "source": "USER_REQUEST",
+                "start_offset": 0,
+                "end_offset": len(user_request),
+                "source_text": user_request,
+            }
+        ]
+    return cast(
+        RequestIntentV3 | dict[str, object],
+        _validate_intent(
+            normalized,
+            require_meta=require_meta,
+            provenance_sources=cast(dict, sources),
+        ),
+    )
 
 
 def test_validate_intent__canonical_candidate__preserves_contract() -> None:
@@ -324,7 +396,7 @@ def test_validated_repository_authority__missing_or_unvalidated__is_not_authorit
         validated_repository_authority(intent, selected_resources=())
 
 
-def _intent(repository: str | None) -> RequestIntentV2:
+def _intent(repository: str | None) -> RequestIntentV3:
     constraints = []
     if repository is not None:
         constraints.append(
@@ -340,7 +412,7 @@ def _intent(repository: str | None) -> RequestIntentV2:
             }
         )
     return cast(
-        RequestIntentV2,
+        RequestIntentV3,
         {
             **_candidate(),
             "constraints": constraints,

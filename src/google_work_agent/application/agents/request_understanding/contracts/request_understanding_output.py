@@ -3,7 +3,7 @@
 from typing import Literal, NotRequired, Required, TypedDict
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 
 
@@ -32,7 +32,7 @@ class RequestUnderstandingFailureV1(TypedDict):
 class RequestUnderstandingOutputV1(TypedDict):
     schema_version: Required[Literal[1]]
     result: Literal["COMPLETE", "NEEDS_CONFIRMATION", "INVALID"]
-    request_intent: RequestIntentV2 | None
+    request_intent: RequestIntentV3 | None
     clarification: ClarificationQuestionV1 | None
     failure: RequestUnderstandingFailureV1 | None
     validator_codes: list[str]

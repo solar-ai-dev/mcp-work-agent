@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import TypedDict
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
     SourceFetchPlanV1,
@@ -47,7 +47,7 @@ _QUERY_TERM_CONSTRAINT_KINDS = frozenset({"PERSON", "USER_REQUIREMENT", "EMAIL"}
 def rag_retrieve_rerank(
     segments: list[SourceSegment],
     *,
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     source_plans: Sequence[SourceFetchPlanV1],
     top_k: int,
     config: RagScoringConfig = DEFAULT_RAG_SCORING_CONFIG,
@@ -135,7 +135,7 @@ def _thread_id(segment: SourceSegment) -> str | None:
 
 
 def _semantic_match_reasons(
-    segment: SourceSegment, plans: Sequence[SourceFetchPlanV1], intent: RequestIntentV2,
+    segment: SourceSegment, plans: Sequence[SourceFetchPlanV1], intent: RequestIntentV3,
 ) -> list[str]:
     reasons: list[str] = []
     text = segment.text.casefold()
@@ -190,7 +190,7 @@ def _semantic_match_reasons(
     return list(dict.fromkeys(reasons))
 
 
-def _selected_resource_ids(intent: RequestIntentV2) -> frozenset[str]:
+def _selected_resource_ids(intent: RequestIntentV3) -> frozenset[str]:
     ids: set[str] = set()
     for constraint in intent["constraints"]:
         if constraint["kind"] == "RESOURCE":
@@ -199,7 +199,7 @@ def _selected_resource_ids(intent: RequestIntentV2) -> frozenset[str]:
     return frozenset(ids)
 
 
-def _query_terms(intent: RequestIntentV2) -> frozenset[str]:
+def _query_terms(intent: RequestIntentV3) -> frozenset[str]:
     terms = set(_clean_terms(intent["goal"]))
     for constraint in intent["constraints"]:
         if (

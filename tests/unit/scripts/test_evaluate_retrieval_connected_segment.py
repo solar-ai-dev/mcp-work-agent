@@ -22,7 +22,7 @@ from google_work_agent.adapters.system.memory.retrieval_evidence_store import (
     RunScopedEvidenceStore,
 )
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
     ToolRoutePlanV2,
@@ -34,7 +34,7 @@ def test_current_upstream_override_replaces_both_saved_inputs() -> None:
         "request_intent": {"saved": "intent"},
         "tool_route_plan": {"saved": "route"},
     }
-    current_intent = cast(RequestIntentV2, {"current": "intent"})
+    current_intent = cast(RequestIntentV3, {"current": "intent"})
     current_route = cast(ToolRoutePlanV2, {"current": "route"})
 
     assert _select_replay_inputs(saved, None) == (

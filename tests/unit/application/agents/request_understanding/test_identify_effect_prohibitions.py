@@ -51,6 +51,7 @@ def _prohibitions(*forbidden: str) -> dict[str, object]:
                 "prohibition": (
                     "FORBIDDEN" if candidate["effect"] in forbidden else "NOT_FORBIDDEN"
                 ),
+                "work_unit_ids": ["work-1"],
             }
             for candidate in _EFFECT_CANDIDATES
         ]
@@ -61,7 +62,13 @@ def _output_decisions(*, gmail_message_effect: str | None = None) -> dict[str, o
     decisions = (
         []
         if gmail_message_effect is None
-        else [{"resource_type": "GMAIL_MESSAGE", "effect": gmail_message_effect}]
+        else [
+            {
+                "resource_type": "GMAIL_MESSAGE",
+                "effect": gmail_message_effect,
+                "work_unit_ids": ["work-1"],
+            }
+        ]
     )
     return {"output_responsibilities": decisions}
 
@@ -82,13 +89,22 @@ def test_effect_prohibition_schema__with_non_exact_set__rejects_candidate(mutati
     if mutation == "missing":
         decisions.pop()
     elif mutation == "extra":
-        decisions.append({"effect": "ARCHIVE", "prohibition": "NOT_FORBIDDEN"})
+        decisions.append(
+            {
+                "effect": "ARCHIVE",
+                "prohibition": "NOT_FORBIDDEN",
+                "work_unit_ids": ["work-1"],
+            }
+        )
     else:
         decisions[-1] = deepcopy(decisions[0])
 
     errors = validate_output_schema(
         value,
-        effect_prohibitions.build_effect_prohibition_output_schema(_EFFECT_CANDIDATES).json_schema,
+        effect_prohibitions.build_effect_prohibition_output_schema(
+            _EFFECT_CANDIDATES,
+            work_unit_ids=("work-1",),
+        ).json_schema,
     )
 
     assert errors
@@ -121,6 +137,7 @@ def test_effect_prohibition_operation__with_explicit_forbid__keeps_model_owned_r
         prompt_input={"user_request": request_text, "selected_resource_refs": []},
         goal_candidate={"goal": "요청 수행", "completion_conditions": []},
         effect_candidates=_EFFECT_CANDIDATES,
+        work_unit_ids=("work-1",),
     )
 
     assert effect_prohibitions.prohibited_effects(result) == expected
@@ -133,6 +150,7 @@ def test_send_prohibition__with_explicit_forbid__removes_send_and_defends_infere
         effect_prohibitions.validate_effect_prohibition_candidate(
             _prohibitions("SEND"),
             effect_candidates=_EFFECT_CANDIDATES,
+            work_unit_ids=("work-1",),
         ),
     )
     forbidden = effect_prohibitions.prohibited_effects(prohibitions)
@@ -143,6 +161,7 @@ def test_send_prohibition__with_explicit_forbid__removes_send_and_defends_infere
         output_responsibilities.build_output_responsibility_output_schema(
             _RESOURCE_CANDIDATES,
             prohibited_effects=forbidden,
+            work_unit_ids=("work-1",),
         ).json_schema,
     )
     with pytest.raises(
@@ -152,6 +171,7 @@ def test_send_prohibition__with_explicit_forbid__removes_send_and_defends_infere
             invalid,
             output_candidates=_RESOURCE_CANDIDATES,
             prohibited_effects=forbidden,
+            work_unit_ids=("work-1",),
         )
     assert excinfo.value.reason_code == "REQUEST_PROHIBITED_OUTPUT_EFFECT_SELECTED"
     assert excinfo.value.affected_field_paths == ("$.output_responsibilities[0].effect",)
@@ -164,6 +184,7 @@ def test_send_not_forbidden__without_explicit_forbid__keeps_send_available() -> 
         candidate,
         output_candidates=_RESOURCE_CANDIDATES,
         prohibited_effects=(),
+        work_unit_ids=("work-1",),
     )
 
     message = next(
@@ -174,4 +195,5 @@ def test_send_not_forbidden__without_explicit_forbid__keeps_send_available() -> 
     assert message == {
         "resource_type": "GMAIL_MESSAGE",
         "effect": "SEND",
+        "work_unit_ids": ["work-1"],
     }

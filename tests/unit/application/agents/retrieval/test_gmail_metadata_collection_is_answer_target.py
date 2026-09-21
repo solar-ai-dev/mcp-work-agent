@@ -1,7 +1,7 @@
 from typing import cast
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.retrieval import (
     gmail_metadata_collection_is_answer_target as metadata_collection,
@@ -11,7 +11,7 @@ from google_work_agent.application.agents.retrieval import (
 def test_gmail_metadata_collection_is_answer_target__with_exhaustive_subject_read__returns_true(
 ) -> None:
     intent = cast(
-        RequestIntentV2,
+        RequestIntentV3,
         {
             "constraints": [
                 {

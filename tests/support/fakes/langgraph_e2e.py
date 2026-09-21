@@ -191,8 +191,31 @@ def _match_goal_constraints_to_schema(
     constraints = output.get("constraints")
     if not isinstance(constraints, list):
         return
+    coverage_schema = allowed_slots.get("coverage_requirement")
+    coverage_properties = (
+        coverage_schema.get("properties")
+        if isinstance(coverage_schema, Mapping)
+        else None
+    )
+    work_unit_schema = (
+        coverage_properties.get("work_unit_ids")
+        if isinstance(coverage_properties, Mapping)
+        else None
+    )
+    work_unit_items = (
+        work_unit_schema.get("items") if isinstance(work_unit_schema, Mapping) else None
+    )
+    work_unit_ids = (
+        list(cast(Sequence[str], work_unit_items["enum"]))
+        if isinstance(work_unit_items, Mapping) and isinstance(work_unit_items.get("enum"), list)
+        else ["work-1"]
+    )
     slots: dict[str, object] = {
-        str(field): ("NOT_COLLECTION" if field == "coverage_requirement" else [])
+        str(field): (
+            {"value": "NOT_COLLECTION", "work_unit_ids": work_unit_ids}
+            if field == "coverage_requirement"
+            else []
+        )
         for field in allowed_slots
         if field != "additional_constraints"
     }
@@ -205,12 +228,16 @@ def _match_goal_constraints_to_schema(
         if not isinstance(field, str):
             continue
         if field not in slots:
-            additional_constraints.append({"field": field, "value": value})
+            additional_constraints.append(
+                {"field": field, "value": value, "work_unit_ids": work_unit_ids}
+            )
             continue
         values = value if isinstance(value, list) else [value]
         normalized = [item for item in values if isinstance(item, str) and item]
         if normalized:
-            slots[field] = normalized
+            slots[field] = [
+                {"value": item, "work_unit_ids": work_unit_ids} for item in normalized
+            ]
     slots["additional_constraints"] = additional_constraints
     output["constraints"] = slots
 
@@ -223,6 +250,26 @@ def _respond(
     call_no: int,
 ) -> dict[str, object]:
     base = _base_projection(prompt_input)
+    if prompt_id == "request_understanding.identify_requested_work":
+        user_request = str(base["user_request"])
+        return {
+            "schema_version": 1,
+            "work_units": [{"request_spans": [user_request]}],
+        }
+    if prompt_id == "request_understanding.identify_work_relations":
+        return {
+            "schema_version": 1,
+            "relation_decisions": [
+                {
+                    "source_work_unit_id": pair["source_work_unit_id"],
+                    "target_work_unit_id": pair["target_work_unit_id"],
+                    "disposition": "NONE",
+                }
+                for pair in cast(
+                    Sequence[Mapping[str, object]], base["candidate_pairs"]
+                )
+            ],
+        }
     if prompt_id == "request_understanding.identify_goal":
         request_text = str(base["user_request"])
         return {
@@ -232,11 +279,13 @@ def _respond(
             "analysis_requirement": "REQUIRED" if scenario == "ANALYTICAL_READ" else "NONE",
         }
     if prompt_id == "request_understanding.identify_effect_prohibitions":
+        work_unit_ids = _projection_work_unit_ids(base)
         return {
             "effect_prohibitions": [
                 {
                     "effect": candidate["effect"],
                     "prohibition": "NOT_FORBIDDEN",
+                    "work_unit_ids": work_unit_ids,
                 }
                 for candidate in cast(Sequence[Mapping[str, object]], base["effect_candidates"])
             ]
@@ -631,6 +680,7 @@ def _goal_source_dependency_decisions(
         for item in cast(list[Mapping[str, object]], responsibilities["source_reads"])
     }
     candidates = cast(list[Mapping[str, object]], projection["source_candidates"])
+    work_unit_ids = _projection_work_unit_ids(projection)
     decisions: list[dict[str, object]] = []
     for candidate in candidates:
         resource_type = str(candidate["resource_type"])
@@ -649,6 +699,7 @@ def _goal_source_dependency_decisions(
                         resource_type=resource_type,
                         projection=projection,
                     ),
+                    "work_unit_ids": work_unit_ids,
                 }
             )
         else:
@@ -686,16 +737,24 @@ def _goal_output_responsibility_decisions(
         for item in cast(list[Mapping[str, object]], responsibilities["outputs"])
     }
     candidates = cast(list[Mapping[str, object]], projection["output_candidates"])
+    work_unit_ids = _projection_work_unit_ids(projection)
     return {
         "output_responsibilities": [
             {
                 "resource_type": candidate["resource_type"],
                 "effect": outputs[str(candidate["resource_type"])],
+                "work_unit_ids": work_unit_ids,
             }
             for candidate in candidates
             if str(candidate["resource_type"]) in outputs
         ]
     }
+
+
+def _projection_work_unit_ids(projection: Mapping[str, object]) -> list[str]:
+    requested_work = cast(Mapping[str, object], projection["requested_work"])
+    units = cast(Sequence[Mapping[str, object]], requested_work["work_units"])
+    return [str(unit["unit_id"]) for unit in units]
 
 
 def _route_semantics(scenario: str) -> tuple[list[str], list[str], list[str]]:

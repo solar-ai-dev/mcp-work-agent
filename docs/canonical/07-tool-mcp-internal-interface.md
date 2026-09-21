@@ -1649,11 +1649,11 @@ Port method는 concrete Adapter class/path를 소유하지 않는다. 입력 siz
 
 Main Graph와 Agent Subgraph는 Versioned Typed State로 연결한다. Main State는 공식 결과만 누적하고 Subgraph 내부 Query candidate·LLM candidate·RAG score는 Local State/Run Cache에 둔다.
 
-`WorkflowStartRequest.default_github_repository` / `RunInputV1.default_github_repository`와 `RequestIntentV2.repository_default`는 기존 Run/checkpoint를 읽기 위한 nullable legacy compatibility field다. 새 Run의 Resource 접근 또는 WRITE target을 이 값으로 결정하지 않으며 현재 Settings를 재조회해 채우거나 USER_REQUEST provenance로 재작성하지 않는다. Local API의 current Run context projection은 active Settings allowlist와 explicit/selected target만 사용한다.
+`WorkflowStartRequest.default_github_repository` / `RunInputV1.default_github_repository`와 `RequestIntentV3.repository_default`는 nullable legacy compatibility field다. 새 Run의 Resource 접근 또는 WRITE target을 이 값으로 결정하지 않으며 현재 Settings를 재조회해 채우거나 USER_REQUEST provenance로 재작성하지 않는다. Local API의 current Run context projection은 active Settings allowlist와 explicit/selected target만 사용한다.
 
 ```
 RunInputV1
-RequestIntentV2
+RequestIntentV3
 ToolRoutePlanV2
 RetrievalResultV1
 WorkAnalysisResultV2

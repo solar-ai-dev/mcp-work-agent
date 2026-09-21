@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from typing import TypedDict, cast
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_result import (
     WorkFactV1,
@@ -15,7 +15,7 @@ from .retrieval_source_statuses_projection import project_retrieval_source_statu
 
 
 class AssessOperationalRisksInput(TypedDict):
-    request_intent: RequestIntentV2
+    request_intent: RequestIntentV3
     work_facts: list[WorkFactV1]
     validated_relations: list[WorkRelationV1]
     evidence: list[dict[str, object]]
@@ -40,7 +40,7 @@ def project_assess_operational_risks_input(
     response = state.get("confirmation_response")
     summary = state.get("policy_summary")
     return {
-        "request_intent": cast(RequestIntentV2, state["request_intent"]),
+        "request_intent": cast(RequestIntentV3, state["request_intent"]),
         "work_facts": cast(list[WorkFactV1], state["fact_candidates"]),
         "validated_relations": cast(list[WorkRelationV1], state["validated_relations"]),
         "evidence": [dict(item) for item in cast(list[dict[str, object]], state["evidence"])],

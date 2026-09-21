@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     ConstraintV1,
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.retrieval.normalize_segments import SourceSegment
 from google_work_agent.application.agents.retrieval.rag_retrieve_rerank import (
@@ -44,7 +44,7 @@ def _intent(
     *,
     goal: str = "",
     selected_resource_ids: list[str] | None = None,
-) -> RequestIntentV2:
+) -> RequestIntentV3:
     constraints: list[ConstraintV1] = []
     if selected_resource_ids:
         constraints.append(

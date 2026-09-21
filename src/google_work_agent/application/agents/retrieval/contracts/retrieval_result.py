@@ -175,6 +175,7 @@ class RetrievalSourceStatusV1(TypedDict):
     resource_type: str
     status: Literal["COMPLETE", "PARTIAL", "FAILED", "NOT_ATTEMPTED"]
     evidence_refs: list[str]
+    work_unit_ids: list[str]
     # Current producers include the actual provider result cardinality. Older
     # persisted checkpoints may omit it and remain readable.
     observed_resource_count: NotRequired[int]
@@ -190,6 +191,11 @@ class RetrievalSourceStatusV1(TypedDict):
         ]
         | None
     )
+
+
+class WorkUnitEvidenceBindingV1(TypedDict):
+    work_unit_id: str
+    evidence_refs: list[str]
 
 
 class RetrievalCollectionItemV1(TypedDict):
@@ -234,6 +240,7 @@ class RetrievalResultV1(TypedDict):
     excluded_segment_ids: list[str]
     source_resource_refs: list[str]
     source_statuses: list[RetrievalSourceStatusV1]
+    evidence_by_work_unit: list[WorkUnitEvidenceBindingV1]
     # Older checkpoints predate collection metadata preservation. Current
     # producers include the exact observed identities and pagination state.
     collection_results: NotRequired[list[RetrievalCollectionResultV1]]

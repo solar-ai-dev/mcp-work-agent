@@ -10,7 +10,7 @@ from google_work_agent.adapters.langgraph.subgraph_state import (
     AgentSubgraphInputEnvelope,
 )
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.retrieval.contracts.retrieval_result import (
     EvidenceDraftV1,
@@ -45,7 +45,7 @@ from google_work_agent.ports.system.contracts.workflow_signal import (
 class WorkAnalysisInputState(AgentSubgraphInputEnvelope, total=False):
     """Parent projection owned by Work Analysis."""
 
-    request_intent: RequestIntentV2 | None
+    request_intent: RequestIntentV3 | None
     tool_route_plan: ToolRoutePlanV2 | None
     retrieval_result: RetrievalResultV1 | None
     user_interrupt: UserInterruptV1 | None
@@ -86,7 +86,7 @@ class WorkAnalysisStateV2(TypedDict, total=False):
     """The exact owner-local semantic fields for the Work Analysis capability."""
 
     user_request: str
-    request_intent: RequestIntentV2
+    request_intent: RequestIntentV3
     evidence_refs: list[str]
     fact_candidates: list[WorkFactV1]
     entity_relation_candidates: list[WorkRelationV1]

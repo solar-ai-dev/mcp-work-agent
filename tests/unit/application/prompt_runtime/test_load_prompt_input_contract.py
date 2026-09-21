@@ -51,7 +51,7 @@ def test_goal_contract__retired_output_version__fails_closed(tmp_path: Path) -> 
     entry = next(
         item for item in entries if item["prompt_slot_id"] == "request_understanding.identify_goal"
     )
-    assert entry["output_schema_version"] == 16
+    assert entry["output_schema_version"] == 17
     entry["output_schema_version"] = 1
     with pytest.raises(PromptRuntimeInputContractError, match="schema version"):
         load_prompt_input_contract(_write(tmp_path, payload))
@@ -147,6 +147,7 @@ def test_atomic_responsibility_contracts__with_runtime_candidates__require_goal(
         {
             "user_request": "request",
             "selected_resource_refs": [],
+            "requested_work": {},
             "goal_candidate": {},
             candidate_field: [],
             **additional_fields,
@@ -170,6 +171,7 @@ def test_effect_prohibition_contract__with_runtime_candidates__requires_goal() -
         {
             "user_request": "request",
             "selected_resource_refs": [],
+            "requested_work": {},
             "goal_candidate": {},
             "effect_candidates": [],
         },

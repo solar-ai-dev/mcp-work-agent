@@ -1,5 +1,5 @@
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.tool_routing.bind_registry_candidates import (
     bind_registry_candidates,
@@ -15,6 +15,50 @@ from google_work_agent.application.tool_registry.signed_tool_registry import Sig
 from google_work_agent.domain.action.model import EffectType
 
 
+def _candidate(
+    input_resource_types: tuple[str, ...],
+    output_pairs: tuple[tuple[str, EffectType], ...],
+    output_mode: str,
+    analysis_requirement: str,
+    input_reason_codes: tuple[tuple[str, str], ...] = (),
+) -> SemanticRouteCandidate:
+    return SemanticRouteCandidate(
+        input_resource_types=input_resource_types,
+        output_pairs=output_pairs,
+        output_mode=output_mode,  # type: ignore[arg-type]
+        analysis_requirement=analysis_requirement,  # type: ignore[arg-type]
+        input_reason_codes=input_reason_codes,
+        input_work_unit_bindings=tuple(
+            (resource_type, ("work-1",)) for resource_type in input_resource_types
+        ),
+        output_work_unit_bindings=tuple(
+            (resource_type, effect, ("work-1",)) for resource_type, effect in output_pairs
+        ),
+    )
+
+
+def _work_fields(request_text: str) -> dict[str, object]:
+    return {
+        "effect_prohibitions": [],
+        "requested_work": {
+            "work_units": [
+                {
+                    "unit_id": "work-1",
+                    "request_provenance": [
+                        {
+                            "source": "USER_REQUEST",
+                            "start_offset": 0,
+                            "end_offset": len(request_text),
+                            "source_text": request_text,
+                        }
+                    ],
+                }
+            ],
+            "work_relations": [],
+        },
+    }
+
+
 def _catalog() -> SignedToolRegistry:
     return load_signed_tool_registry()
 
@@ -23,7 +67,7 @@ def test_finalize_route_freezes__prebound_v2_plan__without_reowning_precondition
     catalog = _catalog()
     ids = iter(f"id-{index}" for index in range(30))
     binding = bind_registry_candidates(
-        candidate=SemanticRouteCandidate(
+        candidate=_candidate(
             ("TASK", "TASK_LIST"),
             (("TASK", EffectType.CREATE),),
             "ACTION",
@@ -36,8 +80,8 @@ def test_finalize_route_freezes__prebound_v2_plan__without_reowning_precondition
         tool_catalog=catalog,
         id_factory=lambda: next(ids),
     )
-    intent: RequestIntentV2 = {
-        "schema_version": 2,
+    intent: RequestIntentV3 = {
+        "schema_version": 3,
         "meta": {"artifact_id": "intent-1", "revision": 1, "based_on": []},
         "goal": "task create",
         "completion_conditions": ["created"],
@@ -45,6 +89,7 @@ def test_finalize_route_freezes__prebound_v2_plan__without_reowning_precondition
         "requested_effect_hints": ["CREATE"],
         "requested_resource_hints": ["TASK"],
         "analysis_requirement": "REQUIRED",
+        **_work_fields("task create"),
         "ambiguity": {"requires_confirmation": False, "reason_codes": [], "missing_fields": []},
     }
     result = finalize_route(
@@ -67,12 +112,12 @@ def test_finalize_route__selection_outside_bound_set__blocks() -> None:
     catalog = _catalog()
     ids = iter(f"id-{index}" for index in range(30))
     binding = bind_registry_candidates(
-        candidate=SemanticRouteCandidate((), (("TASK", EffectType.CREATE),), "ACTION", "NONE"),
+        candidate=_candidate((), (("TASK", EffectType.CREATE),), "ACTION", "NONE"),
         tool_catalog=catalog,
         id_factory=lambda: next(ids),
     )
-    intent: RequestIntentV2 = {
-        "schema_version": 2,
+    intent: RequestIntentV3 = {
+        "schema_version": 3,
         "meta": {"artifact_id": "intent-1", "revision": 1, "based_on": []},
         "goal": "task create",
         "completion_conditions": ["created"],
@@ -80,6 +125,7 @@ def test_finalize_route__selection_outside_bound_set__blocks() -> None:
         "requested_effect_hints": ["CREATE"],
         "requested_resource_hints": ["TASK"],
         "analysis_requirement": "NONE",
+        **_work_fields("task create"),
         "ambiguity": {"requires_confirmation": False, "reason_codes": [], "missing_fields": []},
     }
     result = finalize_route(
@@ -98,7 +144,7 @@ def test_finalize_route__output_only_revision__reuses_exact_input_plan() -> None
     catalog = _catalog()
     ids = iter(f"id-{index}" for index in range(30))
     binding = bind_registry_candidates(
-        candidate=SemanticRouteCandidate(
+        candidate=_candidate(
             ("TASK", "TASK_LIST"),
             (("TASK", EffectType.CREATE),),
             "ACTION",
@@ -111,8 +157,8 @@ def test_finalize_route__output_only_revision__reuses_exact_input_plan() -> None
         tool_catalog=catalog,
         id_factory=lambda: next(ids),
     )
-    first_intent: RequestIntentV2 = {
-        "schema_version": 2,
+    first_intent: RequestIntentV3 = {
+        "schema_version": 3,
         "meta": {"artifact_id": "intent-1", "revision": 1, "based_on": []},
         "goal": "create task when needed",
         "completion_conditions": ["safe preview"],
@@ -120,6 +166,7 @@ def test_finalize_route__output_only_revision__reuses_exact_input_plan() -> None
         "requested_effect_hints": ["CREATE"],
         "requested_resource_hints": ["TASK"],
         "analysis_requirement": "REQUIRED",
+        **_work_fields("create task when needed"),
         "ambiguity": {"requires_confirmation": False, "reason_codes": [], "missing_fields": []},
     }
     first = finalize_route(
@@ -131,7 +178,7 @@ def test_finalize_route__output_only_revision__reuses_exact_input_plan() -> None
     )
     first_plan = first["tool_route_plan"]
     assert first_plan is not None
-    revised_intent: RequestIntentV2 = {
+    revised_intent: RequestIntentV3 = {
         **first_intent,
         "meta": {
             "artifact_id": "intent-1",
@@ -163,7 +210,7 @@ def test_finalize_route__output_only_revision__reuses_exact_input_plan() -> None
 def test_finalize_route__same_request_and_routes__preserves_input_plan_identity() -> None:
     catalog = _catalog()
     ids = iter(f"id-{index}" for index in range(30))
-    candidate = SemanticRouteCandidate(
+    candidate = _candidate(
         ("GMAIL_THREAD",),
         (),
         "ANSWER",
@@ -174,8 +221,8 @@ def test_finalize_route__same_request_and_routes__preserves_input_plan_identity(
         tool_catalog=catalog,
         id_factory=lambda: next(ids),
     )
-    intent: RequestIntentV2 = {
-        "schema_version": 2,
+    intent: RequestIntentV3 = {
+        "schema_version": 3,
         "meta": {"artifact_id": "intent-read", "revision": 1, "based_on": []},
         "goal": "list matching mail",
         "completion_conditions": ["all matching titles returned"],
@@ -183,6 +230,7 @@ def test_finalize_route__same_request_and_routes__preserves_input_plan_identity(
         "requested_effect_hints": ["READ"],
         "requested_resource_hints": ["GMAIL_THREAD"],
         "analysis_requirement": "REQUIRED",
+        **_work_fields("list matching mail"),
         "ambiguity": {"requires_confirmation": False, "reason_codes": [], "missing_fields": []},
     }
     first = finalize_route(

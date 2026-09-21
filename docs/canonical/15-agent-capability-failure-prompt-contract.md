@@ -304,9 +304,9 @@ Goal/evidence/action/route/constraint/policy 검사를 atomic inspector responsi
 
 | Agent Role | 주 책임 | 주요 입력 | 주요 출력 | 금지 |
 | --- | --- | --- | --- | --- |
-| `request_understanding` | 목표·완료 조건·제약·모호성 구조화 | 사용자 요청, Entry Mode, 선택 Resource | `RequestIntent` | Connector 조회, Action 생성 |
-| `tool_route` | IN Resource/Read Tool 범위와 OUT Resource/Effect/Tool 확정 | `RequestIntentV2`, Signed Tool Registry | `ToolRoutePlanV2` | Query 작성, Evidence 판단, Arguments 작성 |
-| `retrieval` | 고정 IN Route에서 Query·Read·RAG·Evidence·Sufficiency | `RequestIntentV2`, frozen `input_routes`, Retrieval Budget | `RetrievalResultV1` | OUT Tool 변경, Write, Tool 종류 재선택 |
+| `request_understanding` | 목표·완료 조건·제약·모호성, WorkUnit 경계·binding·사용자 업무 관계 구조화 | 사용자 요청, Entry Mode, 선택 Resource | `RequestIntentV3` | Connector 조회, Action 생성, Action dependency·실행 권한 판단 |
+| `tool_route` | IN Resource/Read Tool 범위와 OUT Resource/Effect/Tool 확정 및 WorkUnit binding 전달 | `RequestIntentV3`, Signed Tool Registry | `ToolRoutePlanV2` | Query 작성, Evidence 판단, Arguments 작성 |
+| `retrieval` | 고정 IN Route에서 Query·Read·RAG·Evidence·Sufficiency와 route coverage binding 보존 | `RequestIntentV3`, frozen `input_routes`, Retrieval Budget | `RetrievalResultV1` | OUT Tool 변경, Write, Tool 종류 재선택, WorkUnit별 Provider READ 복제 |
 | `work_analysis` | 필요한 경우 업무 사실·관계·누락·중복·충돌·일정 위험 분석 | User Request, Intent, optional Evidence | `WorkAnalysisResultV2` 또는 Work Analysis 소유 Confirmation signal | 정책 최종 판정, 실행, LLM 단독 중복·충돌 확정, Confirmation 없는 Override |
 | `planning` | 고정 OUT Route의 Answer/Arguments·Dependency 작성 | User Request, Intent, `OutputPlanV1`, optional Analysis, Evidence | `AnswerDraftV2` 또는 `ActionPlanDraftV2` | Tool 재선택, 승인, 실행 |
 | `review` | 목표 충족·Evidence·과잉 Action·모순·Route 오류 검토 | Plan Draft, Evidence, Policy Summary | `PlanReviewResultV2` | Route 직접 변경, 실행 허용 최종 판정 |

@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from typing import TypedDict, cast
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_candidates import (
     InformationGapConfirmationResolutionV1,
@@ -18,7 +18,7 @@ from .retrieval_source_statuses_projection import project_retrieval_source_statu
 
 
 class AssessInformationGapsInput(TypedDict):
-    request_intent: RequestIntentV2
+    request_intent: RequestIntentV3
     work_facts: list[WorkFactV1]
     evidence: list[dict[str, object]]
     allowed_evidence_refs: set[str]
@@ -41,7 +41,7 @@ def project_assess_information_gaps_input(
         raise ValueError("missing typed input projection for analysis.assess_information_gaps")
     resolution = state.get("information_gap_confirmation_resolution")
     return {
-        "request_intent": cast(RequestIntentV2, state["request_intent"]),
+        "request_intent": cast(RequestIntentV3, state["request_intent"]),
         "work_facts": cast(list[WorkFactV1], state["fact_candidates"]),
         "evidence": [dict(item) for item in cast(list[dict[str, object]], state["evidence"])],
         "allowed_evidence_refs": set(cast(list[str], state["evidence_refs"])),

@@ -12,8 +12,9 @@ from google_work_agent.application.agents.request_understanding.contracts.reques
     ConstraintProvenanceSource,
     ConstraintProvenanceV1,
     ConstraintV1,
+    EffectProhibitionV1,
     RequestIntentCandidateV1,
-    RequestIntentV2,
+    RequestIntentV3,
     RequestUnderstandingValidationError,
     ResourceResponsibilitiesV1,
     is_fully_qualified_repository,
@@ -22,6 +23,10 @@ from google_work_agent.application.agents.request_understanding.contracts.reques
     is_source_status_constraint,
     is_valid_gmail_draft_id,
     repository_from_constraints,
+)
+from google_work_agent.application.agents.request_understanding.contracts.work_unit_binding import (
+    validate_requested_work_definition,
+    validate_work_unit_refs,
 )
 from google_work_agent.ports.system.contracts.workflow_execution import SelectedResourceRef
 from google_work_agent.ports.system.settings_port import GitHubRepositoryDefaultV1
@@ -53,7 +58,7 @@ def validate_intent(
     *,
     require_meta: Literal[True],
     provenance_sources: Mapping[ConstraintProvenanceSource, str] | None = None,
-) -> RequestIntentV2: ...
+) -> RequestIntentV3: ...
 
 
 @overload
@@ -70,7 +75,7 @@ def validate_intent(
     *,
     require_meta: bool = False,
     provenance_sources: Mapping[ConstraintProvenanceSource, str] | None = None,
-) -> RequestIntentCandidateV1 | RequestIntentV2:
+) -> RequestIntentCandidateV1 | RequestIntentV3:
     root = _mapping(value, "$")
     expected = {
         "schema_version",
@@ -80,6 +85,8 @@ def validate_intent(
         "requested_effect_hints",
         "requested_resource_hints",
         "analysis_requirement",
+        "effect_prohibitions",
+        "requested_work",
         "ambiguity",
     }
     if "resource_responsibilities" in root:
@@ -89,15 +96,24 @@ def validate_intent(
         if "repository_default" in root:
             expected.add("repository_default")
     if set(root) != expected:
-        raise RequestUnderstandingValidationError("RequestIntentV2 fields are invalid")
-    if root.get("schema_version") != 2:
-        raise RequestUnderstandingValidationError("$.schema_version must be 2")
+        raise RequestUnderstandingValidationError("RequestIntentV3 fields are invalid")
+    if root.get("schema_version") != 3:
+        raise RequestUnderstandingValidationError("$.schema_version must be 3")
+    if provenance_sources is None or "USER_REQUEST" not in provenance_sources:
+        raise RequestUnderstandingValidationError(
+            "RequestIntentV3 validation requires current user request provenance"
+        )
+    requested_work = validate_requested_work_definition(
+        root.get("requested_work"),
+        user_request=provenance_sources["USER_REQUEST"],
+    )
+    unit_ids = [item["unit_id"] for item in requested_work["work_units"]]
     goal = _string(root, "goal", "$")
     completion_conditions = _string_list(
         root.get("completion_conditions"), "$.completion_conditions"
     )
     constraints = [
-        _constraint(item, f"$.constraints[{index}]")
+        _constraint(item, f"$.constraints[{index}]", known_unit_ids=unit_ids)
         for index, item in enumerate(_list(root.get("constraints"), "$.constraints"))
     ]
     effects = _string_list(root.get("requested_effect_hints"), "$.requested_effect_hints")
@@ -113,6 +129,7 @@ def validate_intent(
         effects=effects,
         resource_hints=resource_hints,
         constraints=constraints,
+        known_unit_ids=unit_ids,
         required=requires_resource_responsibilities(
             effects=effects,
             resource_hints=resource_hints,
@@ -131,8 +148,12 @@ def validate_intent(
     if analysis_requirement not in {"NONE", "REQUIRED"}:
         raise RequestUnderstandingValidationError("$.analysis_requirement is invalid")
     ambiguity = _ambiguity(root.get("ambiguity"))
+    effect_prohibitions = _effect_prohibitions(
+        root.get("effect_prohibitions"),
+        known_unit_ids=unit_ids,
+    )
     candidate: RequestIntentCandidateV1 = {
-        "schema_version": 2,
+        "schema_version": 3,
         "goal": goal,
         "completion_conditions": completion_conditions,
         "constraints": constraints,
@@ -141,6 +162,8 @@ def validate_intent(
         ),
         "requested_resource_hints": resource_hints,
         "analysis_requirement": cast(Literal["NONE", "REQUIRED"], analysis_requirement),
+        "effect_prohibitions": effect_prohibitions,
+        "requested_work": requested_work,
         "ambiguity": ambiguity,
     }
     if responsibilities is not None:
@@ -156,7 +179,7 @@ def validate_intent(
     if not isinstance(revision, int) or revision < 1 or not isinstance(based_on, list):
         raise RequestUnderstandingValidationError("$.meta is invalid")
     return cast(
-        RequestIntentV2,
+        RequestIntentV3,
         {
             **candidate,
             "meta": {"artifact_id": artifact_id, "revision": revision, "based_on": list(based_on)},
@@ -189,10 +212,15 @@ def _ambiguity(value: object) -> AmbiguityV1:
     }
 
 
-def _constraint(value: object, path: str) -> ConstraintV1:
+def _constraint(
+    value: object,
+    path: str,
+    *,
+    known_unit_ids: Sequence[str],
+) -> ConstraintV1:
     root = _mapping(value, path)
     if (
-        not {"kind", "field", "value"}
+        not {"kind", "field", "value", "work_unit_ids"}
         <= set(root)
         <= {
             "kind",
@@ -200,6 +228,7 @@ def _constraint(value: object, path: str) -> ConstraintV1:
             "value",
             "provenance",
             "source_resource_type",
+            "work_unit_ids",
         }
     ):
         raise RequestUnderstandingValidationError(f"{path} fields are invalid")
@@ -215,6 +244,11 @@ def _constraint(value: object, path: str) -> ConstraintV1:
         "kind": cast(ConstraintKindValue, kind),
         "field": field,
         "value": normalized_value,
+        "work_unit_ids": validate_work_unit_refs(
+            root.get("work_unit_ids"),
+            known_unit_ids=known_unit_ids,
+            path=f"{path}.work_unit_ids",
+        ),
     }
     if "provenance" in root:
         constraint["provenance"] = _provenance(root.get("provenance"), f"{path}.provenance")
@@ -448,6 +482,7 @@ def validate_resource_responsibilities(
     effects: Sequence[str],
     resource_hints: Sequence[str],
     constraints: Sequence[ConstraintV1],
+    known_unit_ids: Sequence[str],
     required: bool,
 ) -> ResourceResponsibilitiesV1 | None:
     """Validate source/output responsibility without reclassifying natural language."""
@@ -471,13 +506,23 @@ def validate_resource_responsibilities(
     for index, item in enumerate(source_reads):
         path = f"$.resource_responsibilities.source_reads[{index}]"
         source = _mapping(item, path)
-        if set(source) != {"resource_type", "required_information", "target_scope"}:
+        if set(source) != {
+            "resource_type",
+            "required_information",
+            "target_scope",
+            "work_unit_ids",
+        }:
             raise RequestUnderstandingValidationError(f"{path} fields are invalid")
         resource_type = _string(source, "resource_type", path)
         information = _string_list(
             source.get("required_information"), f"{path}.required_information"
         )
         target_scope = _string(source, "target_scope", path)
+        work_unit_ids = validate_work_unit_refs(
+            source.get("work_unit_ids"),
+            known_unit_ids=known_unit_ids,
+            path=f"{path}.work_unit_ids",
+        )
         if target_scope not in {"SINGULAR", "CRITERIA"}:
             raise RequestUnderstandingValidationError(f"{path}.target_scope is invalid")
         if resource_type in source_resources:
@@ -491,26 +536,32 @@ def validate_resource_responsibilities(
                 "resource_type": resource_type,
                 "required_information": information,
                 "target_scope": target_scope,
+                "work_unit_ids": work_unit_ids,
             }
         )
     normalized_outputs = []
     output_resources: set[str] = set()
-    output_identities: set[tuple[str, str]] = set()
+    output_identities: set[tuple[str, str, tuple[str, ...]]] = set()
     output_effects: set[str] = set()
     for index, item in enumerate(outputs):
         path = f"$.resource_responsibilities.outputs[{index}]"
         output = _mapping(item, path)
-        if set(output) != {"resource_type", "effect"}:
+        if set(output) != {"resource_type", "effect", "work_unit_ids"}:
             raise RequestUnderstandingValidationError(f"{path} fields are invalid")
         resource_type = _string(output, "resource_type", path)
         effect = _string(output, "effect", path)
+        work_unit_ids = validate_work_unit_refs(
+            output.get("work_unit_ids"),
+            known_unit_ids=known_unit_ids,
+            path=f"{path}.work_unit_ids",
+        )
         if effect not in WRITE_EFFECT_RESOURCE_TYPES:
             raise RequestUnderstandingValidationError(f"{path}.effect is invalid")
         if resource_type not in WRITE_EFFECT_RESOURCE_TYPES[effect]:
             raise RequestUnderstandingValidationError(
                 f"{path}.resource_type is incompatible with its output effect"
             )
-        identity = (resource_type, effect)
+        identity = (resource_type, effect, tuple(work_unit_ids))
         if identity in output_identities:
             raise RequestUnderstandingValidationError(
                 "$.resource_responsibilities contains a duplicate output"
@@ -522,6 +573,7 @@ def validate_resource_responsibilities(
             {
                 "resource_type": resource_type,
                 "effect": cast(Literal["CREATE", "UPDATE", "SEND", "DELETE"], effect),
+                "work_unit_ids": work_unit_ids,
             }
         )
     derived_effects = ({"READ"} if normalized_sources else set()) | output_effects
@@ -552,6 +604,42 @@ def validate_resource_responsibilities(
             "outputs": normalized_outputs,
         },
     )
+
+
+def _effect_prohibitions(
+    value: object,
+    *,
+    known_unit_ids: Sequence[str],
+) -> list[EffectProhibitionV1]:
+    raw = _list(value, "$.effect_prohibitions")
+    normalized: list[EffectProhibitionV1] = []
+    seen: set[tuple[str, tuple[str, ...]]] = set()
+    for index, item in enumerate(raw):
+        path = f"$.effect_prohibitions[{index}]"
+        root = _mapping(item, path)
+        if set(root) != {"effect", "work_unit_ids"}:
+            raise RequestUnderstandingValidationError(f"{path} fields are invalid")
+        effect = _string(root, "effect", path)
+        if effect not in WRITE_EFFECT_RESOURCE_TYPES:
+            raise RequestUnderstandingValidationError(f"{path}.effect is invalid")
+        refs = validate_work_unit_refs(
+            root.get("work_unit_ids"),
+            known_unit_ids=known_unit_ids,
+            path=f"{path}.work_unit_ids",
+        )
+        identity = (effect, tuple(refs))
+        if identity in seen:
+            raise RequestUnderstandingValidationError(
+                "$.effect_prohibitions contains a duplicate prohibition"
+            )
+        seen.add(identity)
+        normalized.append(
+            {
+                "effect": cast(Literal["CREATE", "UPDATE", "SEND", "DELETE"], effect),
+                "work_unit_ids": refs,
+            }
+        )
+    return normalized
 
 
 def requires_resource_responsibilities(

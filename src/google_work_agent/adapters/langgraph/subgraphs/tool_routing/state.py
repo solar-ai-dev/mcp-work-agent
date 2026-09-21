@@ -8,7 +8,7 @@ from google_work_agent.adapters.langgraph.subgraph_state import (
     AgentSubgraphInputEnvelope,
 )
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.tool_routing.contracts.route_binding_candidate import (
     BoundOutputRouteCandidateV1,
@@ -42,7 +42,7 @@ class ToolRoutingInputState(AgentSubgraphInputEnvelope, total=False):
 
     admitted_connector_ids: list[str]
 
-    request_intent: RequestIntentV2
+    request_intent: RequestIntentV3
     tool_route_plan: ToolRoutePlanV2 | None
     workflow_signal: ScopeExpansionRequiredV1 | RouteReconsiderationRequiredV1 | None
     user_interrupt: UserInterruptV1 | None
@@ -69,7 +69,7 @@ class ToolRoutingParentOutputState(AgentSubgraphInputEnvelope, total=False):
 
     admitted_connector_ids: list[str]
 
-    request_intent: RequestIntentV2
+    request_intent: RequestIntentV3
     tool_route_plan: ToolRoutePlanV2 | None
     workflow_signal: ScopeExpansionRequiredV1 | None
     user_interrupt: UserInterruptV1 | None

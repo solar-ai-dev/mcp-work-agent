@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 
 _GMAIL_THREAD_METADATA_FACTS = frozenset(
@@ -22,7 +22,7 @@ _GMAIL_CONTENT_MARKERS = (
 )
 
 
-def gmail_metadata_collection_is_answer_target(request_intent: RequestIntentV2) -> bool:
+def gmail_metadata_collection_is_answer_target(request_intent: RequestIntentV3) -> bool:
     """Return whether exhaustive Gmail search metadata contains every requested fact."""
 
     constraints = request_intent.get("constraints")

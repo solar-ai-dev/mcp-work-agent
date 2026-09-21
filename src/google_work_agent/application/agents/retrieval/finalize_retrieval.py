@@ -6,7 +6,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Literal, cast
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
     StateArtifactRefV1,
 )
 from google_work_agent.application.agents.retrieval.assess_sufficiency import (
@@ -25,6 +25,7 @@ from google_work_agent.application.agents.retrieval.contracts.retrieval_result i
     RetrievalSourceStatusV1,
     SufficiencyResultV2,
     TaskReviewCandidateV1,
+    WorkUnitEvidenceBindingV1,
 )
 from google_work_agent.application.agents.retrieval.match_temporal_evidence import (
     project_unresolved_event_dates,
@@ -43,7 +44,7 @@ from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan
 def finalize_retrieval(
     *,
     artifact_id: str,
-    request_intent: RequestIntentV2,
+    request_intent: RequestIntentV3,
     tool_route_plan: ToolRoutePlanV2,
     acquisition_result: AcquisitionResultV1,
     selection_result: EvidenceSelectionResultV2,
@@ -84,6 +85,12 @@ def finalize_retrieval(
         ]
     )
     unresolved_dates = project_unresolved_event_dates(evidence, query_attempts)
+    source_statuses = _source_statuses(
+        tool_route_plan,
+        acquisition_result,
+        evidence_drafts=evidence,
+        read_result_summaries=read_result_summaries,
+    )
     return {
         "schema_version": 1,
         "meta": {
@@ -111,11 +118,10 @@ def finalize_retrieval(
         "selected_segment_ids": selected_ids,
         "excluded_segment_ids": excluded_ids,
         "source_resource_refs": _unique(item["resource_handle"] for item in evidence),
-        "source_statuses": _source_statuses(
-            tool_route_plan,
-            acquisition_result,
-            evidence_drafts=evidence,
-            read_result_summaries=read_result_summaries,
+        "source_statuses": source_statuses,
+        "evidence_by_work_unit": _evidence_by_work_unit(
+            request_intent=request_intent,
+            source_statuses=source_statuses,
         ),
         "collection_results": _collection_results(
             tool_route_plan,
@@ -149,6 +155,7 @@ def _collection_results(
     positions_by_route: dict[str, dict[str, int]] = {
         route["route_id"]: {} for route in routes
     }
+
     for summary in acquisition_result["source_summaries"]:
         route_id = summary.get("route_id", single_route_id)
         if not isinstance(route_id, str) or route_id not in resources_by_route:
@@ -208,6 +215,30 @@ def _collection_results(
             "items": resources_by_route[route["route_id"]],
         }
         for route in routes
+    ]
+
+
+def _evidence_by_work_unit(
+    *,
+    request_intent: RequestIntentV3,
+    source_statuses: Sequence[RetrievalSourceStatusV1],
+) -> list[WorkUnitEvidenceBindingV1]:
+    refs_by_unit: dict[str, list[str]] = {
+        unit["unit_id"]: []
+        for unit in request_intent["requested_work"]["work_units"]
+    }
+    for status in source_statuses:
+        for unit_id in status["work_unit_ids"]:
+            if unit_id not in refs_by_unit:
+                raise ValueError("retrieval route references an unknown WorkUnit ID")
+            refs_by_unit[unit_id].extend(
+                ref
+                for ref in status["evidence_refs"]
+                if ref not in refs_by_unit[unit_id]
+            )
+    return [
+        {"work_unit_id": unit_id, "evidence_refs": refs}
+        for unit_id, refs in refs_by_unit.items()
     ]
 
 
@@ -348,6 +379,7 @@ def _source_statuses(
                     for draft in evidence_drafts
                     if draft["resource_handle"] in handles_by_route.get(route_id, set())
                 ],
+                "work_unit_ids": list(routes_by_id[route_id]["work_unit_ids"]),
                 "observed_resource_count": len(handles_by_route.get(route_id, set())),
                 "checked_read_count": checked_read_count,
                 "known_scope_count": known_scope_count,

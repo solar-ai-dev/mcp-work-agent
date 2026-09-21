@@ -5,7 +5,7 @@ from typing import cast
 import pytest
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.retrieval.build_query import (
     QueryUnchangedAfterFailureError,
@@ -177,7 +177,7 @@ def test_normalize_segments_strips__quoted_gmail_content__and_bounds_segments() 
 
 def test_rag_retrieve__rerank_forces__explicit_selected_resource() -> None:
     intent = cast(
-        RequestIntentV2,
+        RequestIntentV3,
         {
             "schema_version": 2,
             "meta": {"artifact_id": "intent-1", "revision": 1, "based_on": []},

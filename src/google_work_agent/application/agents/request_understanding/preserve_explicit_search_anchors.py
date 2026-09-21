@@ -109,12 +109,14 @@ def project_extractive_source_goal(
         raw_values = constraints.get(field)
         if not isinstance(raw_values, list):
             continue
-        constraints[field] = [
-            exact
-            for item in raw_values
-            if isinstance(item, str)
-            and (exact := _matching_source_span(item, request_text)) is not None
-        ]
+        projected_values: list[dict[str, object]] = []
+        for item in raw_values:
+            if not isinstance(item, Mapping) or not isinstance(item.get("value"), str):
+                continue
+            exact = _matching_source_span(item["value"], request_text)
+            if exact is not None:
+                projected_values.append({**item, "value": exact})
+        constraints[field] = projected_values
     constraints["additional_constraints"] = []
     projected["constraints"] = constraints
     return projected
@@ -187,6 +189,9 @@ def preserve_explicit_search_anchors(
                 "kind": "USER_REQUIREMENT",
                 "field": "search_terms",
                 "value": quoted_search_terms,
+                "work_unit_ids": _applicable_work_unit_ids(
+                    candidate, values=quoted_search_terms
+                ),
             }
         )
     constraints.append(
@@ -194,10 +199,20 @@ def preserve_explicit_search_anchors(
             "kind": "USER_REQUIREMENT",
             "field": "original_search_request",
             "value": [request_text],
+            "work_unit_ids": _all_work_unit_ids(candidate),
         }
     )
     if explicit_periods:
-        constraints.append({"kind": "DATE", "field": "period", "value": explicit_periods})
+        constraints.append(
+            {
+                "kind": "DATE",
+                "field": "period",
+                "value": explicit_periods,
+                "work_unit_ids": _applicable_work_unit_ids(
+                    candidate, values=explicit_periods
+                ),
+            }
+        )
     if explicit_subjects:
         constraints = [
             item
@@ -205,7 +220,14 @@ def preserve_explicit_search_anchors(
             if item["field"] not in {"search_terms", "subject", "search_criteria_subject"}
         ]
         constraints.append(
-            {"kind": "RESOURCE", "field": "subject", "value": explicit_subjects}
+            {
+                "kind": "RESOURCE",
+                "field": "subject",
+                "value": explicit_subjects,
+                "work_unit_ids": _applicable_work_unit_ids(
+                    candidate, values=explicit_subjects
+                ),
+            }
         )
     elif has_explicit_subject_role and any(
         item["field"] in {"subject", "search_criteria_subject"} for item in constraints
@@ -267,7 +289,12 @@ def _preserve_explicit_gmail_draft_id(
         )
     ]
     constraints.extend(
-        {"kind": "RESOURCE", "field": "draft_id", "value": draft_id}
+        {
+            "kind": "RESOURCE",
+            "field": "draft_id",
+            "value": draft_id,
+            "work_unit_ids": _applicable_work_unit_ids(candidate, values=[draft_id]),
+        }
         for draft_id in draft_ids
     )
     return {**candidate, "constraints": constraints}
@@ -295,10 +322,39 @@ def _preserve_explicit_repository(
         if not is_repository_constraint(constraint)
     ]
     constraints.extend(
-        {"kind": "RESOURCE", "field": "repository", "value": repository}
+        {
+            "kind": "RESOURCE",
+            "field": "repository",
+            "value": repository,
+            "work_unit_ids": _applicable_work_unit_ids(candidate, values=[repository]),
+        }
         for repository in repositories
     )
     return {**candidate, "constraints": constraints}
+
+
+def _all_work_unit_ids(candidate: RequestGoalCandidateV1) -> list[str]:
+    unit_ids = [unit["unit_id"] for unit in candidate["requested_work"]["work_units"]]
+    if not unit_ids or len(unit_ids) != len(set(unit_ids)):
+        raise ValueError("requested_work contains invalid WorkUnit IDs")
+    return unit_ids
+
+
+def _applicable_work_unit_ids(
+    candidate: RequestGoalCandidateV1,
+    *,
+    values: list[str],
+) -> list[str]:
+    applicable = [
+        unit["unit_id"]
+        for unit in candidate["requested_work"]["work_units"]
+        if any(
+            value in provenance["source_text"]
+            for provenance in unit["request_provenance"]
+            for value in values
+        )
+    ]
+    return applicable or _all_work_unit_ids(candidate)
 
 
 def _explicit_subjects(request_text: str) -> list[str]:

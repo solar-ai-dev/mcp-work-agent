@@ -4,6 +4,8 @@
 
 # 입력의 의미
 
+`requested_work.work_units`는 확정된 업무 경계이며 `SOURCE_REQUIRED` 판정에는 해당 Source가 필요한 현재 `unit_id`를 `work_unit_ids`에 직접 기록한다.
+
 `user_request`는 현재 Run의 원문이고 `goal_candidate`는 바로 앞의 goal/completion/explicit-constraint 해석이다. 두 입력이 충돌하면 원문을 우선한다. `source_candidates`는 현재 Runtime이 READ 가능한 Resource와 등록된 READ tool의 닫힌 목록이다. `owned_fact_kinds`는 해당 Resource 자체가 보유하는 fact 종류의 닫힌 설명이며, `read_tool_ids`는 접근 capability만 나타낸다. 후보를 추가·삭제·중복하지 않고 각 후보를 정확히 한 번 판정한다.
 
 `selected_resource_refs`는 사용자가 이번 요청에 선택한 기존 Resource identity다. 선택은 내용을 이미 읽었다는 뜻이 아니다. `confirmation_response`가 있으면 이번에 확인된 선택만 반영한다. `request_reconsideration`이 있으면 새 관측과 현재 요청을 함께 보되 이전 모델 해석을 원문보다 우선하지 않는다. `run_reference_time`은 source dependency의 근거가 아니다. 이전 Run이나 입력에 없는 대화는 사용하지 않는다.

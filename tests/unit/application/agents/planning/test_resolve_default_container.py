@@ -12,7 +12,7 @@ from google_work_agent.application.agents.planning.resolve_default_container imp
     resolve_default_container,
 )
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 
 
@@ -88,7 +88,7 @@ def _github_route(tool_id: str) -> dict[str, object]:
     }
 
 
-def _intent(repository: str | None) -> RequestIntentV2:
+def _intent(repository: str | None) -> RequestIntentV3:
     constraints: list[dict[str, object]] = []
     if repository is not None:
         constraints.append(
@@ -104,7 +104,7 @@ def _intent(repository: str | None) -> RequestIntentV2:
             }
         )
     return cast(
-        RequestIntentV2,
+        RequestIntentV3,
         {
             "schema_version": 2,
             "meta": {"artifact_id": "intent-1", "revision": 1, "based_on": []},

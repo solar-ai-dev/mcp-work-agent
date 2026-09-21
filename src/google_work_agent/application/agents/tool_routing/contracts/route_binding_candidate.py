@@ -18,6 +18,7 @@ class BoundOutputRouteCandidateV1:
     connector_id: str
     effect: ToolRouteEffect
     eligible_tool_ids: tuple[str, ...]
+    work_unit_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)

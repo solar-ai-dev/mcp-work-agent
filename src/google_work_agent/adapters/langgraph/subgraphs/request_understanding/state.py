@@ -13,7 +13,7 @@ from google_work_agent.adapters.langgraph.subgraph_state import (
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     AmbiguityV1,
     RequestGoalCandidateV1,
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.use_cases.run.guard_run_budget import (
     RunBudgetV2,
@@ -43,7 +43,7 @@ class RequestUnderstandingInputState(AgentSubgraphInputEnvelope, total=False):
     admitted_connector_ids: list[str]
     user_interrupt: UserInterruptV1 | None
     policy_confirmation_receipts: list[PolicyConfirmationReceiptV1]
-    request_intent: RequestIntentV2 | None
+    request_intent: RequestIntentV3 | None
     request_reconsideration: RequestReconsiderationRequiredV1 | None
 
 
@@ -55,7 +55,7 @@ class RequestUnderstandingStateV2(RequestUnderstandingInputState, total=False):
     selected_resource_refs: list[SelectedResourceRef]
     goal_candidate: RequestGoalCandidateV1 | None
     ambiguity_candidate: AmbiguityV1 | None
-    final_intent: RequestIntentV2 | None
+    final_intent: RequestIntentV3 | None
     prerequisite_message: str | None
     finalize_intent: FinalizeIntentV1 | None
 
@@ -63,7 +63,7 @@ class RequestUnderstandingStateV2(RequestUnderstandingInputState, total=False):
 class RequestUnderstandingParentOutputState(AgentSubgraphInputEnvelope, total=False):
     """Only fields that Request Understanding may project back to Main."""
 
-    request_intent: RequestIntentV2 | None
+    request_intent: RequestIntentV3 | None
     request_reconsideration: RequestReconsiderationRequiredV1 | None
     admitted_connector_ids: list[str]
     finalize_intent: FinalizeIntentV1 | None

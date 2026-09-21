@@ -5,7 +5,7 @@ from collections.abc import Mapping, Sequence
 from typing import cast
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
     RetrievalV2ValidationError,
@@ -56,7 +56,7 @@ def match_person_mention(mention: str, display_name: str) -> bool:
 
 
 def project_person_candidates(
-    intent: RequestIntentV2, evidence: Sequence[EvidenceDraftV1],
+    intent: RequestIntentV3, evidence: Sequence[EvidenceDraftV1],
     prior_candidates: Sequence[PersonCandidateV1] = (),
     excluded_segment_ids: Sequence[str] = (),
     source_segments: Sequence[SourceSegment] = (),

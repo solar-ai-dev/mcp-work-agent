@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, TypedDict, cast
 
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
-    RequestIntentV2,
+    RequestIntentV3,
 )
 from google_work_agent.application.agents.work_analysis.contracts.work_analysis_result import (
     WorkFactV1,
@@ -100,9 +100,9 @@ def fact(
     }
 
 
-def intent() -> RequestIntentV2:
+def intent() -> RequestIntentV3:
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "meta": {"artifact_id": "intent-1", "revision": 1, "based_on": []},
         "goal": "complete the requested work",
         "completion_conditions": ["work completed"],
@@ -110,5 +110,22 @@ def intent() -> RequestIntentV2:
         "requested_effect_hints": [],
         "requested_resource_hints": [],
         "analysis_requirement": "REQUIRED",
+        "effect_prohibitions": [],
+        "requested_work": {
+            "work_units": [
+                {
+                    "unit_id": "work-1",
+                    "request_provenance": [
+                        {
+                            "source": "USER_REQUEST",
+                            "start_offset": 0,
+                            "end_offset": 27,
+                            "source_text": "complete the requested work",
+                        }
+                    ],
+                }
+            ],
+            "work_relations": [],
+        },
         "ambiguity": {"requires_confirmation": False, "reason_codes": [], "missing_fields": []},
     }
