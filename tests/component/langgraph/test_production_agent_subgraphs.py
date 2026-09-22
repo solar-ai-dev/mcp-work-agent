@@ -1491,6 +1491,67 @@ def test_tool_routing__compiled_multiple_registry_candidates__preserves_bound_ro
     ]
 
 
+def test_tool_routing__shared_output_capability__selects_once_without_merging_routes() -> None:
+    state = _state(
+        initial_target="tool_route",
+        request_text="Update GitHub issue A and update GitHub issue B",
+    )
+    intent = _intent()
+    intent["requested_effect_hints"] = ["UPDATE"]
+    intent["requested_resource_hints"] = ["GITHUB_ISSUE"]
+    intent["requested_work"] = {
+        "work_units": [
+            {
+                "unit_id": "work-1",
+                "request_provenance": [{
+                    "source": "USER_REQUEST", "start_offset": 0, "end_offset": 21,
+                    "source_text": "Update GitHub issue A",
+                }],
+            },
+            {
+                "unit_id": "work-2",
+                "request_provenance": [{
+                    "source": "USER_REQUEST", "start_offset": 26, "end_offset": 47,
+                    "source_text": "update GitHub issue B",
+                }],
+            },
+        ],
+        "work_relations": [],
+    }
+    intent["resource_responsibilities"] = {
+        "source_reads": [],
+        "outputs": [
+            {"resource_type": "GITHUB_ISSUE", "effect": "UPDATE", "work_unit_ids": [unit]}
+            for unit in ("work-1", "work-2")
+        ],
+    }
+    state["request_intent"] = cast(Any, intent)
+    llm = _ComponentInferencePort()
+    graph = ToolRoutingSubgraph(
+        llm_runtime=llm,
+        tool_catalog=load_development_tool_registry(),
+        prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE,
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        merge_decision=cast(Any, _merge_decision),
+        confirm_inline=cast(Any, _confirm_early),
+        id_factory=_IdFactory(),
+    ).build()
+
+    with provider_dispatch_execution_scope():
+        result = graph.invoke(state)
+
+    routes = result["tool_route_plan"]["output_plan"]["output_routes"]
+    assert len(routes) == 2
+    assert len({route["route_id"] for route in routes}) == 2
+    assert [route["work_unit_ids"] for route in routes] == [["work-1"], ["work-2"]]
+    assert [route["selected_tool_id"] for route in routes] == [
+        "github_close_issue", "github_close_issue"
+    ]
+    assert llm.calls == ["tool_routing.select_tool_if_needed"]
+    assert result["trace_context"]["llm_call_count"] == 1
+
+
 def test_retrieval__compiled_normal_path__materializes_evidence() -> None:
     state = _state(initial_target="context_retriever")
     state["request_intent"] = cast(Any, _intent())

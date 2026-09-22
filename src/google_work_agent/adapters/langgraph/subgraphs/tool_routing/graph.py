@@ -259,7 +259,13 @@ class ToolRoutingSubgraph:
 
     def _select_tool_if_needed_node(self, state: ToolRouteStateV1) -> ToolRouteStateV1:
         candidates = state.get("registry_candidates", [])
-        llm_call_count = sum(len(candidate.eligible_tool_ids) != 1 for candidate in candidates)
+        llm_call_count = len(
+            {
+                candidate.selection_capability
+                for candidate in candidates
+                if len(candidate.eligible_tool_ids) > 1
+            }
+        )
         request = request_from_state(cast(Any, state))
         return {
             **select_tool_if_needed_node(

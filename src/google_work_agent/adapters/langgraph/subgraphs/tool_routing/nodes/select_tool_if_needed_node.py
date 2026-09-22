@@ -39,24 +39,32 @@ def select_tool_if_needed_node(
     retry_budget = state["retry_budget"]
     request = request_from_state(state)
     selected: list[OutputToolRouteV1] = []
+    selected_by_capability: dict[tuple[str, str, str, tuple[str, ...]], str] = {}
     for bound in candidates:
-        if len(bound.eligible_tool_ids) == 1:
-            tool_id = bound.eligible_tool_ids[0]
-            reason_code = "REGISTRY_SINGLE_CANDIDATE"
-        else:
-            tool_id, retry_budget = select_tool_if_needed(
-                llm_runtime=llm_runtime,
-                route_id=bound.route_id,
-                connector_id=bound.connector_id,
-                resource_type=bound.resource_type,
-                effect=bound.effect,
-                eligible_tool_ids=bound.eligible_tool_ids,
-                request=request,
-                retry_budget=retry_budget,
-                prompt_ref=prompt_ref,
-                confirmation_response=confirmation_response,
-            )
-            reason_code = "LLM_SELECTED_FROM_BOUND_REGISTRY_CANDIDATES"
+        capability = bound.selection_capability
+        tool_id = selected_by_capability.get(capability)
+        if tool_id is None:
+            if len(bound.eligible_tool_ids) == 1:
+                tool_id = bound.eligible_tool_ids[0]
+            else:
+                tool_id, retry_budget = select_tool_if_needed(
+                    llm_runtime=llm_runtime,
+                    route_id=bound.route_id,
+                    connector_id=bound.connector_id,
+                    resource_type=bound.resource_type,
+                    effect=bound.effect,
+                    eligible_tool_ids=bound.eligible_tool_ids,
+                    request=request,
+                    retry_budget=retry_budget,
+                    prompt_ref=prompt_ref,
+                    confirmation_response=confirmation_response,
+                )
+            selected_by_capability[capability] = tool_id
+        reason_code = (
+            "REGISTRY_SINGLE_CANDIDATE"
+            if len(bound.eligible_tool_ids) == 1
+            else "LLM_SELECTED_FROM_BOUND_REGISTRY_CANDIDATES"
+        )
         selected.append(
             {
                 "route_id": bound.route_id,

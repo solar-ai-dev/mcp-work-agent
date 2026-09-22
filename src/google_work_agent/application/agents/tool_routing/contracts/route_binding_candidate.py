@@ -20,6 +20,16 @@ class BoundOutputRouteCandidateV1:
     eligible_tool_ids: tuple[str, ...]
     work_unit_ids: tuple[str, ...]
 
+    @property
+    def selection_capability(self) -> tuple[str, str, str, tuple[str, ...]]:
+        """Registry-bound selection input, excluding the distinct output route identity."""
+        return (
+            self.connector_id,
+            self.resource_type,
+            self.effect,
+            self.eligible_tool_ids,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class RouteBindingCandidateV1:
