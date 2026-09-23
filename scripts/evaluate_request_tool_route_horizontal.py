@@ -67,6 +67,16 @@ CORE_CASES = (
 )
 
 
+def _selected_case_ids(*, all_canonical: bool, requested: list[str] | None) -> tuple[str, ...]:
+    cases = load_cases()
+    if all_canonical and requested:
+        raise ValueError("--all-canonical and --case cannot be combined")
+    case_ids = tuple(cases) if all_canonical else tuple(requested or CORE_CASES)
+    if len(case_ids) != len(set(case_ids)) or any(case_id not in cases for case_id in case_ids):
+        raise ValueError("cases must be distinct Canonical v8 IDs")
+    return case_ids
+
+
 class _AtomicRecordingInferencePort(_RecordingInferencePort):
     """Keep local-only owner inputs/outputs so first divergence is inspectable."""
 
@@ -84,8 +94,7 @@ class _AtomicRecordingInferencePort(_RecordingInferencePort):
                 "prompt_id": prompt_ref.prompt_id,
                 "attempt": (
                     "REVISION"
-                    if isinstance(inference_input, Mapping)
-                    and "failure_record" in inference_input
+                    if isinstance(inference_input, Mapping) and "failure_record" in inference_input
                     else "FIRST"
                 ),
                 "input": deepcopy(inference_input),
@@ -126,11 +135,21 @@ def _project_result(state: Mapping[str, Any]) -> dict[str, object]:
         responsibilities = intent.get("resource_responsibilities") or {}
         work = intent.get("requested_work") or {}
         result["intent"] = {
-            "work_units": [unit.get("unit_id") for unit in work.get("work_units", [])],
+            "goal": intent.get("goal"),
+            "completion_conditions": intent.get("completion_conditions"),
+            "analysis_requirement": intent.get("analysis_requirement"),
+            "work_units": [
+                {
+                    "unit_id": unit.get("unit_id"),
+                    "request_provenance": unit.get("request_provenance"),
+                }
+                for unit in work.get("work_units", [])
+            ],
             "relations": work.get("work_relations", []),
             "source_reads": [
                 {
                     "resource_type": item.get("resource_type"),
+                    "required_information": item.get("required_information"),
                     "work_unit_ids": item.get("work_unit_ids"),
                     "target_scope": item.get("target_scope"),
                 }
@@ -189,18 +208,15 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--result-path", type=Path, required=True)
     parser.add_argument("--case", action="append")
+    parser.add_argument("--all-canonical", action="store_true")
     parser.add_argument("--seed", type=int, default=20260923)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--record-atomic", action="store_true")
     args = parser.parse_args()
     if args.result_path.exists():
         raise ValueError("result path already exists; preserve every prior trial")
-    case_ids = tuple(args.case or CORE_CASES)
+    case_ids = _selected_case_ids(all_canonical=args.all_canonical, requested=args.case)
     cases = load_cases()
-    if len(case_ids) != len(set(case_ids)) or any(
-        case_id not in cases or cases[case_id].raw["split"] != "CORE" for case_id in case_ids
-    ):
-        raise ValueError("cases must be distinct Canonical Core IDs")
     requests = {case_id: _request(case_id, cases[case_id].raw) for case_id in case_ids}
     model = next(
         (item for item in OllamaHTTPClient().list_installed_models() if item.model_id == MODEL_ID),
@@ -246,6 +262,7 @@ def main() -> None:
 
         def new_id() -> str:
             return next(ids)
+
         request_graph = RequestUnderstandingSubgraph(
             llm_runtime=recorder,
             tool_catalog=catalog,
@@ -310,6 +327,11 @@ def main() -> None:
                 "provider_reads": 0,
                 "provider_writes": 0,
                 "scope": "COMPILED_RU_TO_TOOL_ROUTE_ONLY",
+                "case_count": len(case_ids),
+                "split_counts": {
+                    split: sum(cases[case_id].raw["split"] == split for case_id in case_ids)
+                    for split in ("CORE", "HOLDOUT", "STRESS")
+                },
             },
             "cases": [],
         }
@@ -330,8 +352,19 @@ def main() -> None:
 
             record: dict[str, object] = {
                 "case_id": case_id,
+                "split": cases[case_id].raw["split"],
+                "category": cases[case_id].raw["category"],
                 "entry_mode": request.entry_mode,
                 "selected_resource_count": len(request.selected_resources),
+                "selected_resources": [
+                    {
+                        "connector_id": item.connector_id,
+                        "resource_type": item.resource_type,
+                        "resource_id": item.resource_id,
+                        "parent_resource_id": item.parent_resource_id,
+                    }
+                    for item in request.selected_resources
+                ],
                 "reference_time": cases[case_id]
                 .raw.get("evaluation_context", {})
                 .get("run_reference_time"),
