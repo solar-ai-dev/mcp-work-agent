@@ -26,7 +26,7 @@ from .contracts.request_intent import (
     WriteEffectValue,
 )
 from .contracts.work_unit_binding import work_unit_id_schema
-from .identify_effect_prohibitions import prohibited_effects as resolve_prohibited_effects
+from .identify_effect_prohibitions import prohibited_effects_for_work_units
 
 _WRITE_EFFECT_ORDER: tuple[WriteEffectValue, ...] = (
     "CREATE",
@@ -184,21 +184,19 @@ def identify_output_responsibilities(
             "candidate_output": candidate_output,
             "failure_record": dict(failure_record),
         }
-    prohibited = resolve_prohibited_effects(effect_prohibitions)
     result = llm_runtime.infer(
         requested_mode,
         prompt_ref,
         inference_input,
         build_output_responsibility_output_schema(
             output_candidates,
-            prohibited_effects=prohibited,
             work_unit_ids=work_unit_ids,
         ),
     )
     return validate_output_responsibility_candidate(
         result.structured_output,
         output_candidates=output_candidates,
-        prohibited_effects=prohibited,
+        effect_prohibitions=effect_prohibitions,
         work_unit_ids=work_unit_ids,
     )
 
@@ -208,9 +206,14 @@ def validate_output_responsibility_candidate(
     *,
     output_candidates: Sequence[OutputResponsibilityCandidateV1],
     prohibited_effects: Collection[WriteEffectValue] = (),
+    effect_prohibitions: EffectProhibitionDecisionCandidateV1 | None = None,
     work_unit_ids: Sequence[str],
 ) -> OutputResponsibilityDecisionCandidateV2:
-    conflict_paths = _prohibited_effect_paths(value, prohibited_effects=prohibited_effects)
+    conflict_paths = _prohibited_effect_paths(
+        value,
+        prohibited_effects=prohibited_effects,
+        effect_prohibitions=effect_prohibitions,
+    )
     if conflict_paths:
         raise ProhibitedOutputResponsibilityDecisionError(
             candidate_output=value,
@@ -247,18 +250,36 @@ def _prohibited_effect_paths(
     value: object,
     *,
     prohibited_effects: Collection[WriteEffectValue],
+    effect_prohibitions: EffectProhibitionDecisionCandidateV1 | None,
 ) -> tuple[str, ...]:
-    prohibited = set(prohibited_effects)
-    if not prohibited or not isinstance(value, Mapping):
+    if not isinstance(value, Mapping):
         return ()
     raw_decisions = value.get("output_responsibilities")
     if not isinstance(raw_decisions, Sequence) or isinstance(raw_decisions, (str, bytes)):
         return ()
-    return tuple(
-        f"$.output_responsibilities[{index}].effect"
-        for index, decision in enumerate(raw_decisions)
-        if isinstance(decision, Mapping) and decision.get("effect") in prohibited
-    )
+    flat_prohibited = set(prohibited_effects)
+    conflicts: list[str] = []
+    for index, decision in enumerate(raw_decisions):
+        if not isinstance(decision, Mapping):
+            continue
+        effect = decision.get("effect")
+        raw_work_unit_ids = decision.get("work_unit_ids")
+        scoped_prohibited = (
+            prohibited_effects_for_work_units(
+                effect_prohibitions,
+                work_unit_ids=(
+                    tuple(str(unit_id) for unit_id in raw_work_unit_ids)
+                    if isinstance(raw_work_unit_ids, Sequence)
+                    and not isinstance(raw_work_unit_ids, (str, bytes))
+                    else ()
+                ),
+            )
+            if effect_prohibitions is not None
+            else frozenset()
+        )
+        if effect in flat_prohibited or effect in scoped_prohibited:
+            conflicts.append(f"$.output_responsibilities[{index}].effect")
+    return tuple(conflicts)
 
 
 __all__ = [

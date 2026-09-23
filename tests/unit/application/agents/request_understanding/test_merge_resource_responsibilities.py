@@ -90,6 +90,12 @@ def _output(
         ({"GMAIL_THREAD": (["최종 일정"], "CRITERIA")}, {}, ["GMAIL_THREAD"], []),
         ({}, {"TASK": "CREATE"}, [], [("TASK", "CREATE")]),
         (
+            {"TASK": (["existing unfinished tasks"], "CRITERIA")},
+            {"TASK": "CREATE"},
+            ["TASK"],
+            [("TASK", "CREATE")],
+        ),
+        (
             {"TASK": (["기존 상태"], "SINGULAR")},
             {"TASK": "UPDATE"},
             ["TASK"],
@@ -138,6 +144,7 @@ def test_merge_resource_responsibilities__with_explicit_item_sources__restores_c
     )
 
     assert [item["resource_type"] for item in merged["source_reads"]] == [
+        "GMAIL_DRAFT",
         "TASK",
         "CALENDAR_EVENT",
     ]

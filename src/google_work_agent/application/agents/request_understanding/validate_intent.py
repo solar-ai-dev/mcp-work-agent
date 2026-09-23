@@ -503,6 +503,7 @@ def validate_resource_responsibilities(
     normalized_sources = []
     source_information: list[str] = []
     source_resources: set[str] = set()
+    source_identities: set[tuple[str, tuple[str, ...], str, tuple[str, ...]]] = set()
     for index, item in enumerate(source_reads):
         path = f"$.resource_responsibilities.source_reads[{index}]"
         source = _mapping(item, path)
@@ -525,10 +526,17 @@ def validate_resource_responsibilities(
         )
         if target_scope not in {"SINGULAR", "CRITERIA"}:
             raise RequestUnderstandingValidationError(f"{path}.target_scope is invalid")
-        if resource_type in source_resources:
+        source_identity = (
+            resource_type,
+            tuple(information),
+            target_scope,
+            tuple(work_unit_ids),
+        )
+        if source_identity in source_identities:
             raise RequestUnderstandingValidationError(
                 "$.resource_responsibilities contains a duplicate source read"
             )
+        source_identities.add(source_identity)
         source_resources.add(resource_type)
         source_information.extend(information)
         normalized_sources.append(
@@ -561,12 +569,12 @@ def validate_resource_responsibilities(
             raise RequestUnderstandingValidationError(
                 f"{path}.resource_type is incompatible with its output effect"
             )
-        identity = (resource_type, effect, tuple(work_unit_ids))
-        if identity in output_identities:
+        output_identity = (resource_type, effect, tuple(work_unit_ids))
+        if output_identity in output_identities:
             raise RequestUnderstandingValidationError(
                 "$.resource_responsibilities contains a duplicate output"
             )
-        output_identities.add(identity)
+        output_identities.add(output_identity)
         output_resources.add(resource_type)
         output_effects.add(effect)
         normalized_outputs.append(

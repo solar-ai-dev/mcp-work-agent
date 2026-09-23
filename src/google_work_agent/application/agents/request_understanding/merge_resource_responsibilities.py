@@ -50,12 +50,6 @@ def merge_resource_responsibilities(
         for resource_type, decision in source_by_resource.items()
         if decision["dependency"] == "SOURCE_REQUIRED"
     }
-    for output in output_items:
-        resource_type = output["resource_type"]
-        if output["effect"] == "CREATE":
-            source_information.pop(resource_type, None)
-            source_scopes.pop(resource_type, None)
-            source_work_unit_ids.pop(resource_type, None)
     source_information = _without_access_only_parents(
         source_information,
         request_text=request_text or "",

@@ -197,3 +197,49 @@ def test_send_not_forbidden__without_explicit_forbid__keeps_send_available() -> 
         "effect": "SEND",
         "work_unit_ids": ["work-1"],
     }
+
+
+def test_prohibition__is_enforced_only_for_its_work_unit() -> None:
+    prohibitions = cast(
+        effect_prohibition_decision.EffectProhibitionDecisionCandidateV1,
+        {
+            "effect_prohibitions": [
+                {
+                    "effect": candidate["effect"],
+                    "prohibition": (
+                        "FORBIDDEN" if candidate["effect"] == "CREATE" else "NOT_FORBIDDEN"
+                    ),
+                    "work_unit_ids": ["work-1"],
+                }
+                for candidate in _EFFECT_CANDIDATES
+            ]
+        },
+    )
+    allowed = {
+        "output_responsibilities": [
+            {
+                "resource_type": "TASK",
+                "effect": "CREATE",
+                "work_unit_ids": ["work-2"],
+            }
+        ]
+    }
+
+    assert output_responsibilities.validate_output_responsibility_candidate(
+        allowed,
+        output_candidates=_RESOURCE_CANDIDATES,
+        effect_prohibitions=prohibitions,
+        work_unit_ids=("work-1", "work-2"),
+    ) == allowed
+
+    forbidden = deepcopy(allowed)
+    forbidden["output_responsibilities"][0]["work_unit_ids"] = ["work-1"]
+    with pytest.raises(
+        output_responsibilities.ProhibitedOutputResponsibilityDecisionError
+    ):
+        output_responsibilities.validate_output_responsibility_candidate(
+            forbidden,
+            output_candidates=_RESOURCE_CANDIDATES,
+            effect_prohibitions=prohibitions,
+            work_unit_ids=("work-1", "work-2"),
+        )

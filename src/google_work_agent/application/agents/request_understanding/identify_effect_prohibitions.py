@@ -168,10 +168,28 @@ def validate_effect_prohibition_candidate(
 def prohibited_effects(
     value: EffectProhibitionDecisionCandidateV1,
 ) -> frozenset[WriteEffectValue]:
+    """Return the aggregate set for diagnostics, not WorkUnit-scoped enforcement."""
+
     return frozenset(
         decision["effect"]
         for decision in value["effect_prohibitions"]
         if decision["prohibition"] == "FORBIDDEN"
+    )
+
+
+def prohibited_effects_for_work_units(
+    value: EffectProhibitionDecisionCandidateV1,
+    *,
+    work_unit_ids: Sequence[str],
+) -> frozenset[WriteEffectValue]:
+    """Return effects forbidden for any of the supplied WorkUnits."""
+
+    applicable = set(work_unit_ids)
+    return frozenset(
+        decision["effect"]
+        for decision in value["effect_prohibitions"]
+        if decision["prohibition"] == "FORBIDDEN"
+        and applicable.intersection(decision.get("work_unit_ids", ()))
     )
 
 
@@ -180,5 +198,6 @@ __all__ = [
     "build_effect_prohibition_output_schema",
     "identify_effect_prohibitions",
     "prohibited_effects",
+    "prohibited_effects_for_work_units",
     "validate_effect_prohibition_candidate",
 ]

@@ -107,7 +107,7 @@ def test_validate_intent__canonical_candidate__preserves_contract() -> None:
     assert validate_intent(_candidate())["goal"] == "김대리 관련 메일에서 할 일 정리"
 
 
-def test_validate_intent__canonical_duplicate_source_read__remains_rejected() -> None:
+def test_validate_intent__same_source_for_distinct_owner_items__is_preserved() -> None:
     candidate = _candidate()
     candidate["constraints"] = [
         {
@@ -131,8 +131,50 @@ def test_validate_intent__canonical_duplicate_source_read__remains_rejected() ->
         ],
         "outputs": [],
     }
+    candidate["requested_resource_hints"] = ["GMAIL_DRAFT"]
 
-    with pytest.raises(RequestUnderstandingValidationError, match="duplicate source read"):
+    validated = validate_intent(candidate)
+
+    assert validated["resource_responsibilities"]["source_reads"] == [
+        {
+            "resource_type": "GMAIL_DRAFT",
+            "required_information": ["기존 본문"],
+            "target_scope": "SINGULAR",
+            "work_unit_ids": ["work-1"],
+        },
+        {
+            "resource_type": "GMAIL_DRAFT",
+            "required_information": ["기존 수신자"],
+            "target_scope": "SINGULAR",
+            "work_unit_ids": ["work-1"],
+        },
+    ]
+
+
+def test_validate_intent__exact_duplicate_source_owner_item__is_rejected() -> None:
+    candidate = _candidate()
+    candidate["constraints"] = [
+        {
+            "kind": "USER_REQUIREMENT",
+            "field": "required_information",
+            "value": ["status"],
+        }
+    ]
+    candidate["requested_resource_hints"] = ["TASK"]
+    source = {
+        "resource_type": "TASK",
+        "required_information": ["status"],
+        "target_scope": "SINGULAR",
+    }
+    candidate["resource_responsibilities"] = {
+        "source_reads": [source, dict(source)],
+        "outputs": [],
+    }
+
+    with pytest.raises(
+        RequestUnderstandingValidationError,
+        match="duplicate source read",
+    ):
         validate_intent(candidate)
 
 
@@ -157,7 +199,6 @@ def test_validate_intent__source_target_scope__is_preserved(target_scope: str) -
         ],
         "outputs": [],
     }
-
     intent = validate_intent(candidate)
 
     assert intent["resource_responsibilities"]["source_reads"][0]["target_scope"] == target_scope

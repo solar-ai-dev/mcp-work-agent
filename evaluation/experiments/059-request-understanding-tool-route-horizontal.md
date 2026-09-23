@@ -2,6 +2,14 @@
 
 Issue: #289 후속 진단
 
+> **2026-09-24 정정:** 아래 최초 보고의 `CORE-019 = ambiguity 판단`은
+> Canonical 기준을 잘못 적용했다. 이 Case는 필요한 관련 READ 뒤 소요시간 확인을
+> 허용한다. atomic owner 기록을 대조한 최초 divergence는 `GMAIL` Source 누락과
+> CREATE 병합이 이미 선택된 `CALENDAR_EVENT` Source를 삭제한 경계다. Tool Route
+> 도달만으로 Confirmation 누락을 판정할 수 없으며 Retrieval 이후 경계는 실행하지
+> 않았다. 나머지 재분류와 후속 비교는
+> `060-request-understanding-owner-boundary-reclassification.md`에 기록한다.
+
 ## 결론
 
 현재 Production HEAD의 compiled Request Understanding과 Tool Route를 Canonical Core
@@ -34,7 +42,7 @@ Tool Route는 이 잘못된 `RequestIntentV3`를 다시 해석하지 않고 Regi
 | CORE-005 | FAIL | 금지·Output 판단 | Task 상태 READ 요청에 Task UPDATE와 Gmail SEND 추가 |
 | CORE-009 | FAIL | Output 판단 | 메일+Task 현황 ANSWER 요청에 Gmail SEND와 Task CREATE 추가 |
 | CORE-012 | FAIL | Output 판단 | Draft CREATE에 금지된 SEND를 추가 |
-| CORE-019 | FAIL | ambiguity 판단 | 소요시간 미확정인데 Confirmation 없이 Event+Draft Route 생성 |
+| CORE-019 | FAIL (정정 전 판정) | source/merge 판단 | Gmail Source 누락, CREATE 병합이 Event Source 삭제. 관련 READ 후 Confirmation 여부는 미검증 |
 | CORE-035 | FAIL | Output 판단 | Task CREATE 요청에 Calendar Event CREATE 추가 |
 | CORE-037 | FAIL | Output 판단 | Task UPDATE를 Draft CREATE+Task CREATE+Event CREATE로 변경 |
 | CORE-049 | FAIL | requested work/source 판단 | 세 Output은 유지했으나 WorkUnit 하나로 합치고 Gmail·Task·Calendar source responsibility를 누락 |
@@ -61,7 +69,7 @@ unit/component gate에서 별도로 검증됐다.
 
 ## 다음 판단
 
-Tool Route나 Planning에서 보정하지 않는다. 먼저 RU의 Output responsibility raw candidate와
-final validated decision을 비교해 `goal_candidate`의 오염인지, Output owner 자체의 과잉
-선택인지 구분한다. CORE-019는 ambiguity owner, CORE-049는 requested-work/source owner의
-별도 first divergence로 유지한다. 이 진단만으로 Prompt·Schema 수정은 채택하지 않는다.
+Tool Route나 Planning에서 보정하지 않는다. RU atomic owner 입력/최초 출력/revision과
+merge 전후를 보존해 `goal_candidate` 오염과 Output owner 자체 오류를 분리한다.
+CORE-019와 CORE-049는 Source owner/merge 경계를 별도 first divergence로 재분류한다.
+이 진단만으로 Prompt·Schema 수정은 채택하지 않는다.

@@ -12,9 +12,10 @@ import subprocess
 import time
 from collections.abc import Mapping
 from contextlib import ExitStack
+from copy import deepcopy
 from dataclasses import fields
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Final, Literal, cast
 from uuid import uuid4
 
 from evaluation.dataset_v8 import (
@@ -52,7 +53,7 @@ from google_work_agent.application.use_cases.run.account_provider_dispatch impor
 from google_work_agent.application.use_cases.setting.update_settings import UpdateSettingsCommand
 from google_work_agent.ports.system.settings_port import SettingsPatchV1
 
-MODEL_ID = "qwen3.5:9b"
+MODEL_ID: Final[Literal["qwen3.5:9b"]] = "qwen3.5:9b"
 CORE_CASES = (
     "CASE-CORE-001",
     "CASE-CORE-009",
@@ -64,6 +65,34 @@ CORE_CASES = (
     "CASE-CORE-056",
     "CASE-CORE-059",
 )
+
+
+class _AtomicRecordingInferencePort(_RecordingInferencePort):
+    """Keep local-only owner inputs/outputs so first divergence is inspectable."""
+
+    def __init__(self, delegate: Any) -> None:
+        super().__init__(delegate)
+        self.atomic: list[dict[str, object]] = []
+
+    def infer(self, *args: Any, **kwargs: Any) -> Any:
+        result = super().infer(*args, **kwargs)
+        prompt_ref = args[1]
+        inference_input = args[2]
+        self.atomic.append(
+            {
+                "sequence": len(self.atomic) + 1,
+                "prompt_id": prompt_ref.prompt_id,
+                "attempt": (
+                    "REVISION"
+                    if isinstance(inference_input, Mapping)
+                    and "failure_record" in inference_input
+                    else "FIRST"
+                ),
+                "input": deepcopy(inference_input),
+                "structured_output": deepcopy(result.structured_output),
+            }
+        )
+        return result
 
 
 def _merge_decision(
@@ -162,6 +191,7 @@ def main() -> None:
     parser.add_argument("--case", action="append")
     parser.add_argument("--seed", type=int, default=20260923)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--record-atomic", action="store_true")
     args = parser.parse_args()
     if args.result_path.exists():
         raise ValueError("result path already exists; preserve every prior trial")
@@ -210,7 +240,7 @@ def main() -> None:
                 ),
             )
         )
-        recorder = _RecordingInferencePort(runtime)
+        recorder = _AtomicRecordingInferencePort(runtime)
         catalog = load_development_tool_registry()
         ids = iter(f"ru-route-{index}" for index in range(100000))
 
@@ -288,8 +318,16 @@ def main() -> None:
         for case_id in case_ids:
             request = requests[case_id]
             recorder.calls.clear()
+            recorder.atomic.clear()
             started = time.perf_counter()
             reference_ms = request.run_budget["started_at_ms"]
+
+            def current_time_ms(
+                reference_ms: int = reference_ms,
+                started: float = started,
+            ) -> int:
+                return reference_ms + int((time.perf_counter() - started) * 1000)
+
             record: dict[str, object] = {
                 "case_id": case_id,
                 "entry_mode": request.entry_mode,
@@ -302,9 +340,7 @@ def main() -> None:
             try:
                 with provider_dispatch_execution_scope(
                     run_id=request.run_id,
-                    now_ms=lambda reference_ms=reference_ms, started=started: (
-                        reference_ms + int((time.perf_counter() - started) * 1000)
-                    ),
+                    now_ms=current_time_ms,
                 ):
                     state = graph.invoke(
                         initial_graph_state(
@@ -316,13 +352,14 @@ def main() -> None:
                         {"recursion_limit": 100},
                     )
                 record.update(_project_result(state))
+                route = record.get("route")
                 record["status"] = (
                     "NO_TOOL_NEEDED"
-                    if record.get("route") is not None
-                    and record["route"]["output_mode"] == "ANSWER"
-                    and not record["route"]["input_routes"]
+                    if isinstance(route, Mapping)
+                    and route.get("output_mode") == "ANSWER"
+                    and not route.get("input_routes")
                     else "ROUTE_READY"
-                    if record.get("route") is not None
+                    if route is not None
                     else "WAITING_CONFIRMATION"
                     if state.get("user_interrupt") is not None
                     else "NO_ROUTE"
@@ -340,6 +377,8 @@ def main() -> None:
                 ),
                 "prompts": [call["prompt_id"] for call in recorder.calls],
             }
+            if args.record_atomic:
+                record["atomic"] = deepcopy(recorder.atomic)
             record["wall_latency_ms"] = int((time.perf_counter() - started) * 1000)
             records.append(record)
             _write(args.result_path, result)
