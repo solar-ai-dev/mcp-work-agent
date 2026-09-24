@@ -24,6 +24,12 @@ from evaluation.dataset_v8 import (
     load_cases,
     normalized_sha256,
 )
+from evaluation.request_semantic_authority_candidate import (
+    AtomicSemanticAuthorityCandidate,
+    GoalOutputAuthorityCandidate,
+    GoalOutputModalityAuthorityCandidate,
+    GoalResultModeFirstCandidate,
+)
 from langgraph.graph import END, START, StateGraph
 from scripts.evaluate_ru_output_input_projection import _request
 from scripts.evaluate_ru_source_status_prompt import _RecordingInferencePort
@@ -212,6 +218,17 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=20260923)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--record-atomic", action="store_true")
+    parser.add_argument(
+        "--semantic-candidate",
+        choices=(
+            "none",
+            "atomic-authority-v2",
+            "goal-output-authority-v3",
+            "goal-output-modality-authority-v4",
+            "result-mode-first-v5",
+        ),
+        default="none",
+    )
     args = parser.parse_args()
     if args.result_path.exists():
         raise ValueError("result path already exists; preserve every prior trial")
@@ -256,8 +273,24 @@ def main() -> None:
                 ),
             )
         )
-        recorder = _AtomicRecordingInferencePort(runtime)
         catalog = load_development_tool_registry()
+        candidate_class = {
+            "atomic-authority-v2": AtomicSemanticAuthorityCandidate,
+            "goal-output-authority-v3": GoalOutputAuthorityCandidate,
+            "goal-output-modality-authority-v4": (GoalOutputModalityAuthorityCandidate),
+            "result-mode-first-v5": GoalResultModeFirstCandidate,
+        }.get(args.semantic_candidate)
+        semantic_candidate = (
+            candidate_class(
+                delegate=runtime,
+                tool_catalog=catalog,
+                model_id=MODEL_ID,
+                sampling_seed=args.seed,
+            )
+            if candidate_class is not None
+            else None
+        )
+        recorder = _AtomicRecordingInferencePort(semantic_candidate or runtime)
         ids = iter(f"ru-route-{index}" for index in range(100000))
 
         def new_id() -> str:
@@ -327,6 +360,9 @@ def main() -> None:
                 "provider_reads": 0,
                 "provider_writes": 0,
                 "scope": "COMPILED_RU_TO_TOOL_ROUTE_ONLY",
+                "semantic_candidate": (
+                    None if semantic_candidate is None else semantic_candidate.binding
+                ),
                 "case_count": len(case_ids),
                 "split_counts": {
                     split: sum(cases[case_id].raw["split"] == split for case_id in case_ids)
@@ -341,6 +377,8 @@ def main() -> None:
             request = requests[case_id]
             recorder.calls.clear()
             recorder.atomic.clear()
+            if semantic_candidate is not None:
+                semantic_candidate.reset_case()
             started = time.perf_counter()
             reference_ms = request.run_budget["started_at_ms"]
 
@@ -402,7 +440,14 @@ def main() -> None:
                 record["error_type"] = type(error).__name__
                 record["error"] = str(error)[:500]
             record["llm"] = {
-                "calls": len(recorder.calls),
+                "calls": len(recorder.calls)
+                - (0 if semantic_candidate is None else semantic_candidate.cached_response_count)
+                + (
+                    0
+                    if semantic_candidate is None
+                    else semantic_candidate.additional_provider_call_count
+                ),
+                "logical_calls": len(recorder.calls),
                 "input_tokens": sum(cast(int, call["input_tokens"]) for call in recorder.calls),
                 "output_tokens": sum(cast(int, call["output_tokens"]) for call in recorder.calls),
                 "reported_latency_ms": sum(
@@ -410,6 +455,8 @@ def main() -> None:
                 ),
                 "prompts": [call["prompt_id"] for call in recorder.calls],
             }
+            if semantic_candidate is not None:
+                record["semantic_candidate_events"] = deepcopy(semantic_candidate.events)
             if args.record_atomic:
                 record["atomic"] = deepcopy(recorder.atomic)
             record["wall_latency_ms"] = int((time.perf_counter() - started) * 1000)
