@@ -188,6 +188,7 @@ def execute_registered_plan(
     claim_directory: str,
     reference_results: list[dict[str, Any]],
     reference_metric: str,
+    stop_after_response: Callable[[dict[str, Any], dict[str, Any]], str | None] | None = None,
 ) -> dict[str, Any]:
     """Shared FIRST recorder; each fixed diagnostic owns its full plan reconstruction."""
     if object_hash(plan) != plan_sha256:
@@ -263,17 +264,28 @@ def execute_registered_plan(
                 )
                 if row["model"] != plan["model"]["model_id"] or row["done"] is not True:
                     raise ValueError("response model/completion differs from registered FIRST")
+                if stop_after_response is not None:
+                    stop_reason = stop_after_response(row, case)
+                    if stop_reason is not None:
+                        row["structural_stop_reason"] = stop_reason
+                        raise ValueError(f"post-response structural stop: {stop_reason}")
             except BaseException as error:
                 row.update(state="ERROR", error_type=type(error).__name__, error=str(error)[:500])
                 raw["circuit_break"] = {
                     "case_id": case["case_id"],
                     "error_type": type(error).__name__,
                 }
+                if "structural_stop_reason" in row:
+                    raw["circuit_break"]["reason"] = row["structural_stop_reason"]
                 raw["not_dispatched"] = [
                     {
                         "case_id": remaining["case_id"],
                         "state": "NOT_DISPATCHED",
-                        "reason": "PREVIOUS_DISPATCH_NOT_SAFELY_COMPLETED",
+                        "reason": (
+                            "PREVIOUS_RESPONSE_STRUCTURAL_STOP"
+                            if "structural_stop_reason" in row
+                            else "PREVIOUS_DISPATCH_NOT_SAFELY_COMPLETED"
+                        ),
                         "wire_request_count": 0,
                     }
                     for remaining in plan["cases"][index + 1 :]

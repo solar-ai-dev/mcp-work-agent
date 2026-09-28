@@ -299,3 +299,98 @@ def test_execute__seal_or_end_drift__rejects_dispatch_or_success(
     raw = runner.execute_plan(plan, runner.RESULTS / "drift", plan_sha256=runner.object_hash(plan))
     assert raw["completed"] and raw["binding_unchanged"] is False
     assert raw["diagnostic_status"] == "FAILED"
+
+
+@pytest.mark.parametrize("stop_index", [None, 0, 4])
+def test_execute__post_response_structural_hook__preserves_usage_and_stops_only_when_requested(
+    history: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    stop_index: int | None,
+) -> None:
+    plan = runner.make_plan(history["model"])
+    calls, observations = [], []
+
+    def post(**kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs)
+        return _response()
+
+    def inspect(row: dict[str, Any], case: dict[str, Any]) -> str | None:
+        assert row["state"] == "RETURNED"
+        assert row["content"] == _response()["response"]
+        assert row["model"] == plan["model"]["model_id"]
+        assert row["done"] is True and row["done_reason"] == "stop"
+        assert row["input_tokens"] == 7 and row["output_tokens"] == 3
+        assert row["latency_ms"] == 9 and row["load_duration_ms"] == 2
+        assert row["thinking_present"] is True and "thinking" not in row
+        assert row["case_id"] == case["case_id"]
+        observations.append(row["case_id"])
+        return "FIXED_STRUCTURE_REJECTED" if len(observations) - 1 == stop_index else None
+
+    monkeypatch.setattr(runner.existing.transport, "_post_json", post)
+    raw = runner.execute_registered_plan(
+        plan,
+        runner.RESULTS / "hook-trial",
+        plan_sha256=runner.object_hash(plan),
+        reconstruct_plan=lambda: runner.make_plan(history["model"]),
+        claim_directory=".hook-test-trials",
+        reference_results=[],
+        reference_metric="unused_reference",
+        stop_after_response=inspect,
+    )
+
+    count = 5 if stop_index is None else stop_index + 1
+    assert len(calls) == len(observations) == raw["actual_http_calls"] == count
+    assert raw["metrics"]["control_new"]["input_tokens"] == 7 * count
+    assert raw["metrics"]["control_new"]["output_tokens"] == 3 * count
+    assert raw["completed"] is (stop_index is None)
+    assert raw["diagnostic_status"] == ("RECORDED" if stop_index is None else "FAILED")
+    assert [item["case_id"] for item in raw["not_dispatched"]] == list(runner.CASE_IDS[count:])
+    assert "SECRET_THINKING" not in runner.json.dumps(raw)
+    if stop_index is None:
+        assert "circuit_break" not in raw
+        assert all(row["state"] == "RETURNED" for row in raw["calls"])
+    else:
+        row = raw["calls"][-1]
+        assert row["state"] == "ERROR" and row["content"] == _response()["response"]
+        assert (
+            row["structural_stop_reason"]
+            == raw["circuit_break"]["reason"]
+            == "FIXED_STRUCTURE_REJECTED"
+        )
+        assert row["semantic_verdict"] == "NOT_REVIEWED"
+        assert all(
+            item["reason"] == "PREVIOUS_RESPONSE_STRUCTURAL_STOP" for item in raw["not_dispatched"]
+        )
+
+
+def test_execute__post_response_hook_raises__retains_first_and_prevents_next_dispatch(
+    history: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan, calls = runner.make_plan(history["model"]), []
+
+    def post(**kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs)
+        return _response()
+
+    def inspect(_row: dict[str, Any], _case: dict[str, Any]) -> str | None:
+        raise RuntimeError("structural inspector failed")
+
+    monkeypatch.setattr(runner.existing.transport, "_post_json", post)
+    raw = runner.execute_registered_plan(
+        plan,
+        runner.RESULTS / "hook-error",
+        plan_sha256=runner.object_hash(plan),
+        reconstruct_plan=lambda: runner.make_plan(history["model"]),
+        claim_directory=".hook-error-trials",
+        reference_results=[],
+        reference_metric="unused_reference",
+        stop_after_response=inspect,
+    )
+
+    assert len(calls) == raw["actual_http_calls"] == 1
+    assert raw["completed"] is False and raw["diagnostic_status"] == "FAILED"
+    assert raw["calls"][0]["content"] == _response()["response"]
+    assert raw["calls"][0]["error_type"] == "RuntimeError"
+    assert raw["metrics"]["control_new"]["input_tokens"] == 7
+    assert len(raw["not_dispatched"]) == 4

@@ -978,6 +978,12 @@ evaluation 계약으로 결속하며, 사용자 원문 제약을 삭제하거나
 교체하지 않는다. 원 Product 입력과 후보 입력을 분리하고 성공·실패·반례를 함께 비교한다.
 Product의 확정 constraint/provenance 전달이나 Confirmation/Revision 계약을 변경하지 않는다.
 
+독립 Source의 native reasoning 호환성 진단은 frozen 비추론 wire의 `think`만 변경할 수 있다.
+최종 공개 응답에 기존 strict Source admission을 적용하며 숨겨진 추론은 의미 입력·평가
+근거로 사용하거나 저장하지 않는다. 미리 정한 구조 실패 중단은 원 실패·사용량과 후속
+미실행을 모두 남기고, 구조 유효한 의미 실패를 선택적으로 제외하지 않는다. Product
+추론 옵션이나 Source별 호출 수를 활성화하는 근거와 부분 호환성 결과는 구분한다.
+
 Source의 비활성 contrastive 비교는 기존 one-call role·실제 Run input·Schema·sampling을
 유지한 채 일반적인 입력→출력 예시만 분리된 후보 artifact로 추가할 수 있다. 예시 출력도
 현재 Source owner 계약으로 검증하며, 현재 평가 Case/Gold/Fixture 정답을 예시로 복사하지
