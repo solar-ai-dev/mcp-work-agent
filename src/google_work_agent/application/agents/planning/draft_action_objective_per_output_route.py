@@ -15,8 +15,7 @@ from google_work_agent.application.agents.planning.materialize_task_create_paylo
     materialize_task_create_payload,
 )
 from google_work_agent.application.agents.planning.project_request_intent_for_work_units import (
-    evidence_refs_for_work_units,
-    project_request_intent_for_work_units,
+    project_route_semantic_inputs,
 )
 from google_work_agent.application.agents.preserve_exact_user_literals import (
     restore_exact_user_literals,
@@ -120,22 +119,13 @@ def draft_action_objective_per_output_route(
             isinstance(item, str) and item for item in route_work_unit_ids
         ):
             raise ValueError("output route requires work_unit_ids")
-        route_intent = project_request_intent_for_work_units(
+        route_intent, route_evidence = project_route_semantic_inputs(
             request_intent,
             work_unit_ids=cast(list[str], route_work_unit_ids),
+            evidence=evidence,
+            retrieval_result=retrieval_result,
         )
-        bound_refs = evidence_refs_for_work_units(
-            retrieval_result,
-            work_unit_ids=cast(list[str], route_work_unit_ids),
-        )
-        route_evidence = [
-            item
-            for item in evidence
-            if retrieval_result is None
-            or (
-                item.get("evidence_ref") or item.get("evidence_id") or item.get("id")
-            ) in bound_refs
-        ]
+        assert route_intent is not None
         allowed_refs = {
             ref
             for item in route_evidence

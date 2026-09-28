@@ -313,6 +313,8 @@ Frozen Output Route별로 다음 책임을 분리한다.
 
 Arguments Projection에는 현재 검증된 `request_intent` 제약도 포함한다. 정확한 Task/Calendar CREATE가 이 Projection과 frozen Route로 하나로 결정되면 동일 Typed Candidate를 결정적으로 만들 수 있지만, 추가 semantic 판단이 남으면 Product Prompt 호출을 유지한다. 결정적 materialization도 assemble/validate, Review, Domain Validation, Approval, Verification을 우회하지 않는다.
 
+Objective/Arguments의 budget preflight는 실제 owner와 동일한 route-local 의미·Evidence projection 및 결정적 materialization 조건을 사용한다. 실제 LLM 호출 계수는 Provider dispatch ledger의 노드 전후 차이를 기록하며, 예상 Route 수나 semantic invoker 횟수를 Provider 호출 수로 대신하지 않는다. 상한과 dispatch 직전의 guard는 변경하지 않는다.
+
 **비활성 개발 후보 — Planning 업무 관계 context**
 
 Evaluation-only injectable projection은 objective/arguments의 기존 route-local Intent를

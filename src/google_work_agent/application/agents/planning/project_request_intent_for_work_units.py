@@ -11,6 +11,29 @@ from google_work_agent.application.agents.request_understanding.contracts.reques
 )
 
 
+def project_route_semantic_inputs(
+    request_intent: Mapping[str, object] | None,
+    *,
+    work_unit_ids: Sequence[str],
+    evidence: Sequence[Mapping[str, object]] = (),
+    retrieval_result: Mapping[str, object] | None = None,
+) -> tuple[RequestIntentV3 | None, list[Mapping[str, object]]]:
+    """Share the same owner input between execution and call-budget preflight."""
+    route_intent = (
+        None
+        if request_intent is None
+        else project_request_intent_for_work_units(request_intent, work_unit_ids=work_unit_ids)
+    )
+    bound_refs = evidence_refs_for_work_units(retrieval_result, work_unit_ids=work_unit_ids)
+    route_evidence = [
+        item
+        for item in evidence
+        if retrieval_result is None
+        or (item.get("evidence_ref") or item.get("evidence_id") or item.get("id")) in bound_refs
+    ]
+    return route_intent, route_evidence
+
+
 def project_request_intent_for_work_units(
     request_intent: Mapping[str, object],
     *,
@@ -126,4 +149,5 @@ def _mappings(value: object, path: str) -> list[Mapping[str, object]]:
 __all__ = [
     "evidence_refs_for_work_units",
     "project_request_intent_for_work_units",
+    "project_route_semantic_inputs",
 ]

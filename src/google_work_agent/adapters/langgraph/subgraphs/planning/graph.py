@@ -109,6 +109,9 @@ from google_work_agent.application.agents.planning.outline_answer import (
     answer_confirmation_allowed,
     answer_outline_output_schema,
 )
+from google_work_agent.application.agents.planning.project_request_intent_for_work_units import (
+    project_route_semantic_inputs,
+)
 from google_work_agent.application.agents.planning.resolve_default_container import (
     RequiredContainerUnresolvedError,
 )
@@ -407,12 +410,18 @@ class PlanningSubgraph:
             cast(Mapping[str, object], working["output_plan"])["output_routes"],
         )
         request_intent = cast(Mapping[str, object], working["request_intent"])
-        inference_count = sum(
-            requires_objective_inference(
-                cast(Mapping[str, object], route), request_intent=request_intent
+        inference_count = 0
+        for raw_route in routes:
+            route = cast(Mapping[str, object], raw_route)
+            route_intent, _ = project_route_semantic_inputs(
+                request_intent,
+                work_unit_ids=cast(list[str], route.get("work_unit_ids")),
+                evidence=cast(list[Mapping[str, object]], working.get("evidence", [])),
+                retrieval_result=cast(Mapping[str, object] | None, working.get("retrieval_result")),
             )
-            for route in cast(list[object], routes)
-        )
+            assert route_intent is not None
+            inference_count += requires_objective_inference(route, request_intent=route_intent)
+        llm_calls_before = state["retry_budget"]["llm_calls_used"] if self._llm_runtime else 0
         if self._llm_runtime is not None and inference_count:
             ensure_llm_call_budget(cast(Any, working), provider_calls_requested=inference_count)
         patch = objective_node_module.draft_action_objective_per_output_route_node(
@@ -436,6 +445,8 @@ class PlanningSubgraph:
         if "work_analysis" in working:
             result["work_analysis"] = working["work_analysis"]
         if self._llm_runtime is not None:
+            result["retry_budget"] = consume_llm_call_budget(cast(Any, state))
+            calls_used = result["retry_budget"]["llm_calls_used"] - llm_calls_before
             first = not isinstance(state.get(PLANNING_AGENT_LOCAL_KEY), Mapping)
             if first:
                 assert self._id_factory is not None
@@ -444,23 +455,23 @@ class PlanningSubgraph:
                     invocation_id=self._id_factory(),
                     node_state="ACTION_OBJECTIVE_COMPLETE",
                     input_projection={"route": "ACTION"},
-                    prompt_ref=self._prompt_refs.get(
-                        "planning.draft_action_objective_per_output_route"
+                    prompt_ref=(
+                        self._prompt_refs["planning.draft_action_objective_per_output_route"]
+                        if calls_used
+                        else None
                     ),
                 )
             trace_state = cast(PlanningLocalState, {**state, **result})
-            if inference_count:
-                result["retry_budget"] = consume_llm_call_budget(cast(Any, state))
             result["trace_context"] = self._trace(
                 trace_state,
                 "draft_action_objective_per_output_route",
                 (
                     self._prompt_refs["planning.draft_action_objective_per_output_route"]
-                    if inference_count
+                    if calls_used
                     else None
                 ),
                 first=first,
-                llm_call_increment=inference_count,
+                llm_call_increment=calls_used,
             )
         return result
 
@@ -469,19 +480,26 @@ class PlanningSubgraph:
         routes = cast(Mapping[str, object], working["output_plan"])["output_routes"]
         typed_routes = cast(list[object], routes)
         request_intent = working.get("request_intent")
-        inference_count = sum(
-            requires_argument_inference(
-                cast(Mapping[str, object], route),
-                request_intent=(
+        inference_count = 0
+        for raw_route in typed_routes:
+            route = cast(Mapping[str, object], raw_route)
+            route_intent, route_evidence = project_route_semantic_inputs(
+                (
                     cast(Mapping[str, object], request_intent)
                     if isinstance(request_intent, Mapping)
                     else None
                 ),
+                work_unit_ids=cast(list[str], route.get("work_unit_ids")),
                 evidence=cast(list[Mapping[str, object]], working.get("evidence", [])),
+                retrieval_result=cast(Mapping[str, object] | None, working.get("retrieval_result")),
+            )
+            inference_count += requires_argument_inference(
+                route,
+                request_intent=route_intent,
+                evidence=route_evidence,
                 source_snapshots=working.get("source_snapshots"),
             )
-            for route in typed_routes
-        )
+        llm_calls_before = state["retry_budget"]["llm_calls_used"] if self._llm_runtime else 0
         if self._llm_runtime is not None and inference_count:
             ensure_llm_call_budget(cast(Any, working), provider_calls_requested=inference_count)
         try:
@@ -536,13 +554,18 @@ class PlanningSubgraph:
                 ),
             )
             update = cast(GraphStateUpdateV1, {"planning_result": answer})
-            if self._llm_runtime is not None and inference_count:
+            if self._llm_runtime is not None:
                 update["retry_budget"] = consume_llm_call_budget(cast(Any, state))
+                calls_used = update["retry_budget"]["llm_calls_used"] - llm_calls_before
                 update["trace_context"] = self._trace(
                     state,
                     "compose_arguments_per_output_route",
-                    self._prompt_refs["planning.compose_arguments_per_output_route"],
-                    llm_call_increment=inference_count,
+                    (
+                        self._prompt_refs["planning.compose_arguments_per_output_route"]
+                        if calls_used
+                        else None
+                    ),
+                    llm_call_increment=calls_used,
                 )
             merged = self._merge_decision(state, update, decision)
             merged.pop(PLANNING_AGENT_LOCAL_KEY, None)
@@ -598,20 +621,18 @@ class PlanningSubgraph:
         context.pop("confirmation_interrupt", None)
         context.pop("planning_missing_container", None)
         result["prompt_context"] = context
-        if self._llm_runtime is not None and inference_count:
+        if self._llm_runtime is not None:
             result["retry_budget"] = consume_llm_call_budget(cast(Any, state))
+            calls_used = result["retry_budget"]["llm_calls_used"] - llm_calls_before
             result["trace_context"] = self._trace(
                 state,
                 "compose_arguments_per_output_route",
-                self._prompt_refs["planning.compose_arguments_per_output_route"],
-                llm_call_increment=inference_count,
-            )
-        elif self._llm_runtime is not None:
-            result["trace_context"] = self._trace(
-                state,
-                "compose_arguments_per_output_route",
-                None,
-                llm_call_increment=0,
+                (
+                    self._prompt_refs["planning.compose_arguments_per_output_route"]
+                    if calls_used
+                    else None
+                ),
+                llm_call_increment=calls_used,
             )
         return result
 

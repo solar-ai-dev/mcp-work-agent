@@ -27,8 +27,7 @@ from google_work_agent.application.agents.planning.materialize_task_create_paylo
     materialize_task_create_payload,
 )
 from google_work_agent.application.agents.planning.project_request_intent_for_work_units import (
-    evidence_refs_for_work_units,
-    project_request_intent_for_work_units,
+    project_route_semantic_inputs,
 )
 from google_work_agent.application.agents.planning.resolve_default_container import (
     BoundSelectedToolSchemaV1,
@@ -182,26 +181,12 @@ def compose_arguments_per_output_route(
             or not all(isinstance(item, str) and item for item in route_work_unit_ids)
         ):
             raise ValueError("output route requires work_unit_ids")
-        route_intent = (
-            None
-            if request_intent is None
-            else project_request_intent_for_work_units(
-                request_intent,
-                work_unit_ids=cast(list[str], route_work_unit_ids),
-            )
-        )
-        bound_refs = evidence_refs_for_work_units(
-            retrieval_result,
+        route_intent, route_evidence = project_route_semantic_inputs(
+            request_intent,
             work_unit_ids=cast(list[str], route_work_unit_ids),
+            evidence=evidence,
+            retrieval_result=retrieval_result,
         )
-        route_evidence = [
-            item
-            for item in evidence
-            if retrieval_result is None
-            or (
-                item.get("evidence_ref") or item.get("evidence_id") or item.get("id")
-            ) in bound_refs
-        ]
         allowed_refs = {
             ref
             for item in route_evidence
@@ -381,13 +366,12 @@ def requires_argument_inference(
     source_snapshots: Mapping[str, Mapping[str, object]] | None = None,
 ) -> bool:
     return (
-        materialize_task_calendar_draft_payload(
+        _deterministic_argument_payload(
             route=route,
             request_intent=request_intent,
             evidence=evidence,
             source_snapshots=source_snapshots,
         )
-        or _deterministic_create_payload(route=route, request_intent=request_intent)
     ) is None
 
 
@@ -448,12 +432,12 @@ def _deterministic_argument_candidate(
     evidence: Sequence[Mapping[str, object]],
     source_snapshots: Mapping[str, Mapping[str, object]] | None,
 ) -> ToolArgumentCandidateV1 | None:
-    payload = materialize_task_calendar_draft_payload(
+    payload = _deterministic_argument_payload(
         route=route,
         request_intent=request_intent,
         evidence=evidence,
         source_snapshots=source_snapshots,
-    ) or _deterministic_create_payload(route=route, request_intent=request_intent)
+    )
     route_id = route.get("route_id")
     if payload is None or not isinstance(route_id, str):
         return None
@@ -463,6 +447,21 @@ def _deterministic_argument_candidate(
         "arguments": {"payload": payload},
         "evidence_refs": [ref for ref in objective.get("evidence_refs", []) if ref in allowed_refs],
     }
+
+
+def _deterministic_argument_payload(
+    *,
+    route: Mapping[str, object],
+    request_intent: Mapping[str, object] | None,
+    evidence: Sequence[Mapping[str, object]],
+    source_snapshots: Mapping[str, Mapping[str, object]] | None,
+) -> dict[str, object] | None:
+    return materialize_task_calendar_draft_payload(
+        route=route,
+        request_intent=request_intent,
+        evidence=evidence,
+        source_snapshots=source_snapshots,
+    ) or _deterministic_create_payload(route=route, request_intent=request_intent)
 
 
 def _deterministic_create_payload(
