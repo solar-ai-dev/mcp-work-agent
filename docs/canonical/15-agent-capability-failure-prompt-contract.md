@@ -948,6 +948,14 @@ Source 판단의 개발 구조 비교는 기존 요청 원문·선택 identity·
 의미 통과로 취급하지 않는다. 비활성 후보의 직접 모델 호출은 Production budget,
 Prompt activation 또는 release evidence를 대체하지 않는다.
 
+Source의 비활성 해석 전달 후보는 기존 FIRST 입력 전체와 출력 Schema를 보존하며,
+별도 evaluation PromptRef/input contract에서 `interpretation_candidate` 문자열 하나를
+optional로 전달할 수 있다. 같은 요청·선택 identity·기준시각으로 생성된 모델의 최종
+표시문만 사용하며, 이는 비권위 참고자료이지 원문·Goal·Source 결정을 대체하지 않는다.
+숨겨진 추론, 정답, 평가 판정, 사람의 의미 교정은 전달하지 않는다. 기존 Source validator와
+결정적 responsibility merge를 적용하고, frozen 응답 재사용 시에도 해석 생성 비용을
+별도로 보고한다. 이 진단은 Product 입력 allowlist·State·Graph·Prompt 활성화를 바꾸지 않는다.
+
 Source의 개별 Resource membership과 세부 조회 요구를 나누는 비활성 구조 후보에서는
 첫 호출이 모든 기존 후보의 REQUIRED/NOT_REQUIRED를 명시하고, 둘째 호출은 확정된
 REQUIRED Resource의 필요 사실·대상 범위·Work binding만 작성할 수 있다. 둘째 호출이
