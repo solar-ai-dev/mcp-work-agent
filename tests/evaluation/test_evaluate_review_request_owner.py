@@ -277,3 +277,86 @@ def test_new_finding_does_not_silently_expand_baseline_wire_admission(plan: dict
         == case["input"]["request_intent"]["resource_responsibilities"]["outputs"]
     )
     assert candidate["semantic_verdict"] == "UNREVIEWED"
+
+
+def _bind_prior_baseline(
+    plan: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> Path:
+    prior = runner.RESULTS / "prior.json"
+    runner.write_json(
+        prior,
+        {
+            "binding": plan,
+            "completed": True,
+            "calls": [
+                {
+                    "case_id": c["case_id"],
+                    "arm": "production",
+                    "state": "RETURNED",
+                    "payload": c["payloads"]["production"],
+                    "content": _response(),
+                }
+                for c in plan["cases"]
+            ],
+        },
+    )
+    monkeypatch.setattr(runner, "PRIOR_RAW", prior)
+    monkeypatch.setattr(runner, "PRIOR_RAW_HASH", runner.existing.file_hash(prior))
+    return prior
+
+
+def test_partition_reuses_exact_baseline_and_generates_only_four_firsts(
+    plan: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prior = _bind_prior_baseline(plan, monkeypatch)
+    before = prior.read_bytes()
+    partition_plan = runner.make_plan(
+        plan["model"],
+        origin=Path(plan["origin"]),
+        profile="partition_v2",
+    )
+    assert len(partition_plan["reused_baseline"]) == 4
+    assert partition_plan["policy"]["max_http_generation_calls"] == 4
+    calls: list[dict[str, Any]] = []
+
+    def post(**kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs)
+        return {
+            "response": json.dumps(
+                {
+                    "schema_version": 2,
+                    "dimension": runner.PROMPT_ID,
+                    "request_intent_findings": [],
+                    "planning_findings": [],
+                }
+            )
+        }
+
+    monkeypatch.setattr(runner.existing.transport, "_post_json", post)
+    raw = runner.execute_plan(
+        partition_plan,
+        runner.RESULTS / "partition",
+        plan_sha256=runner.object_hash(partition_plan),
+    )
+    assert len(calls) == raw["actual_http_calls"] == 4
+    assert all(row["arm"] == "request_owner" for row in raw["calls"])
+    assert all(row["validation"]["closed_context"] == "VALID" for row in raw["calls"])
+    assert all(row["validation"]["product_shape"] == "INVALID" for row in raw["calls"])
+    assert raw["reused_baseline"] == partition_plan["reused_baseline"]
+    assert raw["metrics_by_group"]["core"]["production"]["calls"] == 0
+    assert prior.read_bytes() == before
+
+
+def test_partition_cannot_reuse_a_different_baseline_wire(
+    plan: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prior = _bind_prior_baseline(plan, monkeypatch)
+    data = runner._read(prior)
+    data["calls"][0]["payload"]["options"]["seed"] = 1
+    runner.write_json(prior, data)
+    monkeypatch.setattr(runner, "PRIOR_RAW_HASH", runner.existing.file_hash(prior))
+    with pytest.raises(ValueError, match="exact current Product wire"):
+        runner.make_plan(plan["model"], origin=Path(plan["origin"]), profile="partition_v2")

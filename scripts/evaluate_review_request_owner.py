@@ -47,6 +47,10 @@ ORIGIN_HASHES = {
 }
 SUFFIX = ROOT / "evaluation/prompt_candidates/review-request-owner-v1/instruction-suffix.md"
 CRITERIA = ROOT / "evaluation/experiments/065-review-request-reconsideration-criteria.md"
+PARTITION_ROLE = ROOT / "evaluation/prompt_candidates/review-request-owner-v2/role.md"
+PARTITION_CRITERIA = ROOT / "evaluation/experiments/065-review-owner-partition-v2-criteria.md"
+PRIOR_RAW = RESULTS / "065-review-owner-v1-t1/raw.json"
+PRIOR_RAW_HASH = "22b7fbcb1257f3aede60f2f82d6c561e4c3d80c1e5fdc5fdc764ebab9ae113af"
 ARMS = ("production", "request_owner")
 MAX_CALLS = 8
 PROMPT_ID = candidate.DIMENSION
@@ -77,6 +81,8 @@ def build_payloads(
     projection: dict[str, Any],
     user_request: str,
     runtime: dict[str, Any],
+    *,
+    profile: str = "v1",
 ) -> dict[str, Any]:
     """Use Product assembly/transport unchanged, then an explicit evaluation frame."""
     registry = PromptRegistry()
@@ -117,11 +123,19 @@ def build_payloads(
     new_input = {**deepcopy(projection), "user_request": user_request}
     work_ids = [u["unit_id"] for u in projection["request_intent"]["requested_work"]["work_units"]]
     new_schema = candidate.build_review_output_schema(work_ids)
+    if profile == "partition_v2":
+        from scripts.review_request_owner_partition import build_output_schema
+
+        new_role = PARTITION_ROLE.read_text(encoding="utf-8").rstrip()
+        new_schema = build_output_schema(work_ids)
+    elif profile != "v1":
+        raise ValueError("unknown Review candidate profile")
+    candidate_version = f"evaluation-review-request-owner-{profile}"
     new_ref = replace(
         ref,
-        prompt_version="evaluation-review-request-owner-v1",
+        prompt_version=candidate_version,
         content_hash=hashlib.sha256(new_role.encode("utf-8")).hexdigest(),
-        input_schema_version="evaluation-review-request-owner-v1",
+        input_schema_version=candidate_version,
         output_schema_version=new_schema.schema_version,
     )
     frame = system[len(role) : -len(original_suffix)]
@@ -299,7 +313,9 @@ def synthetic_controls() -> list[dict[str, Any]]:
     return controls
 
 
-def make_plan(model: dict[str, Any], *, origin: Path = ORIGIN) -> dict[str, Any]:
+def make_plan(
+    model: dict[str, Any], *, origin: Path = ORIGIN, profile: str = "v1"
+) -> dict[str, Any]:
     for name, expected in ORIGIN_HASHES.items():
         if existing.file_hash(origin / name) != expected:
             raise ValueError("historical original file hash changed")
@@ -351,7 +367,10 @@ def make_plan(model: dict[str, Any], *, origin: Path = ORIGIN) -> dict[str, Any]
         *synthetic_controls(),
     ]
     for entry in cases:
-        entry.update(build_payloads(entry["input"], entry["user_request"], runtime))
+        entry.update(
+            build_payloads(entry["input"], entry["user_request"], runtime, profile=profile)
+        )
+        entry["profile"] = profile
         entry["input_sha256"] = object_hash(entry["input"])
         entry["wire_hashes"] = {a: object_hash(p) for a, p in entry["payloads"].items()}
     first = cases[0]
@@ -373,6 +392,30 @@ def make_plan(model: dict[str, Any], *, origin: Path = ORIGIN) -> dict[str, Any]
         SUFFIX,
         CRITERIA,
     ]
+    reused: list[dict[str, Any]] = []
+    if profile == "partition_v2":
+        if existing.file_hash(PRIOR_RAW) != PRIOR_RAW_HASH:
+            raise ValueError("prior fixed trial raw changed")
+        prior = _read(PRIOR_RAW)
+        if prior["binding"]["model"] != model or not prior["completed"]:
+            raise ValueError("prior model/runtime trial does not match")
+        for entry in cases:
+            matches = [
+                row
+                for row in prior["calls"]
+                if row["case_id"] == entry["case_id"] and row["arm"] == "production"
+            ]
+            if len(matches) != 1 or matches[0]["payload"] != entry["payloads"]["production"]:
+                raise ValueError("reused baseline must have the exact current Product wire")
+            reused.append(deepcopy(matches[0]))
+        dependencies.extend(
+            [
+                PARTITION_ROLE,
+                PARTITION_CRITERIA,
+                ROOT / "scripts/review_request_owner_partition.py",
+                ROOT / "tests/evaluation/test_review_request_owner_partition.py",
+            ]
+        )
     # Includes every Product producer/validator/Prompt dependency without importing a runtime.
     dependencies += [
         p
@@ -384,6 +427,7 @@ def make_plan(model: dict[str, Any], *, origin: Path = ORIGIN) -> dict[str, Any]
     return {
         "schema_version": 1,
         "kind": "REVIEW_REQUEST_OWNER_DIAGNOSTIC",
+        "profile": profile,
         "head_sha": head(),
         "model": model,
         "runtime": runtime,
@@ -392,18 +436,23 @@ def make_plan(model: dict[str, Any], *, origin: Path = ORIGIN) -> dict[str, Any]
         "dataset_sha256": history["dataset_sha256"],
         "fixture_sha256": history["snapshot_sha256"],
         "cases": cases,
+        "reused_baseline": reused,
+        "reused_raw_sha256": PRIOR_RAW_HASH if reused else None,
         "source_hashes": {
             p.relative_to(ROOT).as_posix(): existing.file_hash(p) for p in sorted(set(dependencies))
         },
-        "execution_order": [[c["case_id"], arm] for c in cases for arm in ARMS],
+        "execution_order": [
+            [c["case_id"], arm] for c in cases for arm in (("request_owner",) if reused else ARMS)
+        ],
         "policy": {
-            "max_http_generation_calls": MAX_CALLS,
+            "max_http_generation_calls": len(cases) if reused else MAX_CALLS,
             "trials_per_case_arm": 1,
             "concurrency": 1,
             "timeout_seconds": existing.TIMEOUT_SECONDS,
             "repairs": 0,
             "retries": 0,
             "reused_scores": 0,
+            "reused_firsts": len(reused),
             "provider_calls": 0,
             "graph_calls": 0,
             "approval_resumes": 0,
@@ -430,6 +479,17 @@ def validate_response(content: object, case: dict[str, Any], arm: str) -> dict[s
         result["product_shape"] = "VALID"
     except ValueError as error:
         result.update(product_shape="INVALID", product_shape_error=str(error)[:500])
+    if case.get("profile") == "partition_v2" and arm == "request_owner":
+        from scripts.review_request_owner_partition import validate_and_project
+
+        try:
+            result.update(
+                validate_and_project(value, **_context(case["input"], case["user_request"]))
+            )
+            result["closed_context"] = "VALID"
+        except ValueError as error:
+            result.update(closed_context="INVALID", closed_context_error=str(error)[:500])
+        return result
     try:
         receipts = candidate.validate_review_candidate(
             value, **_context(case["input"], case["user_request"])
@@ -468,7 +528,11 @@ def execute_plan(plan: dict[str, Any], output: Path, *, plan_sha256: str) -> dic
     if object_hash(plan) != plan_sha256:
         raise ValueError("sealed plan hash mismatch")
     if (
-        make_plan(existing.inspect_diagnostic_model("presence_zero"), origin=Path(plan["origin"]))
+        make_plan(
+            existing.inspect_diagnostic_model("presence_zero"),
+            origin=Path(plan["origin"]),
+            profile=plan.get("profile", "v1"),
+        )
         != plan
     ):
         raise ValueError("HEAD/model/code/Prompt/runtime/input/fixture drift")
@@ -483,6 +547,7 @@ def execute_plan(plan: dict[str, Any], output: Path, *, plan_sha256: str) -> dic
     raw: dict[str, Any] = {
         "binding": plan,
         "calls": [],
+        "reused_baseline": deepcopy(plan.get("reused_baseline", [])),
         "completed": False,
         "semantic_verdict": "UNREVIEWED",
         "business_success": "NOT_EVALUATED",
@@ -492,7 +557,7 @@ def execute_plan(plan: dict[str, Any], output: Path, *, plan_sha256: str) -> dic
     path = output / "raw.json"
     write_json(path, raw, exclusive=True)
     for case_id, arm in plan["execution_order"]:
-        if len(raw["calls"]) >= MAX_CALLS:
+        if len(raw["calls"]) >= plan["policy"]["max_http_generation_calls"]:
             raise ValueError("fixed diagnostic call cap reached")
         case = next(c for c in plan["cases"] if c["case_id"] == case_id)
         payload = deepcopy(case["payloads"][arm])
@@ -566,6 +631,7 @@ def main() -> None:
     parser.add_argument("--result-dir", type=Path, required=True)
     parser.add_argument("--execute-plan", type=Path)
     parser.add_argument("--expected-plan-sha256")
+    parser.add_argument("--profile", choices=("v1", "partition_v2"), default="v1")
     args = parser.parse_args()
     if args.execute_plan:
         if not args.expected_plan_sha256:
@@ -580,7 +646,7 @@ def main() -> None:
         )
         return
     output = _output_path(args.result_dir)
-    plan = make_plan(existing.inspect_diagnostic_model("presence_zero"))
+    plan = make_plan(existing.inspect_diagnostic_model("presence_zero"), profile=args.profile)
     path = output / "preregistered-plan.json"
     write_json(path, plan, exclusive=True)
     print(json.dumps({"plan": str(path), "sha256": object_hash(plan), "model_calls": 0}))
