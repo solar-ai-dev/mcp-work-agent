@@ -65,3 +65,8 @@ Source 누락·제공자료 반례·정상 외부조회 모두를 보존하는 �
 v44 실패는 Source FIRST 자체의 메일 누락이며 이 guard를 실행하지 않았다. 두 원인을
 섞지 않는다. Approval/Permission/Scope/Identity/Execution/Verification/Recovery 변경0,
 실제 Provider WRITE/SEND0, 모델0, 제품 Prompt0. 상세 재현은 추적된 직접 테스트로 가능하다.
+
+후속 판단: 이 시점의 삭제-only REJECT는 당시 component의 위험을 보존한 기록이다.
+이후 기존 Canonical15의 명시적 owner 규약 및 제한된 역사 raw를 추가 대조해 결정적
+소비 경계만 수정한 근거·범위는 `064-source-owner-authority-fix.md`에 별도로 기록한다.
+Source 모델 품질 개선이나 외부조회 누락 해결로 판단을 바꾼 것은 아니다.

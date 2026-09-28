@@ -3427,7 +3427,61 @@ def test_lexical_anchor_alone__standalone_write__does_not_force_source_read() ->
     assert candidate["requested_resource_hints"] == ["GMAIL_MESSAGE"]
 
 
-def test_external_answer__source_contradiction__uses_bounded_semantic_revision() -> None:
+@pytest.mark.parametrize("with_budget", [False, True])
+@pytest.mark.parametrize("slot", ["search_terms", "business_concepts", "both"])
+def test_provided_memo__source_free_owner_decision__preserved_without_revision(
+    with_budget: bool, slot: str,
+) -> None:
+    text = (
+        "아래 메모에서 Project Willow의 승인 요청만 찾아 정리해줘. "
+        "메모: Project Willow의 승인 요청은 보류이고 추가 자료를 기다린다."
+    )
+    goal = {
+        "goal": "제공된 메모의 승인 요청을 정리한다",
+        "completion_conditions": ["제공된 메모에서 확인한 내용을 답한다"],
+        "constraints": _goal_constraints(
+            search_terms=["Project Willow"] if slot in {"search_terms", "both"} else [],
+            business_concepts=["승인 요청"] if slot in {"business_concepts", "both"} else [],
+        ),
+        "analysis_requirement": "NONE",
+    }
+    runtime = FakeStructuredInferencePort(
+        outputs=[goal, _source_dependency_decisions(), _output_responsibility_decisions()],
+        validate_schema=True,
+    )
+    kwargs = {
+        "llm_runtime": runtime,
+        "request": _request(text),
+        "prompt_ref": _prompt_ref("request_understanding.identify_goal", "identify_goal"),
+    }
+
+    # Canonical 15: an anchor or business concept is not proof that the requested
+    # facts are absent from the user's supplied text and require a Connector.
+    if with_budget:
+        candidate, budget = identify_goal_with_budget(
+            **kwargs, retry_budget=build_default_run_budget()
+        )
+        assert budget["semantic_revisions_used_by_failure"] == {}
+    else:
+        candidate = identify_goal(**kwargs)
+
+    assert candidate["resource_responsibilities"] == {"source_reads": [], "outputs": []}
+    assert candidate["requested_effect_hints"] == []
+    assert candidate["requested_resource_hints"] == []
+    source_calls = [
+        call for call in runtime.calls
+        if call["prompt_ref"].prompt_id == "request_understanding.identify_source_dependencies"
+    ]
+    assert len(source_calls) == 1
+    source_input = source_calls[0]["prompt_input"]
+    assert source_input["user_request"] == text
+    source_goal = cast(dict[str, object], source_input["goal_candidate"])
+    assert source_goal["constraints"] == goal["constraints"]
+    assert "failure_record" not in source_input
+    assert not runtime.outputs
+
+
+def test_external_answer__valid_source_owner_decision__preserved_without_revision() -> None:
     goal = {
         "goal": "Atlas 프로젝트의 최종 출고일과 담당자를 확인한다",
         "completion_conditions": ["외부 자료에서 확인한 값을 답한다"],
@@ -3437,8 +3491,7 @@ def test_external_answer__source_contradiction__uses_bounded_semantic_revision()
         ),
         "analysis_requirement": "NONE",
     }
-    all_not_required = _source_dependency_decisions()
-    revised = _source_dependency_decisions(
+    source = _source_dependency_decisions(
         source_types={
             "GMAIL_THREAD": (
                 ["subject", "message_history", "timestamps"],
@@ -3447,7 +3500,8 @@ def test_external_answer__source_contradiction__uses_bounded_semantic_revision()
         }
     )
     runtime = FakeStructuredInferencePort(
-        outputs=[goal, all_not_required, _output_responsibility_decisions(), revised]
+        outputs=[goal, source, _output_responsibility_decisions()],
+        validate_schema=True,
     )
 
     candidate, budget = identify_goal_with_budget(
@@ -3471,17 +3525,16 @@ def test_external_answer__source_contradiction__uses_bounded_semantic_revision()
         if call["prompt_ref"].prompt_id
         == "request_understanding.identify_source_dependencies"
     ]
-    assert len(source_calls) == 2
-    revision_input = cast(dict[str, object], source_calls[1]["prompt_input"])
-    assert revision_input["candidate_output"] == all_not_required
-    failure_record = cast(dict[str, object], revision_input["failure_record"])
-    assert failure_record["failure_reason_code"] == (
-        "INTENT_SOURCE_DEPENDENCY_CONTRADICTION"
-    )
-    assert sum(budget["semantic_revisions_used_by_failure"].values()) == 1
+    assert len(source_calls) == 1
+    assert "failure_record" not in source_calls[0]["prompt_input"]
+    assert budget["semantic_revisions_used_by_failure"] == {}
+    assert not runtime.outputs
 
 
-def test_external_answer__failed_source_revision__does_not_select_source() -> None:
+@pytest.mark.parametrize("with_budget", [False, True])
+def test_external_answer__source_omission__remains_model_error_not_synthetic_read(
+    with_budget: bool,
+) -> None:
     goal = {
         "goal": "Atlas 프로젝트의 최종 출고일과 담당자를 확인한다",
         "completion_conditions": ["외부 자료에서 확인한 값을 답한다"],
@@ -3497,25 +3550,37 @@ def test_external_answer__failed_source_revision__does_not_select_source() -> No
             goal,
             all_not_required,
             _output_responsibility_decisions(),
-            all_not_required,
-        ]
+        ],
+        validate_schema=True,
     )
 
-    with pytest.raises(source_dependencies.SourceDependencyContradictionError):
-        identify_goal_with_budget(
-            llm_runtime=runtime,
-            request=_request("Atlas 프로젝트의 최종 출고일과 담당자를 찾아줘."),
-            prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
-            retry_budget=build_default_run_budget(),
+    kwargs = {
+        "llm_runtime": runtime,
+        "request": _request("Atlas 프로젝트의 최종 출고일과 담당자를 찾아줘."),
+        "prompt_ref": _prompt_ref("request_understanding.identify_goal", "identify_goal"),
+    }
+    if with_budget:
+        candidate, budget = identify_goal_with_budget(
+            **kwargs, retry_budget=build_default_run_budget()
         )
+        assert budget["semantic_revisions_used_by_failure"] == {}
+    else:
+        candidate = identify_goal(**kwargs)
 
+    # This fake Source output is still semantically wrong for the request. The
+    # guard's removal restores ownership, not business success or missing facts.
+    assert candidate["resource_responsibilities"] == {"source_reads": [], "outputs": []}
+    assert candidate["requested_resource_hints"] == []
+    assert candidate["requested_effect_hints"] == []
     source_calls = [
         call
         for call in runtime.calls
         if call["prompt_ref"].prompt_id
         == "request_understanding.identify_source_dependencies"
     ]
-    assert len(source_calls) == 2
+    assert len(source_calls) == 1
+    assert "failure_record" not in source_calls[0]["prompt_input"]
+    assert not runtime.outputs
 
 
 def test_existing_gmail_thread_reply__incompatible_output_resource__rejects_output() -> None:

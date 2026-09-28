@@ -195,54 +195,18 @@ def test_source_schema__general_request__allows_no_existing_source() -> None:
     )
 
 
-def test_source_semantics__source_free_answer__allows_all_not_required() -> None:
-    candidate = _validate_source_dependency_candidate(
-        _decisions(),
-        source_candidates=_CANDIDATES,
-    )
+def test_source_validation__all_not_required__preserves_owner_decision() -> None:
+    candidate = _decisions()
 
-    assert source_dependencies.validate_source_dependency_semantics(
+    # Canonical 15 permits structural validation, not a new READ judgment from
+    # Goal search strings. Valid structure does not certify Source meaning.
+    validated = _validate_source_dependency_candidate(
         candidate,
-        goal_candidate={"constraints": {"search_terms": [], "business_concepts": []}},
-        has_output_responsibilities=False,
-    ) == _decisions()
-
-
-def test_source_semantics__standalone_output__does_not_force_retrieval() -> None:
-    candidate = _validate_source_dependency_candidate(
-        _decisions(),
         source_candidates=_CANDIDATES,
     )
 
-    assert source_dependencies.validate_source_dependency_semantics(
-        candidate,
-        goal_candidate={"constraints": {"search_terms": ["Project Anchor"]}},
-        has_output_responsibilities=True,
-    ) == _decisions()
-
-
-def test_source_semantics__external_answer_facts__reject_all_not_required() -> None:
-    candidate = _validate_source_dependency_candidate(
-        _decisions(),
-        source_candidates=_CANDIDATES,
-    )
-
-    with pytest.raises(
-        source_dependencies.SourceDependencyContradictionError
-    ) as raised:
-        source_dependencies.validate_source_dependency_semantics(
-            candidate,
-            goal_candidate={
-                "constraints": {
-                    "search_terms": ["Atlas"],
-                    "business_concepts": ["최종 출고일", "담당자"],
-                }
-            },
-            has_output_responsibilities=False,
-        )
-
-    assert raised.value.reason_code == "INTENT_SOURCE_DEPENDENCY_CONTRADICTION"
-    assert raised.value.candidate_output == _decisions()
+    assert validated == candidate
+    assert validated is not candidate
 
 
 def test_source_schema__confirmed_target__requires_a_source_without_choosing_its_type() -> None:

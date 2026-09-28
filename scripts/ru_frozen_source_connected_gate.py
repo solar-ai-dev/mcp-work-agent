@@ -338,11 +338,6 @@ def run_case(
         source_candidates=source_catalog,
         work_unit_ids=work_ids,
     )
-    source_ops.validate_source_dependency_semantics(
-        sources,
-        goal_candidate=base["goal_candidate"],
-        has_output_responsibilities=bool(outputs["output_responsibilities"]),
-    )
     responsibilities = merge_resource_responsibilities(
         source_decisions=sources,
         output_decisions=outputs,

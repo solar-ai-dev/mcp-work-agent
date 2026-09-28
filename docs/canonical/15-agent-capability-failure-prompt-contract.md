@@ -186,6 +186,13 @@ Graph Profile 간 semantic responsibility parity를 유지한다. `SINGLE_BASELI
 | Deterministic semantic guard | 이미 확정된 Typed State·closed enum·explicit prohibition·selected identity·duplicate kind·canonical fact와의 구조적 모순만 거절한다. Source 누락이나 READ/WRITE 의미를 새로 판단하거나 정답 Candidate를 생성·보정하지 않는다. |
 | Runtime 조합 | Tool Calling과 별도 JSON Schema constrained decoding을 함께 쓰는 조합은 독립 Candidate로 검증한 뒤 채택한다. 한쪽 Contract Gate 성공을 다른 조합의 성공으로 간주하지 않는다. |
 
+Goal의 `search_terms`/`business_concepts`는 검색·업무 의미를 보존하는 값이지 외부 자료
+필요성의 독립 증명이 아니다. 이 문자열 슬롯만으로 검증된 Source0을 모순으로 판정하거나
+Source 재판정을 강제하지 않는다. 제공된 원문 자료로 답할 수 있는 요청도 이 슬롯을 가질 수 있다.
+Source owner의 잘못된 누락은 의미 평가 실패로 남으며, 구조적 admission을 업무 성공으로
+승격하지 않는다. selected identity, 확인된 target의 필수 Source, Work binding, closed Resource,
+명시 금지·권한·승인 검증은 해당 typed 경계에서 그대로 유지한다.
+
 #### Complexity Metadata와 Gate
 
 각 LLM Node는 최소 다음 Metadata를 실험에 노출한다.

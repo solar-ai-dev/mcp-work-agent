@@ -1255,6 +1255,13 @@ Request는 run_input을 projection하고, Back-edge 재진입에서는 해당 No
 
 각 LLM 호출은 자기 책임만 수행한다. 시간축 operation은 새로운 identity resolver나 Main Agent owner가 아니다. 표는 책임 구분이며 미래 Node 개수나 물리 배치를 고정하지 않는다.
 
+Goal 검색어·업무 개념이 있다는 사실만으로 Source0을 외부 자료 누락으로 다시 해석하지
+않는다. Source의 필요성은 해당 semantic owner가 판단하고, Source validator는 closed 후보·
+scope·Work 귀속 및 확인된 target 등 독립 typed 계약을 검증한다. Source FIRST의 실제 의미
+오류는 숨기지 않고 의미 평가에서 실패로 기록한다. 문자열 슬롯만으로 발생시키던
+`INTENT_SOURCE_DEPENDENCY_CONTRADICTION` 재판정은 사용하지 않으며, 기존 실패 기록의
+reason code는 과거 진단 참조용으로 보존한다. Artifact/Node/State/checkpoint 형상은 바뀌지 않는다.
+
 개발 비교에서는 Source owner가 필요한 업무 정보를 먼저 표현하고 Registry의 닫힌
 Source ref에 결속하는 후보를 분리해 시험할 수 있다. 확정된 ref→Resource projection은
 의미 재판정이 아니며 Product exact-set 계약으로 연결해 검증한다. 이는 evaluation-only

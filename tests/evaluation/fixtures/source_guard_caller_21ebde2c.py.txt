@@ -1,0 +1,378 @@
+# Historical caller/guard excerpt only; not importable Product code.
+# Source commit: 21ebde2c99cfcfeee67df297ec4900ab199de392
+# AST-exact definitions; other helper globals are current in the bounded comparison.
+
+class SourceDependencyContradictionError(RequestGoalSemanticValidationError):
+    """Carry one all-not-required contradiction into semantic revision."""
+
+    def __init__(self, *, candidate_output: object) -> None:
+        super().__init__(
+            "answer goal with explicit source-search meaning cannot omit every source",
+            reason_code="INTENT_SOURCE_DEPENDENCY_CONTRADICTION",
+            affected_field_paths=("$.source_dependencies",),
+        )
+        self.candidate_output = deepcopy(candidate_output)
+
+
+def validate_source_dependency_semantics(
+    value: SourceDependencyDecisionCandidateV1,
+    *,
+    goal_candidate: Mapping[str, object],
+    has_output_responsibilities: bool,
+) -> SourceDependencyDecisionCandidateV1:
+    """Reject an answer-only source decision that contradicts typed search meaning."""
+
+    if has_output_responsibilities or any(
+        decision["dependency"] == "SOURCE_REQUIRED"
+        for decision in value["source_dependencies"]
+    ):
+        return value
+    constraints = goal_candidate.get("constraints")
+    if not isinstance(constraints, Mapping):
+        return value
+    if not any(
+        isinstance(constraints.get(field), list) and bool(constraints[field])
+        for field in ("search_terms", "business_concepts")
+    ):
+        return value
+    raise SourceDependencyContradictionError(candidate_output=value)
+
+
+def identify_goal_with_budget(
+    *,
+    llm_runtime: StructuredInferencePort,
+    request: WorkflowStartRequest,
+    retry_budget: RunBudgetV2,
+    source_dependency_candidates: tuple[SourceDependencyCandidateV1, ...],
+    output_responsibility_candidates: tuple[OutputResponsibilityCandidateV1, ...],
+    prompt_ref: PromptReference | None = None,
+    effect_prohibition_prompt_ref: PromptReference | None = None,
+    source_dependency_prompt_ref: PromptReference | None = None,
+    output_responsibility_prompt_ref: PromptReference | None = None,
+    source_status_prompt_ref: PromptReference | None = None,
+    requested_work_prompt_ref: PromptReference | None = None,
+    work_relation_prompt_ref: PromptReference | None = None,
+    manifest_path: Path | None = None,
+    confirmation_response: ConfirmationResponseProjectionV1 | None = None,
+    request_reconsideration: Mapping[str, object] | None = None,
+    prior_goal_candidate: RequestGoalCandidateV1 | None = None,
+    prior_ambiguity_candidate: AmbiguityV1 | None = None,
+    allow_whitespace_work_selector: bool = False,
+) -> tuple[RequestGoalCandidateV1, RunBudgetV2]:
+    """Identify the goal with one bounded semantic contract revision."""
+
+    resolved_manifest_path = manifest_path or default_prompt_manifest_path()
+    resolved_prompt_ref = prompt_ref or load_prompt_reference(
+        "request_understanding.identify_goal", resolved_manifest_path
+    )
+    resolved_source_dependency_prompt_ref = source_dependency_prompt_ref or load_prompt_reference(
+        "request_understanding.identify_source_dependencies",
+        resolved_manifest_path,
+    )
+    resolved_output_responsibility_prompt_ref = (
+        output_responsibility_prompt_ref
+        or load_prompt_reference(
+            "request_understanding.identify_output_responsibilities",
+            resolved_manifest_path,
+        )
+    )
+    resolved_effect_prohibition_prompt_ref = effect_prohibition_prompt_ref or load_prompt_reference(
+        "request_understanding.identify_effect_prohibitions",
+        resolved_manifest_path,
+    )
+    resolved_source_status_prompt_ref = source_status_prompt_ref or load_prompt_reference(
+        "request_understanding.identify_source_status",
+        resolved_manifest_path,
+    )
+    resolved_requested_work_prompt_ref = requested_work_prompt_ref or load_prompt_reference(
+        "request_understanding.identify_requested_work", resolved_manifest_path
+    )
+    resolved_work_relation_prompt_ref = work_relation_prompt_ref or load_prompt_reference(
+        "request_understanding.identify_work_relations", resolved_manifest_path
+    )
+    if (
+        confirmation_response is not None
+        and prior_goal_candidate is not None
+        and request_reconsideration is None
+    ):
+        requested_work = prior_goal_candidate["requested_work"]
+    else:
+        with provider_dispatch_budget_scope(retry_budget):
+            requested_work = identify_requested_work(
+                llm_runtime=llm_runtime,
+                requested_mode=request.requested_mode,
+                prompt_ref=resolved_requested_work_prompt_ref,
+                user_request=request.request_text,
+                allow_whitespace_selector=(
+                    allow_whitespace_work_selector
+                    and confirmation_response is None
+                    and prior_goal_candidate is None
+                    and request_reconsideration is None
+                ),
+            )
+        retry_budget = merge_provider_dispatch_usage(retry_budget)
+    unit_ids = work_unit_ids(requested_work)
+    prompt_input = _prompt_input(
+        request=request,
+        requested_work=requested_work,
+        confirmation_response=confirmation_response,
+        request_reconsideration=request_reconsideration,
+    )
+    if (
+        confirmation_response is not None
+        and prior_goal_candidate is not None
+        and request_reconsideration is None
+    ):
+        return _resolve_confirmed_goal(
+            llm_runtime=llm_runtime,
+            request=request,
+            retry_budget=retry_budget,
+            prompt_ref=resolved_prompt_ref,
+            source_dependency_prompt_ref=resolved_source_dependency_prompt_ref,
+            prompt_input=prompt_input,
+            confirmation_response=confirmation_response,
+            prior_goal_candidate=prior_goal_candidate,
+            prior_ambiguity_candidate=prior_ambiguity_candidate,
+            source_dependency_candidates=source_dependency_candidates,
+            output_responsibility_candidates=output_responsibility_candidates,
+            work_unit_ids=unit_ids,
+        )
+    with provider_dispatch_budget_scope(retry_budget):
+        result = llm_runtime.infer(
+            request.requested_mode,
+            resolved_prompt_ref,
+            prompt_input,
+            identify_goal_output_schema(unit_ids),
+        )
+        goal_output = result.structured_output
+        effect_candidates = build_effect_prohibition_candidates(output_responsibility_candidates)
+        prohibition_output = identify_effect_prohibitions(
+            llm_runtime=llm_runtime,
+            requested_mode=request.requested_mode,
+            prompt_ref=resolved_effect_prohibition_prompt_ref,
+            prompt_input=prompt_input,
+            goal_candidate=goal_output,
+            effect_candidates=effect_candidates,
+            work_unit_ids=unit_ids,
+        )
+        source_output = identify_source_dependencies(
+            llm_runtime=llm_runtime,
+            requested_mode=request.requested_mode,
+            prompt_ref=resolved_source_dependency_prompt_ref,
+            prompt_input=prompt_input,
+            goal_candidate=project_extractive_source_goal(
+                goal_output,
+                request_text=request.request_text,
+            ),
+            source_candidates=source_dependency_candidates,
+            work_unit_ids=unit_ids,
+        )
+        try:
+            output_output = identify_output_responsibilities(
+                llm_runtime=llm_runtime,
+                requested_mode=request.requested_mode,
+                prompt_ref=resolved_output_responsibility_prompt_ref,
+                prompt_input=prompt_input,
+                goal_candidate=goal_output,
+                output_candidates=output_responsibility_candidates,
+                effect_prohibitions=prohibition_output,
+                work_unit_ids=unit_ids,
+            )
+        except ProhibitedOutputResponsibilityDecisionError as error:
+            signature = build_semantic_failure_signature_v1(
+                node_id="request.identify_goal",
+                failure_reason_codes=[error.reason_code],
+            )
+            decision = approve_semantic_revision(retry_budget, signature=signature)
+            if decision["decision"] == BudgetDecision.DENY.value:
+                raise
+            failure_record = build_failure_record_v1(
+                failure_reason_code=error.reason_code,
+                failure_origin="LLM_OUTPUT",
+                detected_by="RUNTIME_DOMAIN_VALIDATOR",
+                runtime_disposition="RETRYABLE",
+                experiment_disposition="RUN_REVISION",
+                affected_field_paths=list(error.affected_field_paths),
+                failure_context_ids=[str(error)],
+            )
+            output_output = identify_output_responsibilities(
+                llm_runtime=llm_runtime,
+                requested_mode=request.requested_mode,
+                prompt_ref=resolved_output_responsibility_prompt_ref,
+                prompt_input=prompt_input,
+                goal_candidate=goal_output,
+                output_candidates=output_responsibility_candidates,
+                effect_prohibitions=prohibition_output,
+                work_unit_ids=unit_ids,
+                candidate_output=error.candidate_output,
+                failure_record=failure_record,
+            )
+            retry_budget = decision["run_budget"]
+        source_goal = project_extractive_source_goal(
+            goal_output,
+            request_text=request.request_text,
+        )
+        try:
+            source_output = validate_source_dependency_semantics(
+                source_output,
+                goal_candidate=source_goal,
+                has_output_responsibilities=bool(
+                    output_output["output_responsibilities"]
+                ),
+            )
+        except SourceDependencyContradictionError as error:
+            signature = build_semantic_failure_signature_v1(
+                node_id="request.identify_goal",
+                failure_reason_codes=[error.reason_code],
+            )
+            decision = approve_semantic_revision(retry_budget, signature=signature)
+            if decision["decision"] == BudgetDecision.DENY.value:
+                raise
+            failure_record = build_failure_record_v1(
+                failure_reason_code=error.reason_code,
+                failure_origin="LLM_OUTPUT",
+                detected_by="RUNTIME_DOMAIN_VALIDATOR",
+                runtime_disposition="RETRYABLE",
+                experiment_disposition="RUN_REVISION",
+                affected_field_paths=list(error.affected_field_paths),
+                failure_context_ids=[str(error)],
+            )
+            source_output = identify_source_dependencies(
+                llm_runtime=llm_runtime,
+                requested_mode=request.requested_mode,
+                prompt_ref=resolved_source_dependency_prompt_ref,
+                prompt_input=prompt_input,
+                goal_candidate=source_goal,
+                source_candidates=source_dependency_candidates,
+                work_unit_ids=unit_ids,
+                candidate_output=error.candidate_output,
+                failure_record=failure_record,
+            )
+            source_output = validate_source_dependency_semantics(
+                source_output,
+                goal_candidate=source_goal,
+                has_output_responsibilities=bool(
+                    output_output["output_responsibilities"]
+                ),
+            )
+            retry_budget = decision["run_budget"]
+        responsibilities = merge_resource_responsibilities(
+            source_decisions=source_output,
+            output_decisions=output_output,
+            source_candidates=source_dependency_candidates,
+            output_candidates=output_responsibility_candidates,
+            request_text=request.request_text,
+        )
+        source_status_output = identify_source_status(
+            llm_runtime=llm_runtime,
+            requested_mode=request.requested_mode,
+            prompt_ref=resolved_source_status_prompt_ref,
+            prompt_input=prompt_input,
+            goal_candidate=goal_output,
+            responsibilities=responsibilities,
+        )
+        try:
+            candidate = _validated_candidate(
+                goal_output,
+                resource_responsibilities=responsibilities,
+                source_statuses=source_status_output,
+                request=request,
+                confirmation_response=confirmation_response,
+                effect_prohibitions=prohibition_output,
+                requested_work=requested_work,
+            )
+        except RequestGoalSemanticValidationError as error:
+            signature = build_semantic_failure_signature_v1(
+                node_id="request.identify_goal",
+                failure_reason_codes=[error.reason_code],
+            )
+            decision = approve_semantic_revision(retry_budget, signature=signature)
+            if decision["decision"] == BudgetDecision.DENY.value:
+                raise
+            failure_record = build_failure_record_v1(
+                failure_reason_code=error.reason_code,
+                failure_origin="LLM_OUTPUT",
+                detected_by="RUNTIME_DOMAIN_VALIDATOR",
+                runtime_disposition="RETRYABLE",
+                experiment_disposition="RUN_REVISION",
+                affected_field_paths=list(error.affected_field_paths),
+                failure_context_ids=[str(error)],
+            )
+            if error.reason_code == "REQUEST_EXISTING_RESOURCE_SOURCE_REQUIRED":
+                source_output = identify_source_dependencies(
+                    llm_runtime=llm_runtime,
+                    requested_mode=request.requested_mode,
+                    prompt_ref=resolved_source_dependency_prompt_ref,
+                    prompt_input=prompt_input,
+                    goal_candidate=project_extractive_source_goal(
+                        goal_output,
+                        request_text=request.request_text,
+                    ),
+                    source_candidates=source_dependency_candidates,
+                    work_unit_ids=unit_ids,
+                    candidate_output=source_output,
+                    failure_record=failure_record,
+                )
+                responsibilities = merge_resource_responsibilities(
+                    source_decisions=source_output,
+                    output_decisions=output_output,
+                    source_candidates=source_dependency_candidates,
+                    output_candidates=output_responsibility_candidates,
+                    request_text=request.request_text,
+                )
+                source_status_output = identify_source_status(
+                    llm_runtime=llm_runtime,
+                    requested_mode=request.requested_mode,
+                    prompt_ref=resolved_source_status_prompt_ref,
+                    prompt_input=prompt_input,
+                    goal_candidate=goal_output,
+                    responsibilities=responsibilities,
+                    candidate_output=source_status_output,
+                    failure_record=failure_record,
+                )
+                candidate = _validated_candidate(
+                    goal_output,
+                    resource_responsibilities=responsibilities,
+                    source_statuses=source_status_output,
+                    request=request,
+                    confirmation_response=confirmation_response,
+                    effect_prohibitions=prohibition_output,
+                    requested_work=requested_work,
+                )
+                retry_budget = decision["run_budget"]
+            elif error.reason_code != "REQUEST_STATUS_PROVENANCE_MISMATCH":
+                raise
+            else:
+                source_status_output = identify_source_status(
+                    llm_runtime=llm_runtime,
+                    requested_mode=request.requested_mode,
+                    prompt_ref=resolved_source_status_prompt_ref,
+                    prompt_input=prompt_input,
+                    goal_candidate=goal_output,
+                    responsibilities=responsibilities,
+                    candidate_output=source_status_output,
+                    failure_record=failure_record,
+                )
+                candidate = _validated_candidate(
+                    goal_output,
+                    resource_responsibilities=responsibilities,
+                    source_statuses=source_status_output,
+                    request=request,
+                    confirmation_response=confirmation_response,
+                    effect_prohibitions=prohibition_output,
+                    requested_work=requested_work,
+                )
+                retry_budget = decision["run_budget"]
+        relations = identify_work_relations(
+            llm_runtime=llm_runtime,
+            requested_mode=request.requested_mode,
+            prompt_ref=resolved_work_relation_prompt_ref,
+            user_request=request.request_text,
+            requested_work=requested_work,
+            constraints=candidate["constraints"],
+            source_responsibilities=candidate["resource_responsibilities"]["source_reads"],
+            output_responsibilities=candidate["resource_responsibilities"]["outputs"],
+        )
+        candidate["requested_work"] = {**requested_work, "work_relations": relations}
+        return candidate, merge_provider_dispatch_usage(retry_budget)
+
