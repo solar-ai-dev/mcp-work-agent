@@ -254,6 +254,18 @@ def test_compose_answer__confirmed_exact_calendar_event__bypasses_model_regenera
         }
         for evidence_id in ("e1", "e2")
     ]
+    snapshots = bind_task_calendar_snapshots(
+        cast(list[dict[str, object]], evidence),
+        {
+            evidence_id: {
+                "title": "프로젝트 검토 회의",
+                "start": "2026-08-18T10:00:00+09:00",
+                "end": "2026-08-18T11:00:00+09:00",
+                "timezone": "Asia/Seoul",
+            }
+            for evidence_id in ("e1", "e2")
+        },
+    )
 
     def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
         del prompt_id, prompt_input
@@ -265,6 +277,12 @@ def test_compose_answer__confirmed_exact_calendar_event__bypasses_model_regenera
             "requested_effect_hints": ["READ"],
             "requested_resource_hints": ["CALENDAR_EVENT"],
             "analysis_requirement": "NONE",
+            "resource_responsibilities": {
+                "source_reads": [
+                    {"resource_type": "CALENDAR_EVENT", "required_information": ["start", "end"]}
+                ],
+                "outputs": [],
+            },
             "constraints": [
                 {
                     "kind": "USER_REQUIREMENT",
@@ -282,6 +300,7 @@ def test_compose_answer__confirmed_exact_calendar_event__bypasses_model_regenera
         answer_outline={"sections": ["일정"], "evidence_refs": ["e1", "e2"]},
         work_analysis=None,
         evidence=evidence,
+        source_snapshots=snapshots,
         invoke=invoke,
         retrieval_result={
             "coverage": "SUFFICIENT",

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import NamedTuple
@@ -10,6 +9,9 @@ from typing import NamedTuple
 from google_work_agent.application.agents.planning.contracts.planning_semantics import (
     AnswerDraftCandidateV2,
     AnswerOutlineV1,
+)
+from google_work_agent.application.agents.retrieval.resolve_task_calendar_snapshot import (
+    resolve_unique_task_calendar_snapshots,
 )
 
 
@@ -24,6 +26,7 @@ def project_calendar_event_read_answer(
     request_intent: Mapping[str, object],
     evidence: Sequence[Mapping[str, object]],
     retrieval_result: Mapping[str, object] | None = None,
+    source_snapshots: Mapping[str, Mapping[str, object]] | None = None,
 ) -> CalendarEventReadAnswerProjection | None:
     """Render one exact event's start and end without model regeneration."""
     if (
@@ -31,7 +34,7 @@ def project_calendar_event_read_answer(
         or set(_strings(request_intent.get("requested_effect_hints"))) != {"READ"}
         or set(_strings(request_intent.get("requested_resource_hints")))
         != {"CALENDAR_EVENT"}
-        or not _asks_for_schedule(user_request)
+        or not _supports_requested_information(request_intent)
     ):
         return None
 
@@ -66,17 +69,19 @@ def project_calendar_event_read_answer(
     if len(matching) != 1 and not allow_equivalent_duplicates:
         return None
 
-    parsed: list[tuple[tuple[str, datetime, datetime, str], str]] = []
-    for item in matching:
-        fields = _event_fields(item)
-        evidence_ref = _evidence_ref(item)
-        if fields is None or evidence_ref is None:
-            return None
-        parsed.append((fields, evidence_ref))
-    if len({fields for fields, _evidence_ref_value in parsed}) != 1:
+    observations = resolve_unique_task_calendar_snapshots(matching, source_snapshots)
+    if observations is None or len(observations) != 1:
         return None
-    fields = parsed[0][0]
-    evidence_refs = list(dict.fromkeys(evidence_ref for _fields, evidence_ref in parsed))
+    fields = _event_fields(observations[0][1])
+    if fields is None:
+        return None
+    evidence_refs: list[str] = []
+    for item in matching:
+        evidence_ref = _evidence_ref(item)
+        if evidence_ref is None:
+            return None
+        if evidence_ref not in evidence_refs:
+            evidence_refs.append(evidence_ref)
     title, start, end, timezone_name = fields
     korean = any("\uac00" <= character <= "\ud7a3" for character in user_request)
     answer = (
@@ -128,37 +133,51 @@ def _confirmed_retrieval_resource_ref(
     return source_resource_refs[0]
 
 
-def _asks_for_schedule(user_request: str) -> bool:
-    normalized = user_request.casefold()
-    if any(token in normalized for token in ("언제", "몇 시", "시간", "날짜")):
-        return True
-    return re.search(r"\b(when|what time|date|schedule)\b", normalized) is not None
+def _supports_requested_information(request_intent: Mapping[str, object]) -> bool:
+    responsibilities = request_intent.get("resource_responsibilities")
+    if not isinstance(responsibilities, Mapping):
+        return False
+    sources = _mappings(responsibilities.get("source_reads"))
+    if not sources or any(source.get("resource_type") != "CALENDAR_EVENT" for source in sources):
+        return False
+    required_information = {
+        item for source in sources for item in _strings(source.get("required_information"))
+    }
+    for constraint in _mappings(request_intent.get("constraints")):
+        if (
+            constraint.get("kind") == "USER_REQUIREMENT"
+            and constraint.get("field") == "required_information"
+        ):
+            value = constraint.get("value")
+            required_information.update([value] if isinstance(value, str) else _strings(value))
+    return {"start", "end"}.issubset(required_information) and required_information.issubset(
+        {"title", "start", "end", "timezone"}
+    )
 
 
 def _event_fields(
-    item: Mapping[str, object],
+    fields: Mapping[str, str | None],
 ) -> tuple[str, datetime, datetime, str] | None:
-    excerpt = item.get("excerpt")
-    if not isinstance(excerpt, str):
-        return None
-    fields = {
-        key.strip(): value.strip()
-        for line in excerpt.splitlines()
-        for key, separator, value in (line.partition(":"),)
-        if separator and key.strip() in {"title", "start", "end", "timezone"}
-    }
-    title = fields.get("title", "").strip()
-    timezone_name = fields.get("timezone", "").strip()
-    if not title or not timezone_name:
+    title = fields.get("title")
+    timezone_name = fields.get("timezone")
+    start_value, end_value = fields.get("start"), fields.get("end")
+    if (
+        not isinstance(title, str)
+        or not title.strip()
+        or not isinstance(timezone_name, str)
+        or not timezone_name.strip()
+        or not isinstance(start_value, str)
+        or not isinstance(end_value, str)
+    ):
         return None
     try:
-        start = datetime.fromisoformat(fields["start"].replace("Z", "+00:00"))
-        end = datetime.fromisoformat(fields["end"].replace("Z", "+00:00"))
-    except (KeyError, ValueError):
+        start = datetime.fromisoformat(start_value.replace("Z", "+00:00"))
+        end = datetime.fromisoformat(end_value.replace("Z", "+00:00"))
+    except ValueError:
         return None
     if start.tzinfo is None or end.tzinfo is None or end <= start:
         return None
-    return title, start, end, timezone_name
+    return title.strip(), start, end, timezone_name.strip()
 
 
 def _render_korean(title: str, start: datetime, end: datetime, timezone_name: str) -> str:
