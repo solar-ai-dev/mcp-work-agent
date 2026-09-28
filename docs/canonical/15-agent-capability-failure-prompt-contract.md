@@ -951,6 +951,15 @@ Answer validator를 통과해야 한다. 누락·잘못된 field 선택은 의�
 정상 미발견으로 처리하지 않는다. 이 후보는 Source/Effect 판단, 일반 답변 전체, 자동
 eligibility/fallback 또는 Product Prompt activation을 변경하지 않는다.
 
+같은 owner의 별도 비활성 출력 선택 후보는 한 호출에 closed discriminator로
+`FACT_REFERENCES` 또는 `PROSE` 중 하나만 반환할 수 있다. 전자는 위 선택 pair만,
+후자는 기존 AnswerDraftCandidate와 outline의 citation 범위를 사용한다. 각 branch에
+다른 branch의 필드나 임의 상태·권한은 허용하지 않는다. 유효한 fact catalog가 없으면
+prose 표현만 허용하며, catalog가 있더라도 prose를 금지하지 않는다. 표현 선택의
+정확도는 요청 의미로 평가하고 mode 자체를 정답으로 강제하지 않는다. 선택 실패·빈 선택·
+stale ref를 자동 재호출/다른 branch 전환으로 숨기지 않는다. 새 Node·Product State·
+Provider 호출·승인 authority를 만들지 않으며 실제 활성화는 별도 gate를 따른다.
+
 Source 판단의 개발 구조 비교는 기존 요청 원문·선택 identity·WorkUnit binding을 보존한
 채 출력 표현, Source/Output 역할 조립, provider 입력 envelope를 분리 비교할 수 있다.
 확정 의미의 결정적 handoff와 실제 consumer 계약 검증을 포함하며, 출력 형식 통과를

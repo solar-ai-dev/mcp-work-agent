@@ -1523,6 +1523,13 @@ class WorkAnalysisStateV2:
 자동 분류·fallback·새 LLM 호출은 추가하지 않으며, 고정된 evaluation lookup 입력 밖에는
 적용하지 않는다. Product ANSWER·Review·Approval 계약과 checkpoint는 그대로 유지한다.
 
+별도 비활성 출력 선택 후보는 같은 compose 호출에서 위 사실 참조 또는 기존 prose
+Draft 중 하나를 선택할 수 있다. Source snapshot의 표현 가능한 필드 존재는 참조 분기의
+구조 조건이지 직접 조회 업무라는 의미 판정이 아니다. 모델이 요청에 맞는 표현을 고르며
+두 결과 모두 기존 compose validation·부분 범위 표시를 거친다. 잘못 고른 분기를 다른
+분기나 추가 호출로 자동 구제하지 않는다. 요약/분석을 원문 인용으로 대체하는 누락도
+의미 실패로 관측한다. 이 실험은 자동 Product 적용이나 기존 ANSWER caller 교체가 아니다.
+
 Planning 진입 시 Tool Route는 이미 확정되어 있다.
 
 | 현재 입력 | 적용 책임 |

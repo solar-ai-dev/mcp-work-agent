@@ -619,6 +619,12 @@ Product의 기존 snapshot 비노출 계약은 유지하고 후보 input/활성�
 snapshot 무결성 실패는 객체를 제외한다. 이를 일반 요약·분석·부분 조회의 대체 계약으로
 적용하거나 Product snapshot 공개 범위를 변경하지 않는다.
 
+비활성 compose 출력 선택 비교에서는 동일한 필드 선택지와 기존 prose 답변을 대안으로
+제공할 수 있다. snapshot 선택지가 있다는 이유로 업무를 직접 조회로 분류하지 않는다.
+필드 참조를 선택한 경우에만 위 resolver/renderer 계약을 적용하며, prose 선택에 snapshot
+원문을 추가하거나 두 답변을 합쳐 누락을 보정하지 않는다. typed Evidence/coverage와
+기존 부분 범위 고지는 양쪽에서 유지한다.
+
 `excluded_segment_ids`는 Retrieval의 selection 결과다. Browser가 직접 수정하지 않으며 사용자 제외·추가 검색은 기존 `run.adjust_context → ContextAdjustmentV1`을 통해 같은 Run의 Retrieval에만 전달한다. Browser·Agent의 Main State/Evidence row 직접 변경은 금지한다. 사용자 제외의 수명은 §4.2를 따른다.
 
 ### 5.8 `retrieval.assess_sufficiency`
