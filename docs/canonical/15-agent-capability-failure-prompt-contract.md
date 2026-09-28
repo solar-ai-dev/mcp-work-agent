@@ -921,6 +921,13 @@ schema / JSON 문법만 제약 / 생략 중 사전 고정한 한 후보를 비�
 유지하고 양쪽 결과를 같은 기존 schema/owner validator로 검증한다. invalid JSON이나
 의미 오류를 성공으로 덮지 않으며, 이 진단은 Product runtime·Prompt activation을 바꾸지 않는다.
 
+같은 Output 응답의 비활성 transport-admission 후보는 응답 전체가 lowercase `json`
+태그의 단일 Markdown fence인 경우에만 외곽 fence를 제거한 뒤 기존 JSON/schema/owner
+검증을 적용할 수 있다. 바깥 ASCII 공백 외 설명, no-tag/다른 언어, 다중·중첩·잘린 fence,
+복수 JSON 문서의 부분 추출은 허용하지 않는다. 원 raw·기존 strict 실패를 그대로 보존하고
+새 admission 결과를 별도 기록한다. 이는 의미 수정·repair가 아니며 Product parser의 허용
+범위나 Prompt/State를 변경하지 않는다. 구조 수용과 업무 의미 성공은 구분한다.
+
 Work selector의 Product admission 범위는 0.3의 일반 계약을 따른다. 기존 EVALUATION
 raw와 codec-only 결과는 Work binding 증거이며, 후보·의미 성공·Prompt release activation을
 자동 승격하지 않는다.

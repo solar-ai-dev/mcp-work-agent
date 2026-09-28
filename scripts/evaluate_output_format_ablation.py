@@ -11,7 +11,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import time
+from collections import Counter
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import asdict
@@ -365,6 +367,128 @@ def validate_response(content: object, case: dict[str, Any]) -> dict[str, Any]:
     return {"structural_result": "VALIDATED", "validated_output": validated}
 
 
+def unwrap_single_json_fence(content: str) -> str:
+    """Admit exactly one lowercase json fence, not arbitrary JSON extraction."""
+    match = re.fullmatch(r"```json\r?\n(?P<body>[\s\S]*?)\r?\n```", content.strip(" \t\r\n"))
+    if match is None or "```" in match["body"]:
+        raise ValueError("response is not a single complete json-tagged fence")
+    return match["body"]
+
+
+def validate_fenced_response(content: object, case: dict[str, Any]) -> dict[str, Any]:
+    """Separate the original strict result from the evaluation-only admission."""
+    strict = validate_response(content, case)
+    result: dict[str, Any] = {
+        "strict_validation": strict,
+        "candidate_validation": deepcopy(strict),
+        "admission": "STRICT_JSON_UNCHANGED",
+        "raw_content": content,
+        "semantic_verdict": "UNREVIEWED",
+        "business_success": "NOT_EVALUATED",
+        "model_calls": 0,
+    }
+    if strict["structural_result"] != "INVALID_JSON" or not isinstance(content, str):
+        return result
+    try:
+        body = unwrap_single_json_fence(content)
+    except ValueError as error:
+        result.update(admission="FENCE_REJECTED", admission_error=str(error))
+        return result
+    result.update(
+        admission="SINGLE_JSON_FENCE_UNWRAPPED",
+        candidate_content_sha256=hashlib.sha256(body.encode()).hexdigest(),
+        candidate_validation=validate_response(body, case),
+    )
+    return result
+
+
+def regrade_fenced_raw(paths: list[Path]) -> dict[str, Any]:
+    """Revalidate actual candidate FIRSTs without catalog/Graph/model/Provider calls."""
+    if not paths:
+        raise ValueError("at least one registered source raw is required")
+    rows, sources = [], []
+    seen: set[Path] = set()
+    for path in paths:
+        path = path.resolve()
+        if path in seen:
+            raise ValueError("same source raw cannot be counted twice")
+        seen.add(path)
+        original_bytes = path.read_bytes()
+        digest = hashlib.sha256(original_bytes).hexdigest()
+        raw = json.loads(original_bytes)
+        binding = raw["binding"]
+        if (
+            not raw["completed"]
+            or binding["kind"] != "FROZEN_OUTPUT_FIRST_FORMAT_ONLY_OWNER_DIAGNOSTIC"
+        ):
+            raise ValueError("completed registered format-owner diagnostic required")
+        for source_path, expected_hash in binding["source_hashes"].items():
+            if source_path.startswith("src/") and file_hash(ROOT / source_path) != expected_hash:
+                raise ValueError("historical Product schema/Prompt/validator dependency changed")
+        cases = {case["case_id"]: case for case in binding["cases"]}
+        if set(cases) != {case_id for case_id, _ in SOURCES}:
+            raise ValueError("revalidation is limited to the fixed three Output inputs")
+        source_rows = []
+        for index, row in enumerate(raw["results"]):
+            if row["arm"] not in {"format_omitted", "format_json"}:
+                continue
+            case = cases[row["case_id"]]
+            if (
+                reconstruct_payload(case["source_call"]) != case["payload"]
+                or row["wire_sha256"] != object_hash(payload_for(case, row["arm"]))
+                or row["input_sha256"] != case["source_call"]["input_sha256"]
+                or row["state"] != "RETURNED"
+                or row["wire_request_count"] != 1
+                or row["schema_repairs"] != 0
+                or row["http_retries"] != 0
+            ):
+                raise ValueError("record is not the registered returned single FIRST")
+            result = validate_fenced_response(row["content"], case)
+            if result["strict_validation"] != row["validation"]:
+                raise ValueError("original strict validation changed; do not overwrite history")
+            source_rows.append(
+                {
+                    "source_path": path.as_posix(),
+                    "source_sha256": digest,
+                    "source_head_sha": binding["head_sha"],
+                    "source_record_index": index,
+                    "source_row_sha256": object_hash(row),
+                    "case_id": row["case_id"],
+                    "arm": row["arm"],
+                    "new_call": False,
+                    "historical_validation": deepcopy(row["validation"]),
+                    **result,
+                }
+            )
+        if len(source_rows) != 3 or len({row["case_id"] for row in source_rows}) != 3:
+            raise ValueError("exactly three candidate FIRSTs required from each source raw")
+        if path.read_bytes() != original_bytes:
+            raise ValueError("source raw changed during revalidation")
+        rows.extend(source_rows)
+        sources.append({"path": path.as_posix(), "sha256": digest})
+    return {
+        "schema_version": 1,
+        "kind": "OFFLINE_SINGLE_JSON_FENCE_ADMISSION_REVALIDATION",
+        "head_sha": head(),
+        "runner_sha256": file_hash(Path(__file__)),
+        "sources": sources,
+        "rows": rows,
+        "model_calls": 0,
+        "provider_calls": 0,
+        "raw_files_changed": 0,
+        "semantic_verdict": "UNREVIEWED",
+        "summary": {
+            "reused_observations": len(rows),
+            "new_calls": 0,
+            "strict": dict(Counter(row["strict_validation"]["structural_result"] for row in rows)),
+            "candidate": dict(
+                Counter(row["candidate_validation"]["structural_result"] for row in rows)
+            ),
+            "admission": dict(Counter(row["admission"] for row in rows)),
+        },
+    }
+
+
 def run_arm(
     case: dict[str, Any],
     arm: str,
@@ -513,10 +637,19 @@ def main() -> None:
     parser.add_argument("--expected-plan-sha256")
     parser.add_argument("--candidate-mode", choices=tuple(CANDIDATE_ARMS), default="omitted")
     parser.add_argument("--reuse-baseline-raw", type=Path, default=BASELINE_RAW)
+    parser.add_argument("--regrade-fenced-raw", type=Path, action="append")
     args = parser.parse_args()
     output = args.result_dir.resolve()
     if not output.is_relative_to(RESULTS.resolve()) or output == RESULTS.resolve():
         raise ValueError("dedicated evaluation/results directory required")
+    if args.regrade_fenced_raw:
+        if args.execute_plan is not None or args.expected_plan_sha256 is not None:
+            raise ValueError("offline revalidation cannot be combined with model execution")
+        report = regrade_fenced_raw(args.regrade_fenced_raw)
+        path = output / "fence-revalidation.json"
+        write_json(path, report, exclusive=True)
+        print(json.dumps({"path": str(path), **report["summary"]}))
+        return
     current = make_plan(
         inspect_model(transport.OllamaHTTPClient()),
         candidate_mode=args.candidate_mode,

@@ -362,7 +362,7 @@ def _write_baseline(plan: dict[str, Any], path: Path) -> None:
                 "input_sha256": case["source_call"]["input_sha256"],
                 "wire_options": case["payload"]["options"],
                 "wire_think": case["payload"]["think"],
-                "format_present": entry["arm"] == "schema_constrained",
+                "format_present": "format" in runner.payload_for(case, entry["arm"]),
                 "schema_repairs": 0,
                 "http_retries": 0,
                 "input_tokens": 100,
@@ -373,7 +373,9 @@ def _write_baseline(plan: dict[str, Any], path: Path) -> None:
                 "semantic_verdict": "UNREVIEWED",
             }
         )
-    _dump(path, {"binding": plan, "results": rows, "completed": True, "actual_http_calls": 6})
+    _dump(
+        path, {"binding": plan, "results": rows, "completed": True, "actual_http_calls": len(rows)}
+    )
 
 
 @pytest.fixture
@@ -508,3 +510,138 @@ def test_json_mode_cannot_reintroduce_three_new_baseline_calls(
     plan["execution_order"].append({"case_id": "CASE-CORE-005", "arm": "schema_constrained"})
     with pytest.raises(ValueError, match="mode-bound"):
         runner.execute_plan(plan, tmp_path / "extra", plan_sha256=runner.object_hash(plan))
+
+
+@pytest.mark.parametrize(
+    "prefix,suffix", [("```json\n", "\n```"), (" \t```json\r\n", "\r\n```\r\n")]
+)
+def test_single_json_fence_keeps_raw_strict_failure_and_uses_same_owner(
+    frozen: tuple[Path, dict[str, Any]],
+    prefix: str,
+    suffix: str,
+) -> None:
+    root, model = frozen
+    case = runner.make_plan(model, source_root=root)["cases"][0]
+    body = '  {"output_responsibilities":[]}  '
+    content = prefix + body + suffix
+    assert runner.unwrap_single_json_fence(content) == body
+    result = runner.validate_fenced_response(content, case)
+    assert result["raw_content"] == content
+    assert result["strict_validation"]["structural_result"] == "INVALID_JSON"
+    assert result["candidate_validation"] == runner.validate_response(body, case)
+    assert result["candidate_validation"]["structural_result"] == "VALIDATED"
+    assert result["admission"] == "SINGLE_JSON_FENCE_UNWRAPPED"
+    assert result["semantic_verdict"] == "UNREVIEWED" and result["model_calls"] == 0
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "Here is JSON:\n```json\n{}\n```",
+        "```json\n{}\n```\nExplanation.",
+        "```\n{}\n```",
+        "```JSON\n{}\n```",
+        "```javascript\n{}\n```",
+        "```json \n{}\n```",
+        "```json\n{}\n``",
+        "```json\n{}",
+        "```json\n{}\n```\n```json\n{}\n```",
+        "```json\n```json\n{}\n```\n```",
+        '```json\n{"text":"```"}\n```',
+        "```json {} ```",
+        "\ufeff```json\n{}\n```",
+    ],
+)
+def test_fence_admission_rejects_prose_multiple_nested_truncated_and_other_tags(
+    frozen: tuple[Path, dict[str, Any]],
+    content: str,
+) -> None:
+    root, model = frozen
+    case = runner.make_plan(model, source_root=root)["cases"][0]
+    with pytest.raises(ValueError, match="single complete"):
+        runner.unwrap_single_json_fence(content)
+    result = runner.validate_fenced_response(content, case)
+    assert result["admission"] == "FENCE_REJECTED"
+    assert result["candidate_validation"] == result["strict_validation"]
+
+
+@pytest.mark.parametrize(
+    "body,status",
+    [
+        ('{"output_responsibilities":[]}\n{"output_responsibilities":[]}', "INVALID_JSON"),
+        ('{"output_responsibilities": [', "INVALID_JSON"),
+        ('{"output_responsibilities":[{"resource_type":"TASK"}]}', "INVALID_SCHEMA"),
+        (
+            '{"output_responsibilities":[{"resource_type":"TASK","effect":"CREATE",'
+            '"work_unit_ids":["work-1"]}]}',
+            "OWNER_REJECTED",
+        ),
+    ],
+)
+def test_unwrapped_duplicate_json_schema_and_prohibition_failures_are_not_repaired(
+    frozen: tuple[Path, dict[str, Any]],
+    body: str,
+    status: str,
+) -> None:
+    root, model = frozen
+    case = runner.make_plan(model, source_root=root)["cases"][0]
+    result = runner.validate_fenced_response(f"```json\n{body}\n```", case)
+    assert result["candidate_validation"]["structural_result"] == status
+    assert result["strict_validation"]["structural_result"] == "INVALID_JSON"
+    assert result["model_calls"] == 0 and result["semantic_verdict"] == "UNREVIEWED"
+
+
+def test_plain_json_controls_are_identical_and_no_extraction_is_attempted(
+    frozen: tuple[Path, dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, model = frozen
+    case = runner.make_plan(model, source_root=root)["cases"][0]
+
+    def forbidden(_content: str) -> str:
+        raise AssertionError("strict-valid JSON must remain unchanged")
+
+    monkeypatch.setattr(runner, "unwrap_single_json_fence", forbidden)
+    for content in ('{"output_responsibilities":[]}', '{"invalid":true}'):
+        result = runner.validate_fenced_response(content, case)
+        assert result["candidate_validation"] == result["strict_validation"]
+        assert result["admission"] == "STRICT_JSON_UNCHANGED"
+
+
+def test_offline_raw_regrade_preserves_original_failures_and_skips_reused_rows(
+    frozen: tuple[Path, dict[str, Any]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, model = frozen
+    old_plan = runner.make_plan(model, source_root=root)
+    old_path = tmp_path / "omitted.json"
+    _write_baseline(old_plan, old_path)
+    old = json.loads(old_path.read_text(encoding="utf-8"))
+    for row in old["results"]:
+        if row["arm"] == "format_omitted":
+            row["content"] = f"```json\n{row['content']}\n```"
+            case = next(case for case in old_plan["cases"] if case["case_id"] == row["case_id"])
+            row["validation"] = runner.validate_response(row["content"], case)
+    runner.write_json(old_path, old)
+    new_plan = runner.make_plan(
+        model, source_root=root, candidate_mode="json", baseline_raw=old_path
+    )
+    new_path = tmp_path / "json-mode.json"
+    _write_baseline(new_plan, new_path)
+    before = [runner.file_hash(path) for path in (old_path, new_path)]
+
+    def forbidden(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("offline revalidation must not inspect or call the model")
+
+    monkeypatch.setattr(runner, "inspect_model", forbidden)
+    monkeypatch.setattr(runner.transport, "_post_json", forbidden)
+    report = runner.regrade_fenced_raw([old_path, new_path])
+    assert report["summary"]["strict"] == {"INVALID_JSON": 3, "VALIDATED": 3}
+    assert report["summary"]["candidate"] == {"VALIDATED": 6}
+    assert report["summary"]["reused_observations"] == 6
+    assert all(row["historical_validation"] == row["strict_validation"] for row in report["rows"])
+    assert report["model_calls"] == report["provider_calls"] == 0
+    assert before == [runner.file_hash(path) for path in (old_path, new_path)]
+    with pytest.raises(ValueError, match="counted twice"):
+        runner.regrade_fenced_raw([old_path, old_path])
