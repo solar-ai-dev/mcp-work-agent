@@ -681,6 +681,11 @@ Schema Repair에서 stable identity 배열의 중복·누락·식별 불가 항�
 항목의 의미를 다시 생성할 권한을 주지 않는다. 모순된 중복값을 deterministic하게 선택하지
 않으며, 기존 Validator가 지정한 수정 범위와 최종 Schema 검증을 함께 유지한다.
 
+`oneOf`의 선언된 const discriminator로 한 branch가 유일하게 확정된 경우, repair의
+실패 범위는 그 branch의 실제 field 오류다. 이를 감싸는 aggregate oneOf 실패만으로
+정상인 sibling 배열의 추가·삭제 권한까지 열지 않는다. branch 자체가 미확정이거나
+복수 branch가 유효하면 기존 union 오류를 유지하며, validator가 의미상 branch를 고르지 않는다.
+
 ## 8. Retry Decision Contract
 
 ```yaml
@@ -959,6 +964,15 @@ prose 표현만 허용하며, catalog가 있더라도 prose를 금지하지 않�
 정확도는 요청 의미로 평가하고 mode 자체를 정답으로 강제하지 않는다. 선택 실패·빈 선택·
 stale ref를 자동 재호출/다른 branch 전환으로 숨기지 않는다. 새 Node·Product State·
 Provider 호출·승인 authority를 만들지 않으며 실제 활성화는 별도 gate를 따른다.
+
+해당 후보를 실제 추론 router에 연결할 때는 Product registry의 closed slot/activation
+검사를 변경하지 않고 별도 EVALUATION resolver에 정확한 source hash·입력/출력 버전과
+PromptRef를 등록한다. 입력은 기존 compose 계약으로 검증하며 invocation의 입력과
+일치해야 한다. 공통 `assemble_prompt`와 기존 bounded repair envelope를 사용한다.
+직접 transport 진단과 공통 assembly의 system 문자열이 다르면 새로운 조건으로 기록하고
+이전 응답을 동일 wire의 새 실행처럼 재사용하지 않는다. 미지원 catalog와 기존 semantic
+revision은 기존 Product PromptRef/schema/assembly를 그대로 보존한다. 출력 union의
+discriminator property 순서는 실제 전송 bytes와 함께 봉인하며 유효값을 확대하지 않는다.
 
 Source 판단의 개발 구조 비교는 기존 요청 원문·선택 identity·WorkUnit binding을 보존한
 채 출력 표현, Source/Output 역할 조립, provider 입력 envelope를 분리 비교할 수 있다.

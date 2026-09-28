@@ -8,6 +8,8 @@ Audit) -- these tests lock in the corrected behavior.
 
 from __future__ import annotations
 
+import pytest
+
 from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
 
 
@@ -34,7 +36,6 @@ def test_discriminated_union__selected_variant__reports_only_its_fields() -> Non
          "properties": {"kind": {"const": "PERSON"}, "identity": {"type": "string"}}},
     ]}
     assert validate_output_schema({"kind": "TIME", "start": 42}, schema) == [
-        "$ must match exactly one schema in oneOf (matched 0)",
         "$.start must be string",
     ]
     assert validate_output_schema({"kind": "TIME", "start": "2026-09-01"}, schema) == []
@@ -47,6 +48,81 @@ def test_overlapping_union__ambiguous_variant__remains_invalid() -> None:
     branch = {"properties": {"kind": {"const": "TIME"}}}
     assert validate_output_schema({"kind": "TIME"}, {"oneOf": [branch, branch]}) == [
         "$ must match exactly one schema in oneOf (matched 2)",
+    ]
+
+
+@pytest.mark.parametrize("value", [{}, {"kind": "UNKNOWN"}, "TIME"])
+def test_discriminated_union__no_declared_variant__retains_union_error(
+    value: object,
+) -> None:
+    schema = {
+        "oneOf": [
+            {
+                "type": "object",
+                "required": ["kind", "start"],
+                "properties": {
+                    "kind": {"const": "TIME"},
+                    "start": {"type": "string"},
+                },
+            },
+            {"type": "null"},
+        ]
+    }
+    assert validate_output_schema(value, schema) == [
+        "$ must match exactly one schema in oneOf (matched 0)",
+    ]
+
+
+def test_discriminated_union__multiple_declared_invalid_variants__retains_union_error() -> None:
+    branch = {
+        "type": "object",
+        "required": ["kind", "start"],
+        "properties": {"kind": {"const": "TIME"}, "start": {"type": "string"}},
+    }
+    assert validate_output_schema(
+        {"kind": "TIME", "start": 42}, {"oneOf": [branch, branch]}
+    ) == ["$ must match exactly one schema in oneOf (matched 0)"]
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ({"kind": "TIME", "start": 42}, "$.payload.start must be string"),
+        ({"kind": "TIME"}, "$.payload.start is required"),
+        ({"kind": "UNKNOWN"}, "$.payload must match exactly one schema in oneOf (matched 0)"),
+        ([], "$.payload must match exactly one schema in oneOf (matched 0)"),
+    ],
+)
+def test_nested_union__invalid_nested_payload__retains_precise_structural_error(
+    payload: object, expected: str,
+) -> None:
+    schema = {
+        "oneOf": [
+            {
+                "type": "object",
+                "required": ["kind", "payload"],
+                "properties": {
+                    "kind": {"const": "ENVELOPE"},
+                    "payload": {
+                        "oneOf": [
+                            {
+                                "type": "object",
+                                "required": ["kind", "start"],
+                                "properties": {
+                                    "kind": {"const": "TIME"},
+                                    "start": {"type": "string"},
+                                },
+                            },
+                            {"type": "null"},
+                        ],
+                    },
+                },
+            },
+            {"type": "null"},
+        ],
+    }
+    assert validate_output_schema({"kind": "ENVELOPE", "payload": payload}, schema) == [
+        expected,
     ]
 
 

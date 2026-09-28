@@ -7,9 +7,13 @@ import pytest
 from google_work_agent.adapters.llm.runtime.schema_repair_scope import (
     find_out_of_scope_schema_repair_changes,
 )
+from google_work_agent.adapters.llm.runtime.structured_inference_router import (
+    _validation_error_paths,
+)
 from google_work_agent.application.agents.request_understanding import (
     identify_source_dependencies,
 )
+from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
 
 
 def _source_schema() -> dict[str, object]:
@@ -467,3 +471,101 @@ def test_identified_array__still_rejects_unrequired_new_identity() -> None:
         affected_field_paths=["$.source_dependencies"],
         output_schema=_source_schema(),
     ) == ("$.source_dependencies",)
+
+
+def _answer_union_schema(*, nested: bool, minimum_citations: int = 0) -> dict[str, object]:
+    union: dict[str, object] = {
+        "oneOf": [
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["kind", "body", "citations"],
+                "properties": {
+                    "kind": {"const": "ANSWER"},
+                    "body": {"type": "string"},
+                    "citations": {
+                        "type": "array",
+                        "items": {"enum": ["e1", "e2"]},
+                        "minItems": minimum_citations,
+                        "maxItems": 2,
+                    },
+                },
+            },
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["kind", "reason"],
+                "properties": {"kind": {"const": "DEFER"}, "reason": {"type": "string"}},
+            },
+        ],
+    }
+    return (
+        {"type": "object", "required": ["result"], "properties": {"result": union}}
+        if nested
+        else union
+    )
+
+
+def _answer_union_value(
+    *, nested: bool, body: object, citations: list[str],
+) -> dict[str, object]:
+    value: dict[str, object] = {"kind": "ANSWER", "body": body, "citations": citations}
+    return {"result": value} if nested else value
+
+
+@pytest.mark.parametrize("nested", [False, True], ids=["top", "nested"])
+@pytest.mark.parametrize("citations", [[], ["e1", "e2"]], ids=["deletion", "addition"])
+def test_union_field_repair__unrelated_citation_membership_change__is_rejected(
+    nested: bool, citations: list[str],
+) -> None:
+    schema = _answer_union_schema(nested=nested)
+    failed = _answer_union_value(nested=nested, body=42, citations=["e1"])
+    repaired = _answer_union_value(nested=nested, body="answer", citations=citations)
+    prefix = "$.result" if nested else "$"
+    # Use the actual validator-to-router handoff, not a manually narrowed scope.
+    errors = validate_output_schema(failed, schema)
+    assert errors == [f"{prefix}.body must be string"]
+    assert validate_output_schema(repaired, schema) == []
+    assert find_out_of_scope_schema_repair_changes(
+        failed_output=failed,
+        repaired_output=repaired,
+        affected_field_paths=_validation_error_paths(errors),
+        output_schema=schema,
+    ) == (f"{prefix}.citations",)
+
+
+@pytest.mark.parametrize("nested", [False, True], ids=["top", "nested"])
+def test_union_field_repair__unaffected_citations_preserved__is_allowed(nested: bool) -> None:
+    schema = _answer_union_schema(nested=nested)
+    failed = _answer_union_value(nested=nested, body=42, citations=["e1"])
+    repaired = _answer_union_value(nested=nested, body="answer", citations=["e1"])
+    assert validate_output_schema(repaired, schema) == []
+    assert find_out_of_scope_schema_repair_changes(
+        failed_output=failed,
+        repaired_output=repaired,
+        affected_field_paths=_validation_error_paths(validate_output_schema(failed, schema)),
+        output_schema=schema,
+    ) == ()
+
+
+@pytest.mark.parametrize("nested", [False, True], ids=["top", "nested"])
+@pytest.mark.parametrize(
+    "citations", [[], ["e1", "e2", "e1"]], ids=["missing", "excess"],
+)
+def test_union_membership_repair__actual_citation_cardinality_error__is_allowed(
+    nested: bool, citations: list[str],
+) -> None:
+    schema = _answer_union_schema(nested=nested, minimum_citations=1)
+    failed = _answer_union_value(nested=nested, body="answer", citations=citations)
+    repaired = _answer_union_value(nested=nested, body="answer", citations=["e1"])
+    prefix = "$.result" if nested else "$"
+    errors = validate_output_schema(failed, schema)
+    assert errors
+    assert _validation_error_paths(errors) == (f"{prefix}.citations",)
+    assert validate_output_schema(repaired, schema) == []
+    assert find_out_of_scope_schema_repair_changes(
+        failed_output=failed,
+        repaired_output=repaired,
+        affected_field_paths=_validation_error_paths(errors),
+        output_schema=schema,
+    ) == ()

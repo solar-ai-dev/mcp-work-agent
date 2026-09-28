@@ -107,8 +107,6 @@ def _validate_one_of(
         if isinstance(subschema, Mapping)
     ]
     matches = sum(not failures for _, failures in branch_errors)
-    if matches != 1:
-        errors.append(f"{path} must match exactly one schema in oneOf (matched {matches})")
     if matches == 0:
         # Preserve the declared variant's field errors for the single repair
         # attempt. Other variants' required fields would suggest changing the
@@ -119,7 +117,13 @@ def _validate_one_of(
             if _matches_declared_variant(value, subschema)
         ]
         if len(selected) == 1:
+            # The enclosing oneOf failure is only an aggregate diagnostic here.
+            # Reporting its parent path would grant repair authority over valid
+            # sibling arrays, even though the declared variant is unambiguous.
             errors.extend(selected[0])
+            return
+    if matches != 1:
+        errors.append(f"{path} must match exactly one schema in oneOf (matched {matches})")
 
 
 def _matches_declared_variant(value: object, schema: Mapping[str, object]) -> bool:
