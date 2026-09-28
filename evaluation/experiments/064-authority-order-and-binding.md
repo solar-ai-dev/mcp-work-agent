@@ -700,3 +700,63 @@ Core001/013/023은 `064-source-paired-baseline-v22-t1/raw.json`의 실제 첫 So
 실제 기존 Source sampler0.05/seed20260923/ctx16384/thinkfalse/180s와 모델 digest를 결속한다.
 구조 검증과 정보·범위·업무 귀속·Source 누락/과선택·금지 보존은 별도로 검토한다.
 새 runner18+prototype19=37 PASS; 모델 실행 전의 준비 결과이며 Product activation0이다.
+
+### v28 실제 owner 결과 — 표현 개선과 Source 의미 실패를 분리
+
+실행 HEAD `7e75e8170e6ff61641b050acb32041287407cbdb`, 계획 hash
+`ae9a3caf8a4be92ae0d2f594a3286687f89b29a53164a93f75e2112f985fd70c`로
+Core3의 기존 baseline4 attempts와 합성2의 신규 baseline, 후보5를 비교했다.
+신규 FIRST7회는 모두 첫 schema를 통과했고 새 repair0, semantic revision0이다.
+후보의5/5 구조 통과를 의미5/5나 업무5/5로 표시하지 않는다.
+
+| 입력 | baseline FIRST / 기존 repair | v28 FIRST와 최초 차이 | 의미 판정 범위 |
+| --- | --- | --- | --- |
+| CORE001 선택 메일, 다른 메일 검색 금지 | Thread SINGULAR/work-1 | 같은 Thread에 Message(sender/body) SINGULAR/work-1 추가 | 메일 내용 근거 요구 유지. 선택 Thread의 Message를 읽는 대안일 수 있어 Resource 수 증가만으로 실패 아님. 실제 selected-only Route/Query 준수는 미실행 |
+| CORE013 작업·슬롯 → 새 Draft | FIRST부터 Task/Event와 잘못된 기존 Draft READ가 있음. Task/TaskList 중복과 Freebusy/Issue 누락으로 schema 실패; 과거 repair는 전부 NOT_REQUIRED로 소실 | Task/Event는 그대로 있고 기존 Draft READ 오판도 유지. GitHub Issue READ까지 새로 추가 | 필요한 Task/Event를 새로 찾아낸 성공이 아님. 최초 의미 오류는 Source owner의 새 Draft 목적을 기존 Draft 조회 요구로 해석한 부분. Issue 추가도 조회 범위 확대 위험이며 개선으로 계산하지 않음 |
+| CORE023 Kestrel 메일·대체 일정 Task → 점검 Event | Thread+Message+TaskList+Task+Event | Thread(message_history)+TaskList+Task+Event, Message 제외 | 메일과 Task 근거 요구는 유지. Thread/Message는 내용 획득의 대안이므로 Message 제거 자체로 누락 실패 아님. Task/Event의 실제 대상·시각 보존과 신규 Event 계획은 미검증 |
+| 합성 READ: 선택한 Thread 전체 내용 + 별도 결제 Thread 제목 목록 | work-1 SINGULAR만 생성, work-2 Source 누락 | Thread에 work-1 SINGULAR/내용과 work-2 CRITERIA/subject를 따로 생성. Message는 work-1에만 추가 | 두 업무의 정보·범위 binding이 최초 owner 출력부터 복원됨. work-2에 전체 본문을 교차 적용하지 않음 |
+| 합성 독립 Draft2: 선택 Thread 요약안 + 결제 Thread 제목 목록안 | work-1 SINGULAR만 생성, work-2 Source 누락 | 같은 Thread에 두 requirements를 SINGULAR/내용 및 CRITERIA/subject로 구별 | 정보·범위 binding 개선. 새 Draft를 기존 Draft Source로 오인하지 않았음. 이번 모델 진단은 Output owner/실제 Draft2 Planning 성공을 실행한 것은 아님 |
+
+합성2건은 양쪽 모두 금지한 Task/Calendar Source를 만들지 않았다. 단, 합성 READ 후보가
+work-1 Message에 sender/recipients/labels까지 넓은 fact 집합을 요청한 점은 비용·최소조회
+측면의 잔여 관찰이다. 이것을 다른 업무의 내용 유출과 동일시하지 않으며 실제 추가 READ
+횟수는 아직 측정하지 않았다. CORE001의 금지 문장을 work-2로 나눈 기존 upstream도
+고치지 않았다. 그 work-2에 Source가 없다는 사실만으로 금지 의미가 실제 소비됐다고
+판정하지 않는다.
+
+CORE013의 Task/Event는 **baseline FIRST에 이미 존재**했다. 현재 Product repair guard로
+과거 전부 NOT_REQUIRED repair를 재검사하면 unaffected Draft/Event 변경이 거절된다.
+이 guard의 개선은 이미 별도 Product 수정이며 requirements 후보의 성과가 아니다.
+v28이 이번 단발에서 중복/누락 없이 schema를 만들었다는 관측과, Source 의미의 오판을
+해결했다는 주장은 구분한다. 잘못된 Draft Source는 두 FIRST 모두 남았다.
+
+비용은 신규와 재사용을 분리한다.
+
+| 측정 구간 | calls | input / output tokens | reported latency |
+| --- | ---: | ---: | ---: |
+| 합성2 baseline 신규 | 2 | 8,436 / 333 | 16,566ms |
+| 합성2 v28 신규 | 2 | 8,602 / 417 | 19,606ms |
+| Core3 v28 신규 | 3 | 12,275 / 763 | 38,480ms |
+| 이번 신규 전체 | 7 | 29,313 / 1,513 | 74,652ms |
+| Core3 baseline 과거 재사용(FIRST3+repair1) | 4 | 16,721 / 837 | 39,194ms |
+
+동일한 합성 입력2건의 후보 비용은 +166 input/+84 output tokens, +3,040ms였다.
+Core3의 과거4회와 후보3회의 시간 차이는 repair 유무와 실행 시점이 섞여 있으므로
+전체 제품 지연 개선으로 일반화하지 않는다. 모든 신규 usage 관측 누락0이다.
+9B digest `6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7`,
+실제 Source temperature0.05/seed20260923/ctx16384/thinkfalse/timeout180이다.
+과거 baseline 상위 metadata의 temperature0.0과 달리 실제 transport는0.05였으며
+이번 비교는 그 실제 값에 맞췄다. 각 Case의 원래 owner reference time도 그대로 유지했다.
+
+**판단: requirements 표현은 유력한 구조 후보로 유지하되 Production 미채택.** 합성2건에서
+막혀 있던 서로 다른 정보·scope의 WorkUnit binding을 실제9B가 표현한 근거가 생겼다.
+반면 Source 선택 정확도의 수평 개선, 실제 upstream 분해, 반복 안정성은 입증되지 않았다.
+특히 한 Route에 `selected SINGULAR + 다른 업무 CRITERIA`가 같이 있는 상태를 실제 Query가
+선택 identity 하나로 축소하지 않고 처리하는 연결은 이 모델 실험에서 검증하지 않았다.
+앞선 typed component의 shared Route/독립 Output 보존 결과와 이 미검증 구간을 섞지 않는다.
+후속 판단은 이 연결 경계의 검증과 잔여 Source 의미 오류 분리를 우선하며, 이번 결과만으로
+전체92 또는 Retrieval/Planning 이후의 성공률을 새로 산정하지 않는다.
+
+원본: `evaluation/results/064-source-requirements-owner5-v28-t1/raw.json`, SHA256
+`f255b29590a39d667503c652df1347015f5aff78c7177bba843583e6dae4a700`.
+원본 raw는 수정하지 않았다. rerun-to-pass0, Provider READ/WRITE0, Product activation0이다.
