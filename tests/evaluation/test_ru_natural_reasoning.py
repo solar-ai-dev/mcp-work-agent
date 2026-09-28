@@ -103,7 +103,9 @@ def history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     return {"original": original, "current": current, "raw": raw, "model": model}
 
 
-def test_plan__only_think_changes_and_historical_hashes_stay_bound(history: dict[str, Any]) -> None:
+def test_plan__thinking_enabled__changes_only_think_and_preserves_hashes(
+    history: dict[str, Any],
+) -> None:
     before = deepcopy(history)
     plan = runner.make_plan(history["model"])
     assert tuple(c["case_id"] for c in plan["cases"]) == runner.CASE_IDS
@@ -128,7 +130,7 @@ def test_plan__only_think_changes_and_historical_hashes_stay_bound(history: dict
 @pytest.mark.parametrize(
     "field", ["hash", "model", "product", "wire", "input", "duplicate", "incomplete"]
 )
-def test_authority_drift__fails_before_generation(
+def test_prepare__authority_drift__fails_before_generation(
     history: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
     field: str,
@@ -168,7 +170,7 @@ def _response() -> dict[str, Any]:
     }
 
 
-def test_three_firsts__reuse_recorder_and_keep_hidden_reasoning_out(
+def test_execute__three_fixed_firsts__reuses_recorder_without_hidden_reasoning(
     history: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -200,7 +202,7 @@ def test_three_firsts__reuse_recorder_and_keep_hidden_reasoning_out(
 
 
 @pytest.mark.parametrize("failure", ["timeout", "wrong_model", "incomplete", "empty"])
-def test_circuit__uncertain_completion_stops_remaining_cases(
+def test_circuit__uncertain_completion__stops_remaining_cases(
     history: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
     failure: str,
@@ -227,7 +229,7 @@ def test_circuit__uncertain_completion_stops_remaining_cases(
     )
 
 
-def test_end_binding_drift__retains_responses_but_fails_gate(
+def test_execute__end_binding_drift__retains_responses_but_fails_gate(
     history: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

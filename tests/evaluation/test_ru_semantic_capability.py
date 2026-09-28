@@ -132,7 +132,7 @@ def history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     return {"raw": raw, "binding": binding, "model": model, "payloads": payloads}
 
 
-def test_projection__exact_input_and_runtime_without_product_or_gold(
+def test_projection__frozen_source_input__preserves_runtime_without_product_or_gold(
     history: dict[str, Any],
 ) -> None:
     before = deepcopy(history)
@@ -161,7 +161,7 @@ def test_projection__exact_input_and_runtime_without_product_or_gold(
 
 
 @pytest.mark.parametrize("change", ["raw_hash", "input", "runtime", "duplicate", "dataset"])
-def test_prepare_drift__rejects_without_generation(
+def test_prepare__authority_drift__rejects_without_generation(
     history: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
     change: str,
@@ -197,7 +197,7 @@ def _response() -> dict[str, Any]:
     }
 
 
-def test_five_firsts__sequential_recording_no_retry_and_no_hidden_thinking(
+def test_execute__five_fixed_firsts__records_sequentially_without_retry_or_hidden_thinking(
     history: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -235,7 +235,7 @@ def test_five_firsts__sequential_recording_no_retry_and_no_hidden_thinking(
 @pytest.mark.parametrize(
     "failure", ["timeout", "transport", "interrupted", "empty", "wrong_model", "incomplete"]
 )
-def test_original_failures__retained_without_replacement(
+def test_execute__original_failures__retains_without_replacement(
     history: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
     failure: str,
@@ -280,7 +280,7 @@ def test_original_failures__retained_without_replacement(
         runner.execute_plan(plan, runner.RESULTS / "rerun", plan_sha256=runner.object_hash(plan))
 
 
-def test_seal_and_end_drift__cannot_dispatch_or_leave_success(
+def test_execute__seal_or_end_drift__rejects_dispatch_or_success(
     history: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
