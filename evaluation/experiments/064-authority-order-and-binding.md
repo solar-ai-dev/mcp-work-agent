@@ -760,3 +760,24 @@ Core3의 과거4회와 후보3회의 시간 차이는 repair 유무와 실행 �
 원본: `evaluation/results/064-source-requirements-owner5-v28-t1/raw.json`, SHA256
 `f255b29590a39d667503c652df1347015f5aff78c7177bba843583e6dae4a700`.
 원본 raw는 수정하지 않았다. rerun-to-pass0, Provider READ/WRITE0, Product activation0이다.
+
+## Sufficiency의 frozen Route 업무 귀속 전달 복구
+
+서로 다른 업무가 공유하는 메일 Route와 별도 Task Route의 `work_unit_ids`가
+`source_statuses_prompt_projection`에서 제거됐다. 실제 Sufficiency 입력에는 별도의
+ToolRoutePlan이 없으므로 consumer가 RequestIntent 원문에서 귀속을 재해석해야 했다.
+직접 actual owner fake probe 1 FAIL로 이 손실을 확인했다. 원래 frozen ID만 전달하고
+현재 WorkUnit closed set 밖의 ID는 모델 호출 전에 거절하도록 수정했다. legacy 입력에
+없는 ID를 발명하지 않으며 조회 성공·부분·실패·미조회 모두 같은 binding을 유지한다.
+
+신규 controls13 PASS. 관련 Retrieval/compiled/Prompt 확장 첫 실행은825 PASS/2 FAIL이었다.
+두 FAIL은 Sufficiency 이전 Query에서 발생했고, V3 temporal/detail fixture에 추가된
+TIME/DATE/business_concepts 세 제약에 WorkUnit binding이 없었다. 기존 work-1만 명시하고
+Product guard와 원래 SEARCH/detail/counter assertions를 유지한 뒤827/827 PASS였다.
+Prompt input2→3, Prompt1.0.8 및 hash/Canonical05를 정합화했다. 새 판단 규칙·LLM 호출·
+State/Node/Edge·Approval 변경은 없으며 DRAFT activation gate를 유지한다.
+
+이번 확인은 typed handoff/component 검증이다. Retrieval의 Evidence-by-Work fan-out은
+해당 Route에서 접근 가능한 Evidence를 전달하는 계약이며, 모든 Evidence가 모든 업무의
+정답이라는 의미는 아니다. 직접 Evidence 오귀속은 이번 조사로 확정하지 않았고 실제
+모델의 업무별 관련성 판단·최종 답변 정확도는 미검증이다. 모델/Provider 호출0이다.

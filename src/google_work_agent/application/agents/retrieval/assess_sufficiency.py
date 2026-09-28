@@ -594,6 +594,11 @@ def assess_sufficiency(
         "source_statuses": source_statuses_prompt_projection(
             tool_route_plan=tool_route_plan,
             acquisition_result=acquisition_result,
+            known_work_unit_ids=(
+                [unit["unit_id"] for unit in request_intent["requested_work"]["work_units"]]
+                if "requested_work" in request_intent
+                else None
+            ),
         ),
         "budget_state": budget_state_prompt_projection(retry_budget),
         "temporal_constraints": project_query_temporal_constraints(query_attempts),
@@ -1233,8 +1238,9 @@ def source_statuses_prompt_projection(
     *,
     tool_route_plan: ToolRoutePlanV2 | None,
     acquisition_result: AcquisitionResultV1,
+    known_work_unit_ids: Collection[str] | None = None,
 ) -> list[dict[str, object]]:
-    """retrieval-sufficiency-input-v1.schema.json ``source_statuses``: one
+    """Sufficiency input v3 ``source_statuses``: one
     entry per frozen input_route (docs/05 SS4/CTX-002 Tool Route owns
     route_id), COMPLETE/PARTIAL/FAILED/NOT_ATTEMPTED joined from
     AcquisitionResultV1.source_summaries -- never the raw Provider/MCP
@@ -1249,6 +1255,21 @@ def source_statuses_prompt_projection(
     )
     projections: list[dict[str, object]] = []
     for route in routes:
+        work_binding: dict[str, object] = {}
+        if "work_unit_ids" in route:
+            work_ids = route["work_unit_ids"]
+            if (
+                not isinstance(work_ids, list)
+                or not work_ids
+                or not all(isinstance(unit_id, str) and unit_id for unit_id in work_ids)
+                or len(work_ids) != len(set(work_ids))
+            ):
+                raise RetrievalValidationError(
+                    "source route requires unique non-empty WorkUnit IDs"
+                )
+            if known_work_unit_ids is not None and not set(work_ids).issubset(known_work_unit_ids):
+                raise RetrievalValidationError("source route references an unknown WorkUnit ID")
+            work_binding["work_unit_ids"] = list(work_ids)
         resource_type = coarse_resource_category(route["resource_type"])
         summaries = _route_summaries(route, routes, acquisition_result)
         if not summaries:
@@ -1278,6 +1299,7 @@ def source_statuses_prompt_projection(
         projections.append(
             {
                 "route_id": route["route_id"],
+                **work_binding,
                 "resource_type": resource_type,
                 "status": status,
                 "failure_kind": failure_kind,

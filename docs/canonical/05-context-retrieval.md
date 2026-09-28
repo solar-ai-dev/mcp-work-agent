@@ -579,6 +579,11 @@ class EvidenceSelectionResultV2:
 ### 5.8 `retrieval.assess_sufficiency`
 
 입력은 `request_intent + selected evidence`다. 조회 진행·coverage는 같은 Run의 제한된 read-result summary로 확인한다.
+Sufficiency 입력 v3의 `source_statuses`는 frozen Route의 `route_id`와 적용
+`work_unit_ids`를 성공·실패·미조회 상태와 함께 그대로 전달한다. 현재 RequestIntent의
+WorkUnit closed set 밖의 ID는 모델 호출 전에 거절하며, binding이 없는 이전 입력에서
+업무 ID를 새로 추정하지 않는다. 이 연결은 해당 업무에 제공되는 조회 범위이지 각
+Evidence가 모든 업무의 정답을 뒷받침한다는 판단이 아니다.
 `is_metadata_only=true` Gmail 검색 preview가 내용 기반 업무 근거(`SUPPORTS`)로 선택됐다면 READ 답변뿐 아니라 그 근거를 사용하는 후속 Action에서도 현재 Run의 같은 후보에 대한 bounded `DETAIL_FETCH` 전에는 `SUFFICIENT`로 확정하지 않는다. 제목·송신자 등 metadata 자체가 요청 대상인 수집 답변은 기존 예외를 유지한다. 이 검사는 새 Source를 선택하거나 모든 business Route의 조회를 강제하지 않는다.
 동일 frozen InputPlan 안에 Google Route가 여러 개여도 Gmail detail Need는 기존 `GMAIL_THREAD` Route ID에 결합한다. Source가 유일하지 않은 미결합 Google Need를 임의 Route로 보내지 않는다.
 

@@ -141,7 +141,7 @@
     {
       "prompt_slot_id": "retrieval.assess_sufficiency",
       "runtime_node_id": "retrieval.assess_sufficiency",
-      "input_schema_version": 2,
+      "input_schema_version": 3,
       "required_root_fields": ["request_intent", "selected_evidence", "source_statuses", "budget_state", "temporal_constraints"],
       "optional_root_fields": ["confirmation_response", "read_result_summaries"],
       "output_schema_version": 1

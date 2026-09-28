@@ -1796,6 +1796,7 @@ def test_github_issue_insufficiency__with_frozen_route__uses_connector() -> None
     assert source_statuses == [
         {
             "route_id": "route-github",
+            "work_unit_ids": ["work-1"],
             "resource_type": "ISSUE",
             "status": "COMPLETE",
             "failure_kind": None,

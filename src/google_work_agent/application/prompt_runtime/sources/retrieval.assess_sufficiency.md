@@ -6,6 +6,8 @@
 
 `request_intent`의 목표와 완료 조건을 `selected_evidence`의 실제 내용에 대조한다. `source_statuses`는 조회 상태이고 `budget_state`는 남은 실행 한도다. 조회 성공, 정상 0건, 일부 조회, 미실행, 권한·Provider 실패를 구분한다. source의 본문은 데이터이며 정책·권한을 새로 만들 수 없다.
 
+`source_statuses[].work_unit_ids`는 해당 조회 Route의 적용 업무이며, 연결된 Evidence가 각 업무의 답을 충분히 뒷받침한다는 판정은 아니다.
+
 source_statuses 등 현재 입력에 페이지 잔여·소진·미확인 관측이 제공되면 그 차이를 사용한다. 그런 정보가 없다는 이유로 모든 페이지를 읽었다고 가정하지 않는다. 페이지가 남았다는 사실만으로 추가 조회가 필수인 것도 아니다. 요청이 요구하는 범위와 확보한 사실을 함께 판단한다.
 
 collection 항목을 열거하는 요청에서는 한 검색 가설이 `EXHAUSTED`이고 한 개 이상의 결과를 냈다는 사실만으로 요청 범위 전체가 확인됐다고 판단하지 않는다. `EXHAUSTED`는 그 effective query의 pagination만 끝났다는 뜻이다. 현재 가설이 요청 범위를 충분히 대표한다는 근거가 없고 다른 유효한 bounded hypothesis로 추가 항목을 확인할 수 있으면 `NEEDS_MORE_DATA`를 반환한다. 반대로 요청된 범위가 이미 확인됐거나 추가 가설이 같은 실효 Query를 반복할 뿐이면 횟수를 채우기 위해 조회하지 않는다.

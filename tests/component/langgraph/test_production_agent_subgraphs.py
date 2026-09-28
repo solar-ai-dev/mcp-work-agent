@@ -2420,6 +2420,8 @@ def test_retrieval__three_details__preserve_one_search_round(date_rich: bool) ->
     constraints.append(
         {"kind": "USER_REQUIREMENT", "field": "business_concepts", "value": ["일정"]}
     )
+    for constraint in constraints:
+        constraint["work_unit_ids"] = ["work-1"]
     state["retry_budget"]["started_at_ms"] = run_start
     state["request_intent"] = cast(Any, intent)
     routes = _answer_route_plan(with_input_route=True)

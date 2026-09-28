@@ -85,6 +85,7 @@ def test_source_status_contract__active_output_schema__matches_runtime_binding()
 
 def test_sufficiency_contract__matches_the__live_typed_projection() -> None:
     contract = load_prompt_input_contract()
+    assert contract.entry("retrieval.assess_sufficiency").input_schema_version == 3
 
     contract.validate_projection(
         "retrieval.assess_sufficiency",
