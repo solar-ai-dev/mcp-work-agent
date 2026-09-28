@@ -162,6 +162,18 @@ def test_fence_waits_for_real_drain_even_after_exception() -> None:
     assert executor.calls == ["shutdown", "drain", "drain", "drain"]
 
 
+def test_final_observation_runs_only_after_worker_drain() -> None:
+    executor = FakeExecutor()
+    container = SimpleNamespace(
+        schedule_run_execution=SimpleNamespace(_workflow_execution=executor)
+    )
+    with runner.drain_before_guard_release(
+        container, on_drained=lambda: executor.calls.append("observe-final")
+    ):
+        assert executor.calls == []
+    assert executor.calls == ["shutdown", "drain", "drain", "drain", "observe-final"]
+
+
 def test_plan_is_fixed_and_detects_contract_changes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(runner, "_head", lambda: "a" * 40)
     monkeypatch.setattr(runner, "_tree_hash", lambda _path: "b" * 64)
@@ -176,6 +188,26 @@ def test_plan_is_fixed_and_detects_contract_changes(monkeypatch: pytest.MonkeyPa
     plan["bounds"]["provider_dispatch_attempts"] = 21
     with pytest.raises(ValueError, match="bounds"):
         runner.validate_plan(plan)
+
+
+def test_candidate_and_all_implementation_inputs_are_preregistered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(runner, "_head", lambda: "a" * 40)
+    monkeypatch.setattr(runner, "_tree_hash", lambda _path: "b" * 64)
+    monkeypatch.setattr(runner, "file_hash", lambda _path: "c" * 64)
+    plan = runner.build_plan("d" * 64, candidate=runner.CANDIDATE)
+    runner.validate_plan(plan)
+    assert plan["runtime"]["joint_authority_temperature"] == 0.0
+    assert plan["runtime"]["temperature_override"] is None
+    assert "scripts/production_goal_output_candidate.py" in plan["dependency_sha256"]
+    assert "evaluation/request_semantic_authority_candidate.py" in plan["dependency_sha256"]
+    assert any("modality" in path for path in plan["dependency_sha256"])
+    plan["candidate"] = None
+    with pytest.raises(ValueError, match="mismatch"):
+        runner.validate_plan(plan)
+    with pytest.raises(ValueError, match="unregistered"):
+        runner.build_plan("d" * 64, candidate="unknown")
 
 
 @dataclass
@@ -299,6 +331,8 @@ def test_trial_collects_snapshot_without_approving_or_resuming(
     assert report["provider_write_count"] == report["provider_write_attempts"] == 0
     assert report["metrics"]["actual_wire_calls"] == 0
     assert report["read_results"] == boundary.read_results
+    assert report["drained_snapshot"]["status"] == status
+    assert report["drained_persisted_run"] is None
     assert report["selection_preflight"]["validated_container_refs"] == {
         "persisted-ref": [selected["parent_id"]]
     }
@@ -343,11 +377,14 @@ def test_actual_settings_scope_and_signed_selection_pass_before_scheduling() -> 
         assert settings.default_tasklist_id == scope["selected_tasklist_ids"][0]
         assert settings.default_calendar_id is None
         scheduled: list[object] = []
+
+        def accept_schedule(command: object) -> Any:
+            scheduled.append(command)
+            return SimpleNamespace(accepted=True)
+
         prepared_container = replace(
             container,
-            schedule_run_execution=lambda command: (
-                scheduled.append(command) or SimpleNamespace(accepted=True)
-            ),
+            schedule_run_execution=accept_schedule,
         )
         report: dict[str, Any] = {}
         result = runner.start_case(
@@ -359,7 +396,8 @@ def test_actual_settings_scope_and_signed_selection_pass_before_scheduling() -> 
             scope["selected_tasklist_ids"]
         ]
         assert boundary.resources == original_resources
-        assert boundary.read_results == boundary.provider.write_calls == []
+        assert boundary.read_results == []
+        assert boundary.provider.write_calls == []
         wrong_account = replace(container, current_account_id_provider=lambda: "different-account")
         with pytest.raises(runner.SnapshotProvisioningError, match="account"):
             runner.verify_prepared_scope(wrong_account, scope)
@@ -388,7 +426,8 @@ def test_admitted_parent_mismatch_fails_before_any_schedule() -> None:
     )
     with pytest.raises(runner.SnapshotProvisioningError, match="identity"):
         runner.preflight_admitted_selection(container, fixture, "run", scope)
-    assert fixture.read_results == fixture.provider.write_calls == []
+    assert fixture.read_results == []
+    assert fixture.provider.write_calls == []
 
 
 def test_unregistered_scope_is_environment_error_before_model_or_run(
@@ -418,7 +457,8 @@ def test_unregistered_scope_is_environment_error_before_model_or_run(
     assert report["run_id"] is None
     assert report["metrics"]["actual_wire_calls"] == 0
     assert report["metrics"]["provider_dispatch_attempts"] == 0
-    assert boundary.read_results == boundary.provider.write_calls == []
+    assert boundary.read_results == []
+    assert boundary.provider.write_calls == []
 
 
 def test_external_deadline_terminates_only_trial_child_and_duplicate_trial_is_rejected(

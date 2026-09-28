@@ -16,7 +16,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import asdict, is_dataclass
@@ -78,6 +78,7 @@ MODEL_ID: Final = "qwen3.5:9b"
 SEED = 20260923
 CALL_CAP = 20
 WALL_SECONDS = 600
+CANDIDATE = "goal-output-v4-connected"
 STOP_STATUSES = frozenset(
     {
         "COMPLETED",
@@ -225,15 +226,19 @@ def _tree_hash(path: Path) -> str:
     return object_hash({str(p.relative_to(PROJECT_ROOT).as_posix()): file_hash(p) for p in files})
 
 
-def build_plan(model_digest: str, *, trial_id: str | None = None) -> dict[str, Any]:
+def build_plan(
+    model_digest: str, *, trial_id: str | None = None, candidate: str | None = None
+) -> dict[str, Any]:
     """Read-only preregistration helper: no catalog, Provider, or model call."""
     normalized_digest = model_digest.removeprefix("sha256:")
     if len(normalized_digest) != 64 or any(c not in "0123456789abcdef" for c in normalized_digest):
         raise ValueError("actual model SHA-256 digest required")
     identifier = str(UUID(trial_id)) if trial_id is not None else str(uuid4())
+    if candidate not in {None, CANDIDATE}:
+        raise ValueError("unregistered connected candidate")
     case = load_case(CASE_ID)
     manifest = default_prompt_manifest_path()
-    dependencies = (
+    dependencies: tuple[Path, ...] = (
         Path(__file__),
         PROJECT_ROOT / "scripts/production_snapshot_runtime.py",
         PROJECT_ROOT / "scripts/ru_observation.py",
@@ -243,9 +248,18 @@ def build_plan(model_digest: str, *, trial_id: str | None = None) -> dict[str, A
         manifest,
         manifest.parent / "prompt_runtime_input_contract_v1.json",
     )
+    if candidate is not None:
+        from evaluation.request_semantic_authority_candidate import GOAL_OUTPUT_MODALITY_PROMPT_PATH
+
+        dependencies += (
+            PROJECT_ROOT / "scripts/production_goal_output_candidate.py",
+            PROJECT_ROOT / "evaluation/request_semantic_authority_candidate.py",
+            GOAL_OUTPUT_MODALITY_PROMPT_PATH,
+        )
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "kind": "PRODUCTION_SNAPSHOT_SINGLE_TRIAL",
+        "candidate": candidate,
         "trial_id": identifier,
         "case_id": CASE_ID,
         "trials": 1,
@@ -269,6 +283,7 @@ def build_plan(model_digest: str, *, trial_id: str | None = None) -> dict[str, A
             "requested_mode": "LOCAL_GPU",
             "seed": SEED,
             "temperature_override": None,
+            "joint_authority_temperature": 0.0 if candidate else None,
             "reference_time": None,
             "fault_profile": None,
         },
@@ -283,7 +298,9 @@ def build_plan(model_digest: str, *, trial_id: str | None = None) -> dict[str, A
 
 
 def validate_plan(plan: Mapping[str, Any]) -> None:
-    expected = build_plan(plan["model"]["digest"], trial_id=plan["trial_id"])
+    expected = build_plan(
+        plan["model"]["digest"], trial_id=plan["trial_id"], candidate=plan.get("candidate")
+    )
     if dict(plan) != expected:
         differing = sorted(
             key for key in set(plan) | set(expected) if plan.get(key) != expected.get(key)
@@ -444,7 +461,9 @@ class TrialObservation:
 
 
 @contextmanager
-def drain_before_guard_release(container: Any) -> Iterator[None]:
+def drain_before_guard_release(
+    container: Any, *, on_drained: Callable[[], None] | None = None
+) -> Iterator[None]:
     """Keep process-global isolation until the actual Product worker is idle.
 
     Only the external parent deadline may end this wait; it terminates the
@@ -457,6 +476,43 @@ def drain_before_guard_release(container: Any) -> Iterator[None]:
         executor.begin_shutdown()
         while not executor.await_drained(100):
             pass
+        if on_drained is not None:
+            on_drained()
+
+
+@contextmanager
+def candidate_scope(
+    candidate: str | None, observation: TrialObservation, events: list[dict[str, object]]
+) -> Iterator[Callable[[Any], Any]]:
+    if candidate is None:
+        yield observation.decorate
+        return
+    if candidate != CANDIDATE:
+        raise ValueError("unregistered connected candidate")
+    from scripts.production_goal_output_candidate import (
+        decorate_goal_output_provider,
+        goal_output_node_candidate,
+    )
+
+    with goal_output_node_candidate(
+        tool_catalog=composition.load_development_tool_registry(),
+        model_id=MODEL_ID,
+        sampling_seed=SEED,
+        observations=events,
+    ):
+        yield lambda provider: observation.decorate(decorate_goal_output_provider(provider))
+
+
+def capture_drained_run(container: Any, report: dict[str, Any]) -> None:
+    """Observe terminalization while the isolated runtime and its guard are still alive."""
+    run_id = report.get("run_id")
+    if run_id is None:
+        return
+    snapshot = container.get_run_snapshot_handler(GetRunSnapshotQuery(run_id))
+    report["drained_snapshot"] = None if snapshot is None else asdict(snapshot)
+    with container.read_unit_of_work_factory() as uow:
+        run = uow.runs.get(run_id)
+        report["drained_persisted_run"] = None if run is None else asdict(run)
 
 
 def start_case(
@@ -533,6 +589,7 @@ def start_case(
 def run_trial(plan: dict[str, Any], output: Path) -> None:
     """Child entry; callers must validate/claim the preregistered trial first."""
     observation = TrialObservation(output)
+    candidate_events: list[dict[str, object]] = []
     report: dict[str, Any] = {
         "schema_version": 1,
         "plan": plan,
@@ -543,19 +600,23 @@ def run_trial(plan: dict[str, Any], output: Path) -> None:
         "rerun_to_pass": 0,
         "provider_write_count": None,
         "approval_resume_count": 0,
+        "candidate_events": candidate_events,
     }
     try:
         validate_plan(plan)
         with (
             observation.wire_observer(),
+            candidate_scope(plan.get("candidate"), observation, candidate_events) as decorate,
             snapshot_production_runtime(
                 output / "runtime",
                 case_id=CASE_ID,
                 allow_loopback_model=True,
                 sampling_seed=SEED,
-                llm_provider_decorator=observation.decorate,
+                llm_provider_decorator=decorate,
             ) as (container, boundary),
-            drain_before_guard_release(container),
+            drain_before_guard_release(
+                container, on_drained=lambda: capture_drained_run(container, report)
+            ),
         ):
             case = load_case(CASE_ID)
             scope = selected_task_scope(case, boundary.resources)
