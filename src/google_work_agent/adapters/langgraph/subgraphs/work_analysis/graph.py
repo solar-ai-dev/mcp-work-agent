@@ -295,6 +295,7 @@ class WorkAnalysisSubgraph:
         confirmation_response = self._confirmation_response(state)
         if confirmation_response is not None:
             working["confirmation_response"] = confirmation_response
+        calls_before = working["retry_budget"]["llm_calls_used"]
         ensure_llm_call_budget(working)
         patch = extract_work_facts_node(
             cast(Any, working),
@@ -336,8 +337,7 @@ class WorkAnalysisSubgraph:
                     self._prompt_refs["extract_work_facts"],
                     first,
                     llm_call_increment=(
-                        patch["retry_budget"]["llm_calls_used"]
-                        - working["retry_budget"]["llm_calls_used"]
+                        patch["retry_budget"]["llm_calls_used"] - calls_before
                     ),
                 ),
             },
@@ -359,6 +359,7 @@ class WorkAnalysisSubgraph:
     def _resolve_entity_relations_node(
         self, state: WorkAnalysisLocalState
     ) -> WorkAnalysisLocalState:
+        calls_before = state["retry_budget"]["llm_calls_used"]
         ensure_llm_call_budget(state)
         patch = resolve_entity_relations_node(
             cast(Any, state),
@@ -367,13 +368,16 @@ class WorkAnalysisSubgraph:
             requested_mode=request_from_state(state).requested_mode,
             confirmation_response=self._confirmation_response(state),
         )
+        budget = consume_llm_call_budget(state)
         return cast(
             WorkAnalysisLocalState,
             {
                 **patch,
-                "retry_budget": consume_llm_call_budget(state),
+                "retry_budget": budget,
                 "trace_context": self._trace(
-                    state, "resolve_entity_relations", self._prompt_refs["resolve_entity_relations"]
+                    state, "resolve_entity_relations",
+                    self._prompt_refs["resolve_entity_relations"],
+                    llm_call_increment=budget["llm_calls_used"] - calls_before,
                 ),
             },
         )
@@ -381,6 +385,7 @@ class WorkAnalysisSubgraph:
     def _resolve_temporal_dependencies_node(
         self, state: WorkAnalysisLocalState
     ) -> WorkAnalysisLocalState:
+        calls_before = state["retry_budget"]["llm_calls_used"]
         ensure_llm_call_budget(state)
         patch = resolve_temporal_dependencies_node(
             cast(Any, state),
@@ -389,15 +394,17 @@ class WorkAnalysisSubgraph:
             requested_mode=request_from_state(state).requested_mode,
             confirmation_response=self._confirmation_response(state),
         )
+        budget = consume_llm_call_budget(state)
         return cast(
             WorkAnalysisLocalState,
             {
                 **patch,
-                "retry_budget": consume_llm_call_budget(state),
+                "retry_budget": budget,
                 "trace_context": self._trace(
                     state,
                     "resolve_temporal_dependencies",
                     self._prompt_refs["resolve_temporal_dependencies"],
+                    llm_call_increment=budget["llm_calls_used"] - calls_before,
                 ),
             },
         )
@@ -405,6 +412,7 @@ class WorkAnalysisSubgraph:
     def _detect_duplicate_conflict_candidates_node(
         self, state: WorkAnalysisLocalState
     ) -> WorkAnalysisLocalState:
+        calls_before = state["retry_budget"]["llm_calls_used"]
         llm_required = duplicate_candidates.duplicate_conflict_candidate_llm_required(
             state.get("fact_candidates", []),
             task_duplicate_review_required=project_task_duplicate_review_requirement(state),
@@ -433,8 +441,7 @@ class WorkAnalysisSubgraph:
                         else None
                     ),
                     llm_call_increment=(
-                        patch["retry_budget"]["llm_calls_used"]
-                        - state["retry_budget"]["llm_calls_used"]
+                        patch["retry_budget"]["llm_calls_used"] - calls_before
                     ),
                 ),
             },
@@ -454,6 +461,7 @@ class WorkAnalysisSubgraph:
         confirmation_response = self._confirmation_response(state)
         if confirmation_response is not None:
             working["confirmation_response"] = confirmation_response
+        calls_before = working["retry_budget"]["llm_calls_used"]
         ensure_llm_call_budget(working)
         patch = assess_information_gaps_node(
             cast(Any, working),
@@ -481,15 +489,17 @@ class WorkAnalysisSubgraph:
                     ],
                 )
             )
+        budget = consume_llm_call_budget(working)
         return cast(
             WorkAnalysisLocalState,
             {
                 **patch,
-                "retry_budget": consume_llm_call_budget(working),
+                "retry_budget": budget,
                 "trace_context": self._trace(
                     state,
                     "assess_information_gaps",
                     self._prompt_refs["assess_information_gaps"],
+                    llm_call_increment=budget["llm_calls_used"] - calls_before,
                 ),
             },
         )
@@ -498,6 +508,7 @@ class WorkAnalysisSubgraph:
     def _assess_action_necessity_node(
         self, state: WorkAnalysisLocalState
     ) -> WorkAnalysisLocalState:
+        calls_before = state["retry_budget"]["llm_calls_used"]
         plan = _require_state_value(state.get("tool_route_plan"), "tool_route_plan")
         output_plan = plan["output_plan"]
         routes = [] if output_plan["output_mode"] == "ANSWER" else output_plan["output_routes"]
@@ -520,17 +531,17 @@ class WorkAnalysisSubgraph:
             prompt_ref=self._prompt_refs["assess_action_necessity"],
             requested_mode=request_from_state(state).requested_mode,
         )
+        budget = consume_llm_call_budget(state) if llm_required else state["retry_budget"]
         return cast(
             WorkAnalysisLocalState,
             {
                 **patch,
-                "retry_budget": (
-                    consume_llm_call_budget(state) if llm_required else state["retry_budget"]
-                ),
+                "retry_budget": budget,
                 "trace_context": self._trace(
                     state,
                     "assess_action_necessity",
                     self._prompt_refs["assess_action_necessity"] if llm_required else None,
+                    llm_call_increment=budget["llm_calls_used"] - calls_before,
                 ),
             },
         )
@@ -538,6 +549,7 @@ class WorkAnalysisSubgraph:
     def _assess_operational_risks_node(
         self, state: WorkAnalysisLocalState
     ) -> WorkAnalysisLocalState:
+        calls_before = state["retry_budget"]["llm_calls_used"]
         ensure_llm_call_budget(state)
         patch = assess_operational_risks_node(
             cast(Any, state),
@@ -545,15 +557,17 @@ class WorkAnalysisSubgraph:
             prompt_ref=self._prompt_refs["assess_operational_risks"],
             requested_mode=request_from_state(state).requested_mode,
         )
+        budget = consume_llm_call_budget(state)
         return cast(
             WorkAnalysisLocalState,
             {
                 **patch,
-                "retry_budget": consume_llm_call_budget(state),
+                "retry_budget": budget,
                 "trace_context": self._trace(
                     state,
                     "assess_operational_risks",
                     self._prompt_refs["assess_operational_risks"],
+                    llm_call_increment=budget["llm_calls_used"] - calls_before,
                 ),
             },
         )
@@ -984,7 +998,7 @@ class WorkAnalysisSubgraph:
         node: str,
         prompt_ref: PromptReference | None = None,
         first: bool = False,
-        llm_call_increment: int | None = None,
+        llm_call_increment: int = 0,
     ) -> dict[str, object]:
         return cast(
             dict[str, object],
@@ -996,12 +1010,10 @@ class WorkAnalysisSubgraph:
                 agent_invocation_id=self._invocation_id(state),
                 subgraph_namespace="analysis",
                 node_name=node,
-                llm_call_id=(f"{state['run_id']}:analysis.{node}" if prompt_ref else None),
-                prompt_ref=prompt_ref,
+                llm_call_id=(f"{state['run_id']}:analysis.{node}" if llm_call_increment else None),
+                prompt_ref=prompt_ref if llm_call_increment else None,
                 agent_invocation_increment=1 if first else 0,
-                llm_call_increment=(
-                    (1 if prompt_ref else 0) if llm_call_increment is None else llm_call_increment
-                ),
+                llm_call_increment=llm_call_increment,
             ),
         )
 

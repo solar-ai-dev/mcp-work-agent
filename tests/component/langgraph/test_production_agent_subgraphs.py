@@ -71,6 +71,7 @@ from google_work_agent.application.tool_registry.load_signed_tool_registry impor
 )
 from google_work_agent.application.use_cases.run.account_provider_dispatch import (
     account_provider_dispatch,
+    bind_provider_dispatch_budget,
     provider_dispatch_execution_scope,
 )
 from google_work_agent.application.use_cases.run.guard_run_budget import (
@@ -80,6 +81,7 @@ from google_work_agent.application.use_cases.run.guard_run_budget import (
 from google_work_agent.ports.connector.connector_read_port import ConnectorReadResultV1, JsonValue
 from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
 from google_work_agent.ports.llm.structured_inference_contracts import (
+    LLMInvocationError,
     OutputSchemaDefinition,
     PromptReference,
 )
@@ -1826,6 +1828,278 @@ def test_retrieval__compiled_budget_exhaustion__projects_terminal_partial() -> N
         for item in result["retrieval_result"]["missing_information"]
     )
     assert result["__context_query_attempts__"] == []
+
+
+class _AnalysisRetrievalDispatchPort(_ComponentInferencePort):
+    def __init__(self, dispatches: int) -> None:
+        super().__init__(work_fact_count=2, retrieval_followup_changes_query=False)
+        self.dispatches = dispatches
+
+    def infer(
+        self, requested_mode: str, prompt_ref: PromptReference,
+        input_projection: Mapping[str, object], output_schema_ref: OutputSchemaDefinition,
+    ) -> StructuredInferenceResultV1:
+        for _ in range(self.dispatches):
+            account_provider_dispatch()
+        return super().infer(requested_mode, prompt_ref, input_projection, output_schema_ref)
+
+
+def _dispatch_analysis_graph(runtime: _ComponentInferencePort) -> WorkAnalysisSubgraph:
+    store = RunScopedEvidenceStore()
+    store.put(run_id=_state()["run_id"], evidence_drafts=[{
+        "schema_version": 1, "evidence_id": "dispatch-evidence",
+        "resource_handle": "gmail_message:dispatch-message", "segment_id": "dispatch-segment",
+        "kind": "excerpt", "excerpt": "Task one and task two remain pending.",
+        "locator": {}, "reason_codes": ["SUPPORTS"],
+    }])
+    return WorkAnalysisSubgraph(
+        llm_runtime=runtime, prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE, id_factory=_IdFactory(),
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        transition_run=lambda _run_id, _transition: None,
+        merge_decision=cast(Any, _merge_decision), evidence_store=store,
+        confirm_inline=cast(Any, _confirm_early),
+    )
+
+
+def _dispatch_analysis_state() -> Any:
+    state = _state(initial_target="work_analysis")
+    state["request_intent"] = cast(Any, _intent())
+    state["tool_route_plan"] = cast(Any, _answer_route_plan())
+    state["retrieval_result"] = cast(Any, {
+        **_retrieval_result(), "coverage": "SUFFICIENT", "evidence_refs": ["dispatch-evidence"],
+    })
+    return state
+
+
+@pytest.mark.parametrize("dispatches", [1, 2, 3])
+@pytest.mark.parametrize("task_output", [False, True])
+def test_analysis_dispatch__compiled_budget_and_trace_match_actual_calls(
+    dispatches: int, task_output: bool,
+) -> None:
+    state, runtime = _dispatch_analysis_state(), _AnalysisRetrievalDispatchPort(dispatches)
+    if task_output:
+        state["request_intent"]["requested_effect_hints"] = ["CREATE"]
+        state["request_intent"]["requested_resource_hints"] = ["TASK"]
+        state["tool_route_plan"] = _task_create_route_plan()
+        state["retrieval_result"]["meta"]["based_on"].append({
+            "artifact_id": "input-task-1", "revision": 1,
+        })
+        state["retrieval_result"]["source_statuses"] = [{
+            "route_id": "input-task-route", "resource_type": "TASK", "status": "COMPLETE",
+            "evidence_refs": [], "observed_resource_count": 0, "failure_kind": None,
+        }]
+    with provider_dispatch_execution_scope():
+        states = list(_dispatch_analysis_graph(runtime).build().stream(state, stream_mode="values"))
+    result = states[-1]
+    assert result["work_analysis_result"]["schema_version"] == 2
+    assert result["retry_budget"]["llm_calls_used"] == len(runtime.calls) * dispatches
+    # This component's supervisor stub replaces trace_context during finalize.
+    assert states[-2]["trace_context"]["llm_call_count"] == len(runtime.calls) * dispatches
+    if task_output:
+        assert runtime.calls.count("work_analysis.detect_duplicate_conflict_candidates") == 1
+        assert runtime.calls.count("work_analysis.assess_requested_task_satisfaction") == 1
+        assert runtime.calls.count("work_analysis.assess_action_necessity") == 1
+    assert result["__target__"] == "SOLUTION_PLANNING"
+
+
+@pytest.mark.parametrize("node", ["resolve_entity_relations", "resolve_temporal_dependencies"])
+@pytest.mark.parametrize("dispatches", [1, 2, 3])
+def test_analysis_dispatch__relation_owner_counts_repair_and_fallback(
+    node: str, dispatches: int,
+) -> None:
+    state, runtime = _dispatch_analysis_state(), _AnalysisRetrievalDispatchPort(dispatches)
+    graph = _dispatch_analysis_graph(runtime)
+    with provider_dispatch_execution_scope():
+        state.update(graph._extract_work_facts_node(state))
+        budget_before = state["retry_budget"]["llm_calls_used"]
+        trace_before = state["trace_context"]["llm_call_count"]
+        result = getattr(graph, f"_{node}_node")(state)
+    assert result["retry_budget"]["llm_calls_used"] == budget_before + dispatches
+    assert result["trace_context"]["llm_call_count"] == trace_before + dispatches
+
+
+@pytest.mark.parametrize(
+    "node", ["detect_duplicate_conflict_candidates", "assess_action_necessity"],
+)
+def test_analysis_dispatch__deterministic_at_cap_preserves_current_not_stale_budget(
+    node: str,
+) -> None:
+    state, runtime = _dispatch_analysis_state(), _AnalysisRetrievalDispatchPort(2)
+    state.update({
+        "user_request": "summarize status", "evidence": [], "evidence_refs": [],
+        "fact_candidates": [], "entity_relation_candidates": [],
+        "duplicate_conflict_assessment": {
+            "relation_candidates": [], "requested_work_status": "NOT_APPLICABLE",
+            "requested_work_reason": None, "matched_fact_ids": [],
+            "matched_candidate_refs": [], "evidence_refs": [],
+        },
+    })
+    state["retry_budget"]["llm_calls_used"] = 100
+    stale = build_default_run_budget()
+    stale["llm_calls_used"] = 1
+    with provider_dispatch_execution_scope():
+        bind_provider_dispatch_budget(stale)
+        result = getattr(_dispatch_analysis_graph(runtime), f"_{node}_node")(state)
+    assert runtime.calls == []
+    assert result["retry_budget"]["llm_calls_used"] == 100
+    assert result["trace_context"]["llm_call_count"] == 0
+    assert stale["llm_calls_used"] == 1
+
+
+def _dispatch_retrieval_graph(runtime: _ComponentInferencePort) -> RetrievalSubgraph:
+    return RetrievalSubgraph(
+        now_ms=lambda: 1_000, should_stop_for_cancel=lambda _run_id: False,
+        timezone_provider=lambda: "Asia/Seoul", llm_runtime=runtime,
+        prompt_manifest_path=None, prompt_execution_scope=DEVELOPMENT_SMOKE,
+        id_factory=_IdFactory(), graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        transition_run=lambda _run_id, _transition: None,
+        merge_decision=cast(Any, _merge_decision), evidence_store=RunScopedEvidenceStore(),
+        connector_reader=_ComponentConnectorReadPort(include_body=True),
+        tool_catalog=load_development_tool_registry(),
+        read_result_cache=InMemoryRunRetrievalCache(),
+        confirm_inline=lambda state: (cast(Any, {
+            "schema_version": 1, "free_text": "Use the available evidence",
+        }), None),
+    )
+
+
+def _dispatch_retrieval_preselection(graph: RetrievalSubgraph) -> Any:
+    state = _state(initial_target="context_retriever")
+    state["request_intent"] = cast(Any, _intent())
+    state["tool_route_plan"] = cast(Any, _answer_route_plan(with_input_route=True))
+    for node in ("plan_query", "build_query", "execute_read", "normalize_segments", "rag_retrieve"):
+        state.update(getattr(graph, f"_{node}_node")(state))
+    return state
+
+
+@pytest.mark.parametrize("dispatches", [1, 2, 3])
+def test_retrieval_dispatch__selection_and_sufficiency_trace_actual_calls(dispatches: int) -> None:
+    runtime = _AnalysisRetrievalDispatchPort(dispatches)
+    graph = _dispatch_retrieval_graph(runtime)
+    with provider_dispatch_execution_scope():
+        state = _dispatch_retrieval_preselection(graph)
+        for node in ("select_evidence", "assess_sufficiency"):
+            calls_before = len(runtime.calls)
+            budget_before = state["retry_budget"]["llm_calls_used"]
+            trace_before = state["trace_context"]["llm_call_count"]
+            result = getattr(graph, f"_{node}_node")(state)
+            assert len(runtime.calls) == calls_before + 1
+            assert result["retry_budget"]["llm_calls_used"] == budget_before + dispatches
+            assert result["trace_context"]["llm_call_count"] == trace_before + dispatches
+            state.update(result)
+
+
+@pytest.mark.parametrize("dispatches", [1, 2, 3])
+def test_retrieval_dispatch__confirmation_resume_records_actual_sufficiency_calls(
+    dispatches: int,
+) -> None:
+    runtime = _AnalysisRetrievalDispatchPort(dispatches)
+    graph = _dispatch_retrieval_graph(runtime)
+    with provider_dispatch_execution_scope():
+        state = _dispatch_retrieval_preselection(graph)
+        state.update(graph._select_evidence_node(state))
+        calls_before = len(runtime.calls)
+        budget_before = state["retry_budget"]["llm_calls_used"]
+        trace_before = state["trace_context"]["llm_call_count"]
+        result, sufficiency = graph._resolve_confirmation_inline(state)
+    assert sufficiency is not None
+    assert len(runtime.calls) == calls_before + 1
+    assert result["retry_budget"]["llm_calls_used"] == budget_before + dispatches
+    assert result["trace_context"]["llm_call_count"] == trace_before + dispatches
+    log = cast(list[dict[str, object]], result["trace_context"]["agent_node_log"])
+    assert log[-1]["node_name"] == "finalize"
+
+
+def test_retrieval_dispatch__empty_selection_at_cap_preserves_current_budget() -> None:
+    runtime = _AnalysisRetrievalDispatchPort(1)
+    graph = _dispatch_retrieval_graph(runtime)
+    with provider_dispatch_execution_scope():
+        state = _dispatch_retrieval_preselection(graph)
+        state["__context_rag_candidates__"] = []
+        state["retry_budget"]["llm_calls_used"] = 100
+        stale = build_default_run_budget()
+        stale["llm_calls_used"] = 1
+        bind_provider_dispatch_budget(stale)
+        calls_before = len(runtime.calls)
+        trace_before = state["trace_context"]["llm_call_count"]
+        result = graph._select_evidence_node(state)
+    assert len(runtime.calls) == calls_before
+    assert result["retry_budget"]["llm_calls_used"] == 100
+    assert result["trace_context"]["llm_call_count"] == trace_before
+    assert result["evidence_selection"] is not None
+    assert result["evidence_selection"]["selected_segment_ids"] == []
+    assert stale["llm_calls_used"] == 1
+
+
+def test_retrieval_dispatch__nonexact_selection_at_cap_still_denied() -> None:
+    runtime = _AnalysisRetrievalDispatchPort(1)
+    graph = _dispatch_retrieval_graph(runtime)
+    with provider_dispatch_execution_scope():
+        state = _dispatch_retrieval_preselection(graph)
+        state["retry_budget"]["llm_calls_used"] = 100
+        calls_before = len(runtime.calls)
+        with pytest.raises(LLMInvocationError, match="ABSOLUTE_LLM_LIMIT_EXHAUSTED"):
+            graph._select_evidence_node(state)
+    assert len(runtime.calls) == calls_before
+    assert state["retry_budget"]["llm_calls_used"] == 100
+
+
+def test_retrieval_dispatch__semantic_revision_preserves_dispatch_and_revision_counts() -> None:
+    class InvalidFirstSelection(_AnalysisRetrievalDispatchPort):
+        def _response(self, prompt_id: str, projection: Mapping[str, object]) -> dict[str, object]:
+            if prompt_id == "retrieval.select_evidence" and self.calls.count(prompt_id) == 1:
+                return {"schema_version": 3, "segment_assessments": {}}
+            return super()._response(prompt_id, projection)
+
+    runtime = InvalidFirstSelection(2)
+    graph = _dispatch_retrieval_graph(runtime)
+    with provider_dispatch_execution_scope():
+        state = _dispatch_retrieval_preselection(graph)
+        budget_before = state["retry_budget"]["llm_calls_used"]
+        trace_before = state["trace_context"]["llm_call_count"]
+        result = graph._select_evidence_node(state)
+    assert runtime.calls.count("retrieval.select_evidence") == 2
+    assert result["retry_budget"]["llm_calls_used"] == budget_before + 4
+    assert result["trace_context"]["llm_call_count"] == trace_before + 4
+    assert list(result["retry_budget"]["semantic_revisions_used_by_failure"].values()) == [1]
+    assert result["evidence_selection"] is not None
+    assert result["evidence_selection"]["selected_segment_ids"]
+
+
+def test_retrieval_dispatch__deterministic_sufficiency_preserves_current_budget() -> None:
+    runtime = _AnalysisRetrievalDispatchPort(2)
+    graph = _dispatch_retrieval_graph(runtime)
+    with provider_dispatch_execution_scope():
+        state = _dispatch_retrieval_preselection(graph)
+        state.update(graph._select_evidence_node(state))
+        state["retry_budget"]["llm_calls_used"] = 100
+        stale = build_default_run_budget()
+        stale["llm_calls_used"] = 1
+        bind_provider_dispatch_budget(stale)
+        calls_before = len(runtime.calls)
+        trace_before = state["trace_context"]["llm_call_count"]
+        result = graph._assess_sufficiency_node(state)
+    assert len(runtime.calls) == calls_before
+    assert result["retry_budget"]["llm_calls_used"] == 100
+    assert result["trace_context"]["llm_call_count"] == trace_before
+    assert result["llm_provider_result"] is not None
+    assert result["llm_provider_result"]["structured_output_attempts"] == 0
+    assert stale["llm_calls_used"] == 1
+
+
+def test_retrieval_dispatch__confirmation_reassessment_at_cap_still_denied() -> None:
+    runtime = _AnalysisRetrievalDispatchPort(1)
+    graph = _dispatch_retrieval_graph(runtime)
+    with provider_dispatch_execution_scope():
+        state = _dispatch_retrieval_preselection(graph)
+        state.update(graph._select_evidence_node(state))
+        state["retry_budget"]["llm_calls_used"] = 100
+        calls_before = len(runtime.calls)
+        with pytest.raises(LLMInvocationError, match="ABSOLUTE_LLM_LIMIT_EXHAUSTED"):
+            graph._resolve_confirmation_inline(state)
+    assert len(runtime.calls) == calls_before
+    assert state["retry_budget"]["llm_calls_used"] == 100
 
 
 def test_retrieval__third_page__closes_partial_without_fourth_round() -> None:

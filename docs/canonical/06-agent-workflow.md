@@ -1723,6 +1723,7 @@ ABSOLUTE_MAX_LLM_CALLS=100
 | compatibility | absolute 상한은 100이다. 과거 저장값 24/36은 현재 계약을 읽을 때 100으로 정규화하며 사용량 counter는 reset하지 않는다. |
 | Profile 관측값 | `NORMAL=14`, `REVISION_HEAVY=18`, `RETRIEVAL_HEAVY=20`은 실행 특성 관측용이며 LLM dispatch를 차단하지 않는다. |
 | counter | 음수가 아니며 단조 증가한다. Profile 승격으로 사용량을 초기화하지 않는다. |
+| 호출 없는 경로 | 결정적 owner 결과는 LLM 예산을 소비하거나 LLM 상한만으로 차단하지 않는다. 현재 State budget을 보존하며, 실제 invocation이 있을 때 현재 budget을 결속하고 dispatch 사용량을 합친다. 이전 호출 context의 budget으로 0-call State를 덮지 않는다. |
 | 집행 범위 | LLM·Repair·Revision·Retrieval 외에도 per-Run Connector call, Context token, Retry, 최대 실행 시간을 검사한다. elapsed time은 ClockPort로 확인한다. |
 | Retrieval 상한 | `05`의 Release Default `MAX_TOTAL_SOURCE_PAGES=50`, `MAX_TOTAL_DETAIL_RESOURCES=12`와 source-local detail 제한을 넘지 않는다. Settings는 더 작은 값을 선택할 수 있다. |
 | 초과 직전 | 다음 outbound/LLM operation을 막고 bounded failure/recovery result를 반환한다. |

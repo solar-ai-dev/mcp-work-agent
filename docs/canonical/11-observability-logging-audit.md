@@ -616,6 +616,7 @@ coordination_wait_ms?
 | 항목 | 집계·관측 기준 |
 | --- | --- |
 | Agent·LLM | `agent_invocation_count`와 `llm_call_count` 별도 집계 |
+| LLM 호출 authority | 실제 Provider dispatch를 센다. FIRST·repair·fallback을 포함하며 semantic invoker 횟수, 결과 개수, PromptRef 유무로 대체하지 않는다. 결정적 0-call은 0이며 confirmation resume의 실제 호출도 누락하지 않는다. |
 | Core의 외부 Connector 호출량 | `connector_id`별 `mcp_tool_call_count`·`mcp_read_tool_call_count` 기준 |
 | Provider API 호출량 | `provider_api_call_count`는 각 Connector MCP Server 내부 Adapter가 실제 Provider API를 호출한 횟수. MCP 내부 효율·pagination·N+1 진단용 보조 지표 |
 | Connector 구분 | Google Workspace는 `connector_id=google_workspace`, GitHub는 `connector_id=github`로 기록·독립 집계 |

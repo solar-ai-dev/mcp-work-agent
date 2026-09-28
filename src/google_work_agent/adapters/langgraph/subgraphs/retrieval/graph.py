@@ -201,12 +201,20 @@ from google_work_agent.application.use_cases.run.guard_run_budget import (
     approve_planning_revision,
 )
 from google_work_agent.ports.connector.connector_read_port import ConnectorReadPort
-from google_work_agent.ports.llm.structured_inference_port import StructuredInferencePort
+from google_work_agent.ports.llm.structured_inference_contracts import (
+    OutputSchemaDefinition,
+    PromptReference,
+)
+from google_work_agent.ports.llm.structured_inference_port import (
+    StructuredInferencePort,
+    StructuredInferenceResultV1,
+)
 from google_work_agent.ports.system.contracts.confirmation import (
     ConfirmationResponseProjectionV1,
 )
 from google_work_agent.ports.system.contracts.observability import ObservabilityContext
 from google_work_agent.ports.system.contracts.retrieval_head import RetrievalHeadV1
+from google_work_agent.ports.system.contracts.workflow_handoff import RequestedModeV1
 from google_work_agent.ports.system.contracts.workflow_signal import (
     RetrievalNeedV1,
     RetrievalRequiredV1,
@@ -410,6 +418,28 @@ def _authorize_context_adjustment_budget(
         if acquisition["decision"] == BudgetDecision.DENY.value
         else acquisition["run_budget"]
     )
+
+
+class _SelectionInference:
+    """Bind budget only if the existing selection owner actually requests inference."""
+
+    def __init__(self, runtime: StructuredInferencePort, state: ContextRetrievalLocalState) -> None:
+        self._runtime = runtime
+        self._state = state
+        self.invoked = False
+
+    def infer(
+        self,
+        requested_mode: RequestedModeV1,
+        prompt_ref: PromptReference,
+        input_projection: Mapping[str, object],
+        output_schema_ref: OutputSchemaDefinition,
+    ) -> StructuredInferenceResultV1:
+        ensure_llm_call_budget(self._state)
+        self.invoked = True
+        return self._runtime.infer(
+            requested_mode, prompt_ref, input_projection, output_schema_ref
+        )
 
 
 class RetrievalSubgraph:
@@ -702,7 +732,7 @@ class RetrievalSubgraph:
             state.get(CONTEXT_RAG_CANDIDATES_KEY), "rag candidates"
         )
         calls_before = state["retry_budget"]["llm_calls_used"]
-        ensure_llm_call_budget(state)
+        selection_runtime = _SelectionInference(self._llm_runtime, state)
         patch = select_evidence_node(
             cast(
                 RetrievalState,
@@ -720,7 +750,7 @@ class RetrievalSubgraph:
                     or [],
                 },
             ),
-            llm_runtime=self._llm_runtime,
+            llm_runtime=selection_runtime,
             prompt_ref=self._select_prompt_ref,
             revision_prompt_ref=self._select_prompt_ref,
             source_fetch_plans=[
@@ -734,8 +764,12 @@ class RetrievalSubgraph:
             retry_budget=cast(RunBudgetV2, state["retry_budget"]),
         )
         selection = cast(Any, patch["evidence_selection"])
-        revised_retry_budget = consume_llm_call_budget(
-            {**state, "retry_budget": cast(RunBudgetV2, patch["retry_budget"])}
+        revised_retry_budget = (
+            consume_llm_call_budget(
+                {**state, "retry_budget": cast(RunBudgetV2, patch["retry_budget"])}
+            )
+            if selection_runtime.invoked
+            else cast(RunBudgetV2, patch["retry_budget"])
         )
         calls_used = revised_retry_budget["llm_calls_used"] - calls_before
         updated_local = dict(local_state)
@@ -1023,9 +1057,11 @@ class RetrievalSubgraph:
         self, state: ContextRetrievalLocalState
     ) -> ContextRetrievalLocalState:
         local_state = cast(AgentLocalStateV1, state[CONTEXT_AGENT_LOCAL_KEY])
+        calls_before = state["retry_budget"]["llm_calls_used"]
         sufficiency_result, llm_provider_result, retry_budget = self._run_sufficiency_attempt(
             state, confirmation_response=None
         )
+        calls_used = retry_budget["llm_calls_used"] - calls_before
         request_intent = _require_state_value(state["request_intent"], "request_intent")
         tool_route_plan = _require_state_value(state["tool_route_plan"], "tool_route_plan")
         frozen_routes = tool_route_plan["input_plan"]["input_routes"]
@@ -1128,28 +1164,7 @@ class RetrievalSubgraph:
             "llm_provider_result": llm_provider_result,
             "retry_budget": retry_budget,
             "__context_evidence_reassessment_issues__": reassessment_issues or None,
-            "trace_context": merge_trace_context(
-                state,
-                graph_profile=self._graph_profile.value,
-                agent_subgraph_id="context_retriever",
-                agent_role="context_retriever",
-                agent_invocation_id=local_state["invocation_id"],
-                subgraph_namespace="context",
-                node_name="assess_sufficiency",
-                llm_call_id=(
-                    f"{request_from_state(state).run_id}:retrieval.assess_sufficiency"
-                    if llm_provider_result.get("structured_output_attempts", 0)
-                    else None
-                ),
-                prompt_ref=(
-                    self._sufficiency_prompt_ref
-                    if llm_provider_result.get("structured_output_attempts", 0)
-                    else None
-                ),
-                llm_call_increment=cast(
-                    int, llm_provider_result.get("structured_output_attempts", 0)
-                ),
-            ),
+            "trace_context": self._sufficiency_trace(state, calls_used=calls_used),
         }
         if should_plan_followup:
             next_state[CONTEXT_FOLLOWUP_PLANNER_INPUT_KEY] = followup_projection
@@ -2002,6 +2017,7 @@ class RetrievalSubgraph:
                     selected[item["mention"]] = item["identity"]
             state = {**state, "selected_person_identities": selected}
 
+        calls_before = state["retry_budget"]["llm_calls_used"]
         sufficiency_result, llm_provider_result, retry_budget = self._run_sufficiency_attempt(
             state, confirmation_response=confirmation_response
         )
@@ -2016,11 +2032,37 @@ class RetrievalSubgraph:
                 CONTEXT_SUFFICIENCY_OUTPUT_KEY: sufficiency_result,
                 "llm_provider_result": llm_provider_result,
                 "retry_budget": retry_budget,
+                "trace_context": self._sufficiency_trace(
+                    state,
+                    calls_used=retry_budget["llm_calls_used"] - calls_before,
+                    node_name="finalize",
+                ),
                 "user_interrupt": None,
                 "prompt_context": prompt_context,
             },
         )
         return updated_state, sufficiency_result
+
+    def _sufficiency_trace(
+        self, state: ContextRetrievalLocalState, *, calls_used: int,
+        node_name: str = "assess_sufficiency",
+    ) -> dict[str, object]:
+        local = cast(AgentLocalStateV1, state[CONTEXT_AGENT_LOCAL_KEY])
+        return cast(dict[str, object], merge_trace_context(
+            state,
+            graph_profile=self._graph_profile.value,
+            agent_subgraph_id="context_retriever",
+            agent_role="context_retriever",
+            agent_invocation_id=local["invocation_id"],
+            subgraph_namespace="context",
+            node_name=node_name,
+            llm_call_id=(
+                f"{request_from_state(state).run_id}:retrieval.assess_sufficiency"
+                if calls_used else None
+            ),
+            prompt_ref=self._sufficiency_prompt_ref if calls_used else None,
+            llm_call_increment=calls_used,
+        ))
 
     def _finalize_resolved(
         self, state: ContextRetrievalLocalState, *, result: SufficiencyResultV2
