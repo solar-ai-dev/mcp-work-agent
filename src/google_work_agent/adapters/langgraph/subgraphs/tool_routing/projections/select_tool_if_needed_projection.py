@@ -12,4 +12,5 @@ def project_select_tool_if_needed_input(
     return {
         "registry_candidates": candidates,
         "confirmation_response": None,
+        "selection_reconsideration": state.get("selection_reconsideration"),
     }

@@ -82,7 +82,7 @@ def route_supervisor(
     )
     if request_reconsideration is not None:
         return request_reconsideration
-    reconsideration = route_reconsideration(current_phase, result)
+    reconsideration = route_reconsideration(current_phase, result, state=state)
     if reconsideration is not None:
         return reconsideration
     if current_phase is WorkflowPhase.REQUEST_ANALYSIS:

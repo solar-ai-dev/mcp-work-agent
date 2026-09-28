@@ -13,6 +13,10 @@ from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan
 from google_work_agent.application.agents.tool_routing.select_tool_if_needed import (
     select_tool_if_needed,
 )
+from google_work_agent.application.agents.tool_routing.selection_reconsideration import (
+    SelectionReconsiderationV1,
+    project_selection_reconsideration,
+)
 from google_work_agent.ports.llm.structured_inference_contracts import PromptReference
 from google_work_agent.ports.llm.structured_inference_port import StructuredInferencePort
 from google_work_agent.ports.system.contracts.confirmation import (
@@ -44,6 +48,13 @@ def select_tool_if_needed_node(
         capability = bound.selection_capability
         tool_id = selected_by_capability.get(capability)
         if tool_id is None:
+            reconsideration = project_selection_reconsideration(
+                context=cast(
+                    SelectionReconsiderationV1 | None,
+                    projection["selection_reconsideration"],
+                ),
+                candidates=[item for item in candidates if item.selection_capability == capability],
+            )
             if len(bound.eligible_tool_ids) == 1:
                 tool_id = bound.eligible_tool_ids[0]
             else:
@@ -58,6 +69,7 @@ def select_tool_if_needed_node(
                     retry_budget=retry_budget,
                     prompt_ref=prompt_ref,
                     confirmation_response=confirmation_response,
+                    reconsideration=reconsideration,
                 )
             selected_by_capability[capability] = tool_id
         reason_code = (

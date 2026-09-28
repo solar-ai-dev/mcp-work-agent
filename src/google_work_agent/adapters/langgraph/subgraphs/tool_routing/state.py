@@ -10,6 +10,9 @@ from google_work_agent.adapters.langgraph.subgraph_state import (
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestIntentV3,
 )
+from google_work_agent.application.agents.review.contracts.plan_review_result import (
+    PlanReviewResultV2,
+)
 from google_work_agent.application.agents.tool_routing.contracts.route_binding_candidate import (
     BoundOutputRouteCandidateV1,
 )
@@ -21,6 +24,9 @@ from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan
     OutputToolRouteV1,
     ScopeExpansionRequiredV1,
     ToolRoutePlanV2,
+)
+from google_work_agent.application.agents.tool_routing.selection_reconsideration import (
+    SelectionReconsiderationV1,
 )
 from google_work_agent.application.prompt_runtime.contracts.failure_record import FailureRecordV1
 from google_work_agent.application.use_cases.run.policy_confirmation_receipt import (
@@ -44,6 +50,7 @@ class ToolRoutingInputState(AgentSubgraphInputEnvelope, total=False):
 
     request_intent: RequestIntentV3
     tool_route_plan: ToolRoutePlanV2 | None
+    plan_review: PlanReviewResultV2 | None
     workflow_signal: ScopeExpansionRequiredV1 | RouteReconsiderationRequiredV1 | None
     user_interrupt: UserInterruptV1 | None
     policy_confirmation_receipts: list[PolicyConfirmationReceiptV1]
@@ -60,6 +67,7 @@ class ToolRouteStateV1(ToolRoutingInputState, total=False):
     bound_output_routes: list[OutputToolRouteV1]
     final_route: ToolRoutePlanV2 | None
     prerequisite_message: str | None
+    selection_reconsideration: SelectionReconsiderationV1 | None
 
     finalize_intent: FinalizeIntentV1 | None
 

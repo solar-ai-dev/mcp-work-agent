@@ -75,6 +75,8 @@ def route_initialize(result: JsonObject) -> SupervisorDecisionV1:
 def route_reconsideration(
     phase: WorkflowPhase,
     result: object | None,
+    *,
+    state: GraphState,
 ) -> SupervisorDecisionV1 | None:
     if not isinstance(result, Mapping):
         return None
@@ -88,6 +90,19 @@ def route_reconsideration(
         return None
     raw_reason_codes = result.get("reason_codes", [])
     if phase is WorkflowPhase.PLAN_REVIEW:
+        planning = state.get("planning_result")
+        planning_meta = planning.get("meta") if isinstance(planning, Mapping) else None
+        review_meta = result.get("meta")
+        based_on = review_meta.get("based_on") if isinstance(review_meta, Mapping) else None
+        if (
+            not isinstance(planning_meta, Mapping)
+            or not isinstance(based_on, list)
+            or {
+                "artifact_id": planning_meta.get("artifact_id"),
+                "revision": planning_meta.get("revision"),
+            } not in based_on
+        ):
+            return recovery_supervisor_decision("ROUTE_RECONSIDERATION_REVIEW_STALE")
         route_issues = result.get("route_issues", [])
         raw_reason_codes = (
             [

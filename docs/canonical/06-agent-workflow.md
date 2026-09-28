@@ -1324,6 +1324,16 @@ class ToolRouteStateV1:
 
 `io_resource_failure`는 `determine_io_resources`의 bounded semantic revision이 소진됐을 때 마지막 typed validation failure를 보존한다. 사용자 확인 interrupt의 reason과 affected path는 이 record에서 투영하며 generic route 상태로 덮어쓰지 않는다.
 
+Review의 Route 재검토는 현재 Planning revision에 결속된 `plan_review`와 이전
+`tool_route_plan`을 기존 Main 필드에서 읽어 Tool Routing의 invocation-local
+`selection_reconsideration`으로 전달한다. 선택 입력에는 해당 capability의 Route별
+이전/현재 ID, 기존 Tool, `work_unit_ids`, 원래 Route issue를 보존한다. 이전/현재
+Route가 connector/resource/effect/work binding으로 유일하게 대응하지 않거나
+Review의 revision·affected Route가 stale이면 추정하지 않고 거절한다. 같은
+capability의 선택 호출은 여전히 한 번이며 각 Route의 진단을 하나의 입력에서
+구분한다. 이 진단은 RequestIntent·Output·승인 권한을 바꾸는 지시가 아니다.
+최초 선택에는 이 optional 입력을 추가하지 않는다.
+
 #### Policy Precondition READ
 
 각 Policy READ의 `work_unit_ids`는 그 검사를 필요로 하는 Output의 binding에서만

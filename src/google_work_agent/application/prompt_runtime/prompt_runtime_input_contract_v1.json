@@ -117,9 +117,9 @@
     {
       "prompt_slot_id": "tool_routing.select_tool_if_needed",
       "runtime_node_id": "route.select_tool",
-      "input_schema_version": 1,
+      "input_schema_version": 2,
       "required_root_fields": ["route_candidate", "registered_candidates"],
-      "optional_root_fields": ["confirmation_response", "user_request"],
+      "optional_root_fields": ["confirmation_response", "user_request", "reconsideration"],
       "output_schema_version": 1
     },
     {

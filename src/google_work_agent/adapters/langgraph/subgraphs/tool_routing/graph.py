@@ -47,6 +47,9 @@ from google_work_agent.application.agents.tool_routing.format_route_confirmation
     format_route_confirmation,
     format_scope_confirmation,
 )
+from google_work_agent.application.agents.tool_routing.selection_reconsideration import (
+    capture_selection_reconsideration,
+)
 from google_work_agent.application.prompt_runtime.prompt_registry import (
     PRODUCT_RELEASE,
     PromptExecutionScope,
@@ -204,6 +207,14 @@ class ToolRoutingSubgraph:
                 "bound_input_routes": [],
                 "bound_output_routes": [],
                 "final_route": None,
+                "selection_reconsideration": capture_selection_reconsideration(
+                    request_intent=_require_state_value(
+                        state.get("request_intent"), "request_intent"
+                    ),
+                    previous_route_plan=state.get("tool_route_plan"),
+                    review=state.get("plan_review"),
+                    workflow_signal=state.get("workflow_signal"),
+                ),
             }
         working_state = cast(ToolRouteStateV1, {**state, **initial_fields})
         uses_llm = requires_io_resource_inference(

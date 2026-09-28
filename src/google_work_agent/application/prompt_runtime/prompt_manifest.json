@@ -217,7 +217,7 @@
       "prompt_slot_id": "tool_routing.select_tool_if_needed",
       "prompt_id": "tool_routing.select_tool_if_needed",
       "runtime_node_id": "route.select_tool",
-      "prompt_version": "1.0.3",
+      "prompt_version": "1.0.4",
       "content_hash": "cd482c0ef2acd6343bd6ad347218e5ece52343c903ace855fe9b0602ccee7154",
       "activation_status": "DRAFT",
       "node_dev_pass": false,
@@ -229,7 +229,7 @@
       "node_name": "select_tool_if_needed",
       "node_state": "INITIAL",
       "purpose": "select_tool_if_needed",
-      "input_schema_version": 1,
+      "input_schema_version": 2,
       "output_schema_version": 1,
       "source": "sources/tool_routing.select_tool_if_needed.md",
       "activation_evidence": null

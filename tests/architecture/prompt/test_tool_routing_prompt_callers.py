@@ -91,7 +91,9 @@ def test_tool_routing__prompt_inputs_match__current_runtime_contract() -> None:
         "route_candidate",
         "registered_candidates",
     )
-    assert select.optional_root_fields == ("confirmation_response", "user_request")
+    assert select.optional_root_fields == (
+        "confirmation_response", "user_request", "reconsideration"
+    )
 
 
 def test_tool_routing_graph__has_no_separate__revision_prompt_authority() -> None:

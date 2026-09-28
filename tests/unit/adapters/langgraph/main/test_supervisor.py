@@ -858,7 +858,7 @@ def test_review_retrieve_more__without_frozen_route__becomes_route_reconsiderati
 def test_review_route__reconsideration_routes__to_tool_route() -> None:
     state = _state(
         workflow_phase=WorkflowPhase.PLAN_REVIEW,
-        planning_result=_answer_draft("ANSWER_ONLY"),
+        planning_result=_plan_draft("PLAN_READY"),
     )
 
     decision = route_supervisor(
@@ -873,6 +873,23 @@ def test_review_route__reconsideration_routes__to_tool_route() -> None:
     assert signal is not None
     assert signal["kind"] == "ROUTE_RECONSIDERATION_REQUIRED"
     assert decision["state_update"]["plan_review"] == _review_result("ROUTE_RECONSIDERATION")
+
+
+@pytest.mark.parametrize("based_on", [[{"artifact_id": "old-plan", "revision": 1}], None, "bad"])
+def test_review_route_reconsideration_rejects_stale_review_before_clearing_planning(
+    based_on: Any,
+) -> None:
+    state = _state(
+        workflow_phase=WorkflowPhase.PLAN_REVIEW,
+        planning_result=_answer_draft("ANSWER_ONLY"),
+    )
+    review = _review_result("ROUTE_RECONSIDERATION")
+    review["meta"]["based_on"] = based_on
+    decision = route_supervisor(phase=WorkflowPhase.PLAN_REVIEW, state=state, result=review)
+    assert decision["target"] == SupervisorTarget.RECOVERY.value
+    assert decision["reason_code"] == "ROUTE_RECONSIDERATION_REVIEW_STALE"
+    assert "request_intent" not in decision["state_update"]
+    assert "workflow_signal" not in decision["state_update"]
 
 
 def test_retrieval_route_reconsideration__with_inflight_acquisition__preserves_state() -> None:

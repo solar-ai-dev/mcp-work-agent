@@ -3,6 +3,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 
+from google_work_agent.application.agents.tool_routing.selection_reconsideration import (
+    ToolSelectionReconsiderationV1,
+)
 from google_work_agent.application.agents.tool_routing.validate_route import (
     ToolRouteValidationError,
 )
@@ -65,6 +68,7 @@ def select_tool_if_needed(
     prompt_ref: PromptReference | None = None,
     manifest_path: Path | None = None,
     confirmation_response: ConfirmationResponseProjectionV1 | None = None,
+    reconsideration: ToolSelectionReconsiderationV1 | None = None,
 ) -> tuple[str, RunBudgetV2]:
     if len(eligible_tool_ids) == 1:
         return eligible_tool_ids[0], retry_budget
@@ -90,6 +94,8 @@ def select_tool_if_needed(
     }
     if confirmation_response is not None:
         base_projection["confirmation_response"] = dict(confirmation_response)
+    if reconsideration is not None:
+        base_projection["reconsideration"] = dict(reconsideration)
     with provider_dispatch_budget_scope(retry_budget):
         result = llm_runtime.infer(
             request.requested_mode,

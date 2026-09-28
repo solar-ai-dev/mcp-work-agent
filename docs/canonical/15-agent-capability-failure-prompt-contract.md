@@ -314,6 +314,11 @@ context 내부의 닫힌 WorkUnit 집합과 대조하며 타 업무의 Constrain
 
 #### Review
 
+Tool 선택의 optional `reconsideration`은 현재 Review의 Route finding과 유일하게
+결속된 이전/현재 Route metadata만 전달한다. 기존 RequestIntent와 Registry의
+connector/resource/effect/eligible set을 다시 해석하거나 수정하지 않는다.
+최초 선택의 Prompt 본문·입력은 유지하며 재검토도 기존 capability별 한 호출을 쓴다.
+
 Goal/evidence/action/route/constraint/policy 검사를 atomic inspector responsibility로 분리한다.
 
 | Operation | 처리 | 조건·책임 |
