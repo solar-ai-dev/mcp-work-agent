@@ -315,12 +315,23 @@ def _jsonable(value: Any) -> Any:
 
 
 def write_json(path: Path, value: Any) -> None:
+    """Publish whole observations atomically; retain the complete temp on failure."""
+    payload = json.dumps(value, ensure_ascii=False, indent=2, default=_jsonable)
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(
-        json.dumps(value, ensure_ascii=False, indent=2, default=_jsonable), encoding="utf-8"
-    )
-    temporary.replace(path)
+    temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+    with temporary.open("x", encoding="utf-8") as stream:
+        stream.write(payload)
+    # Windows readers may temporarily deny delete-sharing on the destination.
+    # Retry only publishing the same completed bytes, never inference or capture.
+    delays = (0.01, 0.02, 0.04, 0.08, 0.1, 0.1, 0.1)
+    for attempt in range(len(delays) + 1):
+        try:
+            temporary.replace(path)
+            return
+        except OSError as error:
+            if getattr(error, "winerror", None) not in {5, 32, 33} or attempt == len(delays):
+                raise
+            time.sleep(delays[attempt])
 
 
 class TrialObservation:

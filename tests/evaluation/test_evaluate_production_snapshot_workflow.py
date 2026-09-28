@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, replace
@@ -23,6 +26,134 @@ from google_work_agent.ports.llm.structured_inference_contracts import (
 )
 from google_work_agent.ports.system.contracts.workflow_execution import SelectedResourceRef
 from google_work_agent.ports.system.settings_port import SettingsPatchV1
+
+
+def test_json_writer_publishes_complete_utf8_observation(tmp_path: Path) -> None:
+    target = tmp_path / "nested" / "calls.json"
+    value = {"input": "사용자 원문", "calls": [1, 2]}
+    runner.write_json(target, value)
+    assert json.loads(target.read_text(encoding="utf-8")) == value
+    assert list(target.parent.glob("*.tmp")) == []
+
+
+def test_json_writer_serialization_failure_does_not_touch_previous_record(tmp_path: Path) -> None:
+    target = tmp_path / "calls.json"
+    runner.write_json(target, {"calls": [1]})
+    previous = target.read_bytes()
+    with pytest.raises(TypeError, match="unsupported observation type"):
+        runner.write_json(target, {"calls": object()})
+    assert target.read_bytes() == previous
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_json_writer_concurrent_publishers_use_distinct_complete_temps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "calls.json"
+    replace_file = Path.replace
+    barrier = threading.Barrier(2)
+    guard = threading.Lock()
+    temporaries: set[Path] = set()
+    local = threading.local()
+
+    def publish(path: Path, destination: Path) -> Path:
+        assert json.loads(path.read_text(encoding="utf-8")) == local.value
+        with guard:
+            first_attempt = path not in temporaries
+            temporaries.add(path)
+        if first_attempt:
+            barrier.wait(timeout=10)
+        return replace_file(path, destination)
+
+    def write(index: int) -> None:
+        local.value = {"calls": [index]}
+        runner.write_json(target, local.value)
+
+    monkeypatch.setattr(Path, "replace", publish)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        list(executor.map(write, range(2)))
+    assert len(temporaries) == 2
+    assert json.loads(target.read_text(encoding="utf-8")) in [{"calls": [0]}, {"calls": [1]}]
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows delete-sharing contract")
+def test_json_writer_retries_real_windows_reader_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "calls.json"
+    runner.write_json(target, {"calls": [0]})
+    reader = target.open("rb")
+    first_denial = threading.Event()
+    observed_errors: list[int | None] = []
+    replace_file = Path.replace
+
+    def publish(path: Path, destination: Path) -> Path:
+        try:
+            return replace_file(path, destination)
+        except OSError as error:
+            observed_errors.append(getattr(error, "winerror", None))
+            first_denial.set()
+            raise
+
+    def release_reader() -> None:
+        try:
+            assert first_denial.wait(timeout=10)
+        finally:
+            reader.close()
+
+    monkeypatch.setattr(Path, "replace", publish)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        release = executor.submit(release_reader)
+        runner.write_json(target, {"calls": [1]})
+        release.result()
+    assert observed_errors and set(observed_errors) <= {5, 32, 33}
+    assert json.loads(target.read_text(encoding="utf-8")) == {"calls": [1]}
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+@pytest.mark.parametrize("winerror", [5, 32, 33])
+def test_json_writer_permanent_windows_denial_is_bounded_and_preserves_both_records(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, winerror: int
+) -> None:
+    target = tmp_path / "calls.json"
+    runner.write_json(target, {"calls": [0]})
+    attempts: list[Path] = []
+    delays: list[float] = []
+    failure = PermissionError("denied")
+    failure.winerror = winerror
+
+    def deny(path: Path, _destination: Path) -> Path:
+        attempts.append(path)
+        raise failure
+
+    monkeypatch.setattr(Path, "replace", deny)
+    monkeypatch.setattr(runner.time, "sleep", delays.append)
+    with pytest.raises(PermissionError) as caught:
+        runner.write_json(target, {"calls": [1]})
+    assert caught.value is failure
+    assert len(attempts) == 8 and len(set(attempts)) == 1
+    assert sum(delays) == pytest.approx(0.45)
+    assert json.loads(target.read_text(encoding="utf-8")) == {"calls": [0]}
+    assert json.loads(attempts[0].read_text(encoding="utf-8")) == {"calls": [1]}
+
+
+def test_json_writer_does_not_retry_unclassified_io_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    attempts: list[Path] = []
+    delays: list[float] = []
+
+    def deny(path: Path, _destination: Path) -> Path:
+        attempts.append(path)
+        raise OSError("disk failure")
+
+    monkeypatch.setattr(Path, "replace", deny)
+    monkeypatch.setattr(runner.time, "sleep", delays.append)
+    with pytest.raises(OSError, match="disk failure"):
+        runner.write_json(tmp_path / "calls.json", {"calls": [1]})
+    assert len(attempts) == 1
+    assert delays == []
 
 
 def _kwargs() -> dict[str, Any]:
