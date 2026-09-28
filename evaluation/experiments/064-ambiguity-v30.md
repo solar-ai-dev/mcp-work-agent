@@ -105,3 +105,19 @@ same-Run confirmation binding·Retrieval/Planning 이후는 미검증이다.
 raw: `evaluation/results/064-ambiguity-work-bound-v30-t1/raw.json`, SHA256
 `c4894fbe93caea6012224fc7b3808f47dff17e5c4abeeb4e49991bb8ff22168d`.
 Provider READ/WRITE0, Product activation0. 원본 raw 불변.
+
+## 테스트 지원 경계 정리와 architecture 재확인
+
+v29/v30의 fake Ollama transport를 `tests/support/ollama_transport.py`로 옮겨
+테스트 간 private helper import를 제거했다. queued 응답, wire 기록과 usage 값은
+동일하며 직접 테스트30/30, 해당 파일 Ruff 검사는 통과했다. Product/candidate/
+runner/raw 변경과 모델/Provider 호출은 없다.
+Root 재검토에서 이번 v30 테스트의 중첩 fixture에 명시 타입을 추가하여 타입 추론 오류도
+교정했다. 공용 helper와 두 테스트 파일의 scoped Mypy3개 파일 및 직접30개 테스트가 통과했다.
+
+별도 실행한 evaluation architecture 검사2건은 여전히 실패한다. 시작 SHA
+`4f07c3b5`와 비교한 비허용 evaluation Python 파일15개 및 내부 Product import25개는
+정확히 동일하며 이번 후보의 신규 회귀가 아니다. Product→evaluation/scripts/candidate
+직접 import는 정적 검사0이다. Canonical12/13의 개발 Graph/Node 진단 허용과
+Canonical16의 공식 evaluation 내부 import 금지는 구분한다. 기존 위반을 통과시키기
+위해 테스트/allowlist를 변경하거나 정리 범위를 확대하지 않았다.

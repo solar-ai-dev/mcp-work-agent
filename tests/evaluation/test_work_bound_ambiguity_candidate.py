@@ -15,7 +15,7 @@ from scripts.ru_work_bound_ambiguity_candidate import (
     project_work_ambiguity_input,
     work_ambiguity_schema,
 )
-from tests.evaluation.test_evaluate_ambiguity_owner import _fake_transport
+from tests.support.ollama_transport import fake_ollama_transport
 
 from google_work_agent.adapters.llm.ollama import transport
 from google_work_agent.application.prompt_runtime.prompt_registry import PromptRegistry
@@ -49,7 +49,7 @@ def registered(monkeypatch: pytest.MonkeyPatch) -> tuple[dict[str, Any], dict[st
         }
         for case in original["cases"]
     ]
-    _fake_transport(monkeypatch, outputs)
+    fake_ollama_transport(monkeypatch, outputs, model_id=runner.MODEL_ID)
     rows = [
         runner.run_arm(case, "baseline", transport.OllamaHTTPClient(), PromptRegistry())
         for case in original["cases"]
@@ -149,7 +149,7 @@ def test_candidate_wire_counts_absent_and_work1_connector_work2_user_remains_con
 ) -> None:
     case = registered[0]["cases"][case_index]
     raw = _decisions("CONNECTOR", "USER")
-    calls = _fake_transport(monkeypatch, [raw])
+    calls = fake_ollama_transport(monkeypatch, [raw], model_id=runner.MODEL_ID)
     record = runner.run_arm(case, "candidate", transport.OllamaHTTPClient(), PromptRegistry())
     assert len(calls) == 1
     wire = calls[0]["payload"]
@@ -177,7 +177,9 @@ def test_one_repair_only_uses_same_work_contract_and_does_not_reinsert_counts(
     case = registered[0]["cases"][0]
     invalid = _decisions("CONNECTOR", "USER")
     invalid["work_ambiguities"][1].pop("missing_fields")
-    calls = _fake_transport(monkeypatch, [invalid, _decisions("CONNECTOR", "USER")])
+    calls = fake_ollama_transport(
+        monkeypatch, [invalid, _decisions("CONNECTOR", "USER")], model_id=runner.MODEL_ID
+    )
     record = runner.run_arm(case, "candidate", transport.OllamaHTTPClient(), PromptRegistry())
     assert len(calls) == 2
     assert record["attempts"][0]["schema_errors"]
@@ -195,7 +197,7 @@ def test_repair_cannot_change_other_work_owner(
     invalid = _decisions("CONNECTOR", "USER")
     invalid["work_ambiguities"][1].pop("missing_fields")
     repaired = _decisions("NONE", "USER")
-    _fake_transport(monkeypatch, [invalid, repaired])
+    fake_ollama_transport(monkeypatch, [invalid, repaired], model_id=runner.MODEL_ID)
     record = runner.run_arm(case, "candidate", transport.OllamaHTTPClient(), PromptRegistry())
     assert record["final"]["structural_result"] == "FAIL"
     assert record["attempts"][1]["out_of_scope_repair_changes"]
@@ -252,7 +254,7 @@ def test_same_folded_owner_does_not_certify_correct_work_binding(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     case = registered[0]["cases"][0]
-    _fake_transport(monkeypatch, [_decisions("USER", "CONNECTOR")])
+    fake_ollama_transport(monkeypatch, [_decisions("USER", "CONNECTOR")], model_id=runner.MODEL_ID)
     record = runner.run_arm(case, "candidate", transport.OllamaHTTPClient(), PromptRegistry())
     # Wrong target attribution still folds to USER; retain the evidence for manual grading.
     assert record["final"]["raw_owner_evaluation"]["owner_choice"] == "OWNER_CHOICE_PASS"
@@ -262,7 +264,7 @@ def test_same_folded_owner_does_not_certify_correct_work_binding(
 
 
 def test_shared_contract_comparison_preserves_global_fields_and_current_slot() -> None:
-    before = {
+    before: dict[str, Any] = {
         "schema_version": 1,
         "forbidden_input_fields": ["gold"],
         "entries": [

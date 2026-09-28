@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import json
-from copy import deepcopy
 from typing import Any
 
 import pytest
 from evaluation.dataset_v8 import load_cases
 from scripts import evaluate_ambiguity_owner as runner
 from scripts.ru_ambiguity_owner_candidate import INPUT_MARKER, ambiguity_owner_instruction
+from tests.support.ollama_transport import fake_ollama_transport
 
 from google_work_agent.adapters.llm.ollama import transport
 from google_work_agent.application.prompt_runtime.prompt_registry import PromptRegistry
@@ -126,28 +126,11 @@ def test_product_guard_preserves_multi_work_user_target(plan: dict[str, Any], in
     assert result["missing_fields"] == ["target_resource"]
 
 
-def _fake_transport(monkeypatch: pytest.MonkeyPatch, outputs: list[object]) -> list[dict[str, Any]]:
-    calls: list[dict[str, Any]] = []
-
-    def post(**kwargs: Any) -> dict[str, Any]:
-        calls.append(deepcopy(kwargs))
-        return {
-            "response": json.dumps(outputs.pop(0), ensure_ascii=False),
-            "model": runner.MODEL_ID,
-            "prompt_eval_count": 30,
-            "eval_count": 20,
-            "total_duration": 1000000,
-        }
-
-    monkeypatch.setattr(transport, "_post_json", post)
-    return calls
-
-
 def test_wire_policy_raw_postvalidation_and_no_gold_are_separate(
     monkeypatch: pytest.MonkeyPatch, plan: dict[str, Any]
 ) -> None:
     raw = {"missing_information_owner": "USER", "missing_fields": ["target_resource"]}
-    calls = _fake_transport(monkeypatch, [raw])
+    calls = fake_ollama_transport(monkeypatch, [raw], model_id=runner.MODEL_ID)
     record = runner.run_arm(
         plan["cases"][0], "candidate", transport.OllamaHTTPClient(), PromptRegistry()
     )
@@ -168,12 +151,13 @@ def test_wire_policy_raw_postvalidation_and_no_gold_are_separate(
 def test_schema_repair_is_bounded_and_preserves_first_failed_output(
     monkeypatch: pytest.MonkeyPatch, plan: dict[str, Any]
 ) -> None:
-    calls = _fake_transport(
+    calls = fake_ollama_transport(
         monkeypatch,
         [
             {"missing_information_owner": "USER"},
             {"missing_information_owner": "USER", "missing_fields": ["target_resource"]},
         ],
+        model_id=runner.MODEL_ID,
     )
     record = runner.run_arm(
         plan["cases"][0], "candidate", transport.OllamaHTTPClient(), PromptRegistry()
@@ -191,12 +175,13 @@ def test_schema_repair_is_bounded_and_preserves_first_failed_output(
 def test_schema_repair_cannot_change_unaffected_owner(
     monkeypatch: pytest.MonkeyPatch, plan: dict[str, Any]
 ) -> None:
-    calls = _fake_transport(
+    calls = fake_ollama_transport(
         monkeypatch,
         [
             {"missing_information_owner": "USER"},
             {"missing_information_owner": "NONE", "missing_fields": []},
         ],
+        model_id=runner.MODEL_ID,
     )
     record = runner.run_arm(
         plan["cases"][0], "candidate", transport.OllamaHTTPClient(), PromptRegistry()
@@ -209,8 +194,10 @@ def test_schema_repair_cannot_change_unaffected_owner(
 def test_semantic_validator_error_does_not_start_repair_or_revision(
     monkeypatch: pytest.MonkeyPatch, plan: dict[str, Any]
 ) -> None:
-    calls = _fake_transport(
-        monkeypatch, [{"missing_information_owner": "NONE", "missing_fields": ["target_resource"]}]
+    calls = fake_ollama_transport(
+        monkeypatch,
+        [{"missing_information_owner": "NONE", "missing_fields": ["target_resource"]}],
+        model_id=runner.MODEL_ID,
     )
     record = runner.run_arm(
         plan["cases"][0], "candidate", transport.OllamaHTTPClient(), PromptRegistry()
