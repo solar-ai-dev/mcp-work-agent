@@ -47,7 +47,7 @@ compose의 completion enum 과잉해석이 남는다. 원문·확정값이 실�
 
 ## 검증 범위
 
--069 직접/인접95 PASS, Ruff와 새 runner mypy PASS. 새 test scoped mypy PASS;
+- 069 직접/인접95 PASS, Ruff와 새 runner mypy PASS. 새 test scoped mypy PASS;
   import 추적 시 기존 fake helper의 타입 오류2개는 미수정이며 전체 mypy PASS가 아니다.
 - 현재 Product SHA의 Canonical92 전체 성적 **미측정**.061/062 수치를 승계하지 않는다.
 - 아직 Retrieval→Work Analysis→Planning→Review 전반의 반복 안정성과 승인 후 실제
@@ -55,3 +55,7 @@ compose의 completion enum 과잉해석이 남는다. 원문·확정값이 실�
 - 실패를 성공으로 재분류하지 않았고, Issue별 단발 성공을 Epic 완료로 합산하지 않았다.
 - 모델 동시1, 생성 중 pytest/코드편집0, 작은 직렬 검증만 수행했다. 자원 압박이나 OOM 때문에
   실패한 것으로 오인하지 않는다. 원인이 이미 확보돼 LangSmith용 추가 Run은 만들지 않았다.
+
+검증된 결과 댓글: [#290](https://github.com/solar-ai-dev/mcp-work-agent/issues/290#issuecomment-5874966945),
+[#286](https://github.com/solar-ai-dev/mcp-work-agent/issues/286#issuecomment-5874967321).
+상세 raw는 기존 ignore 경계에 있고, 공개 가능한 결론·hash·재현 도구는 commit으로 보존한다.
