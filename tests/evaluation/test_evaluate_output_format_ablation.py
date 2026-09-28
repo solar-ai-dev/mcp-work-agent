@@ -1172,3 +1172,233 @@ def test_source_reuse_rejects_drift_or_extra_baseline_generation(
     with pytest.raises(ValueError):
         runner.execute_plan(plan, tmp_path / "no-call", plan_sha256=runner.object_hash(plan))
     assert not (tmp_path / "no-call").exists()
+
+
+@pytest.fixture
+def frozen_concise_source(
+    frozen_source: tuple[Path, dict[str, Any]], tmp_path: Path
+) -> tuple[Path, dict[str, Any]]:
+    original, model = frozen_source
+    template_plan = json.loads((original / "plan.json").read_text(encoding="utf-8"))
+    template = json.loads(
+        (original / "CASE-CORE-005/production/calls.json").read_text(encoding="utf-8")
+    )["calls"][0]
+    root = tmp_path / "concise-sources"
+    canonical = runner.load_cases()
+    registry = PromptRegistry()
+    ref = registry.lookup_for_evaluation(runner.SOURCE_PROMPT_ID)
+    plans: dict[str, dict[str, Any]] = {}
+    pending = []
+    for case_id, arm, directory in runner.SOURCE_CONCISE_SOURCES:
+        plan = plans.setdefault(directory, {**deepcopy(template_plan), "cases": []})
+        plan["head_sha"] = "historical-" + directory
+        request = canonical[case_id].raw["canonical_user_prompt"]
+        reference = (canonical[case_id].raw.get("evaluation_context") or {}).get(
+            "run_reference_time"
+        )
+        binding = {
+            **deepcopy(template_plan["cases"][0]),
+            "case_id": case_id,
+            "case_sha256": runner.object_hash(canonical[case_id].raw),
+            "request_sha256": runner.object_hash(request),
+            "case_reference_time": reference,
+            "reference_time_source": "CASE" if reference else "PREREGISTERED_PAIR_START",
+            "fault_profile": canonical[case_id].raw["evaluation_gold"]["fault_profile"],
+        }
+        plan["cases"].append(binding)
+        call = deepcopy(template)
+        projection = call["input"]
+        projection["user_request"] = projection["goal_candidate"]["goal"] = request
+        projection["requested_work"]["work_units"][0]["request_provenance"][0].update(
+            end_offset=len(request), source_text=request
+        )
+        payload = {
+            "model": model["model_id"],
+            "system": assemble_prompt(
+                ref, projection, registry=registry, execution_scope=EVALUATION
+            ),
+            "prompt": json.dumps(
+                {
+                    "prompt_ref": {
+                        key: asdict(ref)[key]
+                        for key in ("prompt_id", "prompt_version", "content_hash")
+                    },
+                    "input": projection,
+                    "output_schema": call["output_schema"],
+                },
+                sort_keys=True,
+                ensure_ascii=False,
+            ),
+            "stream": False,
+            "think": False,
+            "format": call["output_schema"],
+            "options": call["wire_options"],
+        }
+        call.update(
+            input_sha256=runner.object_hash(projection), wire_sha256=runner.object_hash(payload)
+        )
+        pending.append((case_id, arm, directory, binding, call))
+    for directory, plan in plans.items():
+        _dump(root / directory / "plan.json", plan)
+    for case_id, arm, directory, binding, call in pending:
+        destination = root / directory / case_id / arm
+        _dump(destination / "calls.json", {"calls": [call]})
+        _dump(
+            destination / "raw.json",
+            {
+                "case_binding": binding,
+                "arm": arm,
+                "plan_sha256": runner.object_hash(plans[directory]),
+            },
+        )
+    return root, model
+
+
+def test_concise_source_plan_changes_only_instruction_and_artifact_identity(
+    frozen_concise_source: tuple[Path, dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, model = frozen_concise_source
+    before = {path: runner.file_hash(path) for path in root.rglob("*.json")}
+
+    def forbidden(**_kwargs: Any) -> Any:
+        raise AssertionError("dry plan must never generate")
+
+    monkeypatch.setattr(runner.transport, "_post_json", forbidden)
+    plan = runner.make_plan(model, core5_root=root, owner="source", candidate_mode="concise")
+    assert plan["kind"] == "FROZEN_SOURCE_FIRST_INSTRUCTION_BURDEN_DIAGNOSTIC"
+    assert [row["case_id"] for row in plan["cases"]] == [
+        "CASE-CORE-005",
+        "CASE-CORE-009",
+        "CASE-CORE-017",
+        "CASE-CORE-049",
+        "CASE-CORE-059",
+    ]
+    assert len(plan["source_plans"]) == 3
+    assert plan["semantic_score_reuse"] is False
+    assert plan["policy"]["max_http_generation_calls"] == 5
+    assert plan["policy"]["reused_baseline_calls"] == 5
+    assert plan["policy"]["codec_admission"] == 0
+    assert runner.SOURCE_CONCISE_PATH in plan["source_hashes"]
+    assert runner.SOURCE_CONCISE_CRITERIA in plan["source_hashes"]
+    product_source = PromptRegistry().source_text(runner.SOURCE_PROMPT_ID).rstrip()
+    concise_source = (runner.ROOT / runner.SOURCE_CONCISE_PATH).read_text(encoding="utf-8").rstrip()
+    for case, prior in zip(plan["cases"], plan["reused_source_baseline"], strict=True):
+        original = runner.payload_for(case, "schema_constrained")
+        candidate = runner.payload_for(case, "source_concise")
+        assert {k: v for k, v in candidate.items() if k not in {"prompt", "system"}} == {
+            k: v for k, v in original.items() if k not in {"prompt", "system"}
+        }
+        assert candidate["system"] == concise_source + original["system"][len(product_source) :]
+        original_body, candidate_body = (
+            json.loads(original["prompt"]),
+            json.loads(candidate["prompt"]),
+        )
+        assert {k: v for k, v in candidate_body.items() if k != "prompt_ref"} == {
+            k: v for k, v in original_body.items() if k != "prompt_ref"
+        }
+        assert candidate_body["prompt_ref"]["prompt_id"] == runner.SOURCE_PROMPT_ID
+        assert candidate_body["prompt_ref"]["prompt_version"] == "evaluation-source-concise-v41"
+        assert candidate_body["prompt_ref"]["content_hash"] == case["candidate_source_sha256"]
+        assert original_body["prompt_ref"]["content_hash"] != case["candidate_source_sha256"]
+        assert case["fence_admission"] == "NONE_STRICT_ONLY"
+        assert (
+            prior["new_call"] is False and prior["origin_row_sha256"] == case["source_call_sha256"]
+        )
+    assert before == {path: runner.file_hash(path) for path in before}
+
+
+def test_concise_source_runs_only_five_new_calls_with_strict_validation_no_codec(
+    frozen_concise_source: tuple[Path, dict[str, Any]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, model = frozen_concise_source
+    plan = runner.make_plan(model, core5_root=root, owner="source", candidate_mode="concise")
+    monkeypatch.setattr(runner, "RESULTS", tmp_path)
+    calls = []
+
+    def no_codec(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("concise instruction trial does not admit a fence codec")
+
+    def post(**kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs)
+        assert kwargs["timeout_seconds"] == 180
+        assert kwargs["payload"]["options"]["temperature"] == 0.05
+        assert isinstance(kwargs["payload"]["format"], dict)
+        content = plan["cases"][len(calls) - 1]["source_call"]["content"]
+        return {"response": f"```json\n{content}\n```", "eval_count": 4}
+
+    monkeypatch.setattr(runner, "validate_fenced_response", no_codec)
+    monkeypatch.setattr(runner.transport, "_post_json", post)
+    output = tmp_path / "concise-trial"
+    result = runner.execute_plan(plan, output, plan_sha256=runner.object_hash(plan))
+    assert result["actual_http_calls"] == len(calls) == 5
+    assert result["reused_http_calls"] == 5
+    assert result["new_call_metrics"]["output_tokens"] == 20
+    assert result["reused_call_metrics"]["output_tokens"] == 100
+    for row in result["results"]:
+        assert row["validation"]["structural_result"] == "INVALID_JSON"
+        assert "fence_validation" not in row
+        assert row["prompt_ref"]["prompt_id"] == runner.SOURCE_PROMPT_ID
+        assert row["prompt_ref"]["prompt_version"] == "evaluation-source-concise-v41"
+        assert row["semantic_verdict"] == "UNREVIEWED"
+        assert row["source_observations"]["decisions"] == []
+    with pytest.raises(ValueError, match="prior partial/failed"):
+        runner.execute_plan(plan, output, plan_sha256=runner.object_hash(plan))
+    assert len(calls) == 5
+
+
+@pytest.mark.parametrize(
+    "drift", ["extra_case", "extra_baseline", "order", "budget", "candidate_ref"]
+)
+def test_concise_source_fixed_plan_rejects_drift_before_calls(
+    frozen_concise_source: tuple[Path, dict[str, Any]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    drift: str,
+) -> None:
+    root, model = frozen_concise_source
+    plan = runner.make_plan(model, core5_root=root, owner="source", candidate_mode="concise")
+    monkeypatch.setattr(runner, "RESULTS", tmp_path)
+    if drift == "extra_case":
+        plan["cases"].append(deepcopy(plan["cases"][0]))
+    elif drift == "extra_baseline":
+        plan["execution_order"].append({"case_id": "CASE-CORE-005", "arm": "schema_constrained"})
+    elif drift == "order":
+        plan["execution_order"].reverse()
+    elif drift == "budget":
+        plan["policy"]["max_http_generation_calls"] += 1
+    else:
+        plan["cases"][0]["candidate_prompt_ref"]["content_hash"] = "changed"
+    with pytest.raises(ValueError):
+        runner.execute_plan(plan, tmp_path / "never-created", plan_sha256=runner.object_hash(plan))
+    assert not (tmp_path / "never-created").exists()
+
+
+def test_concise_source_is_not_an_output_owner_or_schema_mutation(
+    frozen: tuple[Path, dict[str, Any]], frozen_concise_source: tuple[Path, dict[str, Any]]
+) -> None:
+    root, model = frozen
+    with pytest.raises(ValueError, match="combination"):
+        runner.make_plan(model, source_root=root, candidate_mode="concise")
+    output_case = runner.make_plan(model, source_root=root)["cases"][0]
+    with pytest.raises(ValueError, match="Source owner"):
+        runner.concise_source_payload(output_case["payload"], output_case["source_call"])
+    root, model = frozen_concise_source
+    case = runner.make_plan(model, core5_root=root, owner="source", candidate_mode="concise")[
+        "cases"
+    ][0]
+    with pytest.raises(ValueError, match="prefix"):
+        runner.concise_source_payload(
+            {**case["payload"], "system": "different"}, case["source_call"]
+        )
+    # A valid plain JSON first still goes through the original exact-set owner.
+    assert (
+        runner.validate_response(case["source_call"]["content"], case)["structural_result"]
+        == "VALIDATED"
+    )
+    changed = json.loads(case["source_call"]["content"])
+    changed["source_dependencies"].pop()
+    assert (
+        runner.validate_response(json.dumps(changed), case)["structural_result"] == "INVALID_SCHEMA"
+    )

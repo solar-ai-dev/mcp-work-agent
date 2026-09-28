@@ -6,6 +6,7 @@ The historical omitted mode uses six new calls; JSON mode reuses three constrain
 records and performs only three new JSON-mode calls. Core5 rebinds inputs to the
 current Prompt and uses ten new calls, with separate strict/fence validation.
 Source mode reuses three exact-wire FIRSTs and generates three omitted candidates.
+Source concise mode reuses five FIRSTs and changes only their Source instruction.
 """
 
 from __future__ import annotations
@@ -53,6 +54,8 @@ BASELINE_RAW = RESULTS / "064-output-format-v36-t1/raw.json"
 PROMPT_ID = "request_understanding.identify_output_responsibilities"
 SOURCE_PROMPT_ID = "request_understanding.identify_source_dependencies"
 SOURCE_CRITERIA = "evaluation/experiments/064-source-format-v40-criteria.md"
+SOURCE_CONCISE_PATH = "evaluation/prompt_candidates/ru-source-concise-v41/source.md"
+SOURCE_CONCISE_CRITERIA = "evaluation/experiments/064-source-concise-v41-criteria.md"
 SOURCES = (
     ("CASE-CORE-005", "production"),
     ("CASE-CORE-017", "work-span-codec-v35"),
@@ -66,8 +69,15 @@ CORE5_SOURCES = (
     ("CASE-CORE-059", "064-connected-core8-continuation-t1"),
 )
 CORE5_CRITERIA = "evaluation/experiments/064-output-fence-core5-criteria.md"
+SOURCE_CONCISE_SOURCES = (
+    ("CASE-CORE-005", "production", "064-work-span-codec-v35-connected-t1"),
+    ("CASE-CORE-009", "production", "064-connected-core8-t1"),
+    ("CASE-CORE-017", "work-span-codec-v35", "064-work-span-codec-v35-connected-t1"),
+    ("CASE-CORE-049", "work-span-codec-v35", "064-work-span-codec-v35-connected-t1"),
+    ("CASE-CORE-059", "production", "064-connected-core8-continuation-t1"),
+)
 ARMS = ("schema_constrained", "format_omitted")
-CANDIDATE_ARMS = {"omitted": "format_omitted", "json": "format_json"}
+CANDIDATE_ARMS = {"omitted": "format_omitted", "json": "format_json", "concise": "source_concise"}
 TIMEOUT_SECONDS = 180
 
 
@@ -181,9 +191,36 @@ def payload_for(case: dict[str, Any], arm: str) -> dict[str, Any]:
         del payload["format"]
     elif arm == "format_json":
         payload["format"] = "json"
+    elif arm == "source_concise":
+        payload, ref = concise_source_payload(payload, case["source_call"])
+        if ref != case["candidate_prompt_ref"]:
+            raise ValueError("Source concise PromptRef changed after registration")
     if arm != "schema_constrained" and object_hash(payload) != case["candidate_wire_sha256"]:
         raise ValueError("candidate payload differs from registered format mode/hash")
     return payload
+
+
+def concise_source_payload(
+    payload: dict[str, Any], call: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Replace only the owner artifact prefix; retain the actual Product assembly suffix."""
+    if call["prompt_id"] != SOURCE_PROMPT_ID:
+        raise ValueError("concise instruction is limited to the Source owner")
+    source = PromptRegistry().source_text(SOURCE_PROMPT_ID).rstrip()
+    if not payload["system"].startswith(source + "\n"):
+        raise ValueError("Product Source assembly prefix changed")
+    candidate_bytes = (ROOT / SOURCE_CONCISE_PATH).read_bytes()
+    ref = {
+        **deepcopy(call["prompt_ref"]),
+        "prompt_version": "evaluation-source-concise-v41",
+        "content_hash": hashlib.sha256(candidate_bytes).hexdigest(),
+    }
+    result = deepcopy(payload)
+    result["system"] = candidate_bytes.decode("utf-8").rstrip() + payload["system"][len(source) :]
+    body = json.loads(payload["prompt"])
+    body["prompt_ref"] = {key: ref[key] for key in ("prompt_id", "prompt_version", "content_hash")}
+    result["prompt"] = json.dumps(body, sort_keys=True, ensure_ascii=False)
+    return result, ref
 
 
 def make_plan(
@@ -197,10 +234,15 @@ def make_plan(
     owner: str = "output",
 ) -> dict[str, Any]:
     arms = arms_for_mode(candidate_mode)
-    if owner not in {"output", "source"} or (
-        owner == "source" and (input_set != "historical3" or candidate_mode != "omitted")
+    if (
+        owner not in {"output", "source"}
+        or (
+            owner == "source"
+            and (input_set != "historical3" or candidate_mode not in {"omitted", "concise"})
+        )
+        or (owner == "output" and candidate_mode == "concise")
     ):
-        raise ValueError("Source permits only three frozen FIRSTs and omitted candidate calls")
+        raise ValueError("unregistered owner/input-set/candidate combination")
     prompt_id = SOURCE_PROMPT_ID if owner == "source" else PROMPT_ID
     if input_set not in {"historical3", "core5"} or (
         input_set == "core5" and candidate_mode != "omitted"
@@ -211,6 +253,11 @@ def make_plan(
         if input_set == "core5"
         else [(case_id, arm, source_root) for case_id, arm in SOURCES]
     )
+    if candidate_mode == "concise":
+        sources = [
+            (case_id, arm, core5_root / directory)
+            for case_id, arm, directory in SOURCE_CONCISE_SOURCES
+        ]
     source_plans: dict[Path, dict[str, Any]] = {}
     canonical = load_cases()
     cases = []
@@ -261,6 +308,8 @@ def make_plan(
         candidate_payload = {k: v for k, v in payload.items() if k != "format"}
         if candidate_mode == "json":
             candidate_payload["format"] = "json"
+        if candidate_mode == "concise":
+            candidate_payload, candidate_ref = concise_source_payload(payload, call)
         case = {
             "case_id": case_id,
             "candidate_mode": candidate_mode,
@@ -304,7 +353,21 @@ def make_plan(
                 source_plan_sha256=file_hash(source_plan_path),
                 source_call_array_index=call_index,
                 source_call_sha256=object_hash(call),
-                fence_admission="EVALUATION_ONLY_SINGLE_JSON_FENCE",
+                fence_admission=(
+                    "NONE_STRICT_ONLY"
+                    if candidate_mode == "concise"
+                    else "EVALUATION_ONLY_SINGLE_JSON_FENCE"
+                ),
+            )
+        if candidate_mode == "concise":
+            case.update(
+                candidate_prompt_ref=candidate_ref,
+                candidate_source_path=SOURCE_CONCISE_PATH,
+                candidate_source_sha256=file_hash(ROOT / SOURCE_CONCISE_PATH),
+                candidate_instruction_sha256=hashlib.sha256(
+                    candidate_payload["system"].encode()
+                ).hexdigest(),
+                candidate_payload_changes=["system.source_prefix", "prompt.prompt_ref"],
             )
         cases.append(case)
     bound_files: tuple[str, ...] = (
@@ -327,11 +390,13 @@ def make_plan(
         bound_files += (CORE5_CRITERIA,)
     if owner == "source":
         bound_files += (
-            SOURCE_CRITERIA,
+            SOURCE_CONCISE_CRITERIA if candidate_mode == "concise" else SOURCE_CRITERIA,
             "src/google_work_agent/application/agents/request_understanding/identify_source_dependencies.py",
             "src/google_work_agent/application/agents/request_understanding/contracts/source_dependency_decision.py",
             "src/google_work_agent/application/prompt_runtime/sources/request_understanding.identify_source_dependencies.md",
         )
+    if candidate_mode == "concise":
+        bound_files += (SOURCE_CONCISE_PATH,)
     plan: dict[str, Any] = {
         "schema_version": 1,
         "kind": "FROZEN_OUTPUT_FIRST_FORMAT_ONLY_OWNER_DIAGNOSTIC",
@@ -391,11 +456,28 @@ def make_plan(
         plan["reused_baseline"] = load_reused_baseline(baseline_raw, plan)
     if owner == "source":
         plan.update(owner="source", kind="FROZEN_SOURCE_FIRST_FORMAT_ONLY_OWNER_DIAGNOSTIC")
-        plan["execution_order"] = [
-            {"case_id": case["case_id"], "arm": "format_omitted"} for case in cases
-        ]
-        plan["policy"].update(max_http_generation_calls=3, reused_baseline_calls=3)
+        plan["execution_order"] = [{"case_id": case["case_id"], "arm": arms[1]} for case in cases]
+        plan["policy"].update(
+            max_http_generation_calls=len(cases), reused_baseline_calls=len(cases)
+        )
         plan["reused_source_baseline"] = load_source_baseline(cases)
+    if candidate_mode == "concise":
+        del plan["source_plan_path"], plan["source_plan_sha256"]
+        plan.update(
+            kind="FROZEN_SOURCE_FIRST_INSTRUCTION_BURDEN_DIAGNOSTIC",
+            source_case_set="fixed-five-source-firsts",
+            source_plans=[
+                {
+                    "path": path.resolve().as_posix(),
+                    "sha256": file_hash(path),
+                    "object_sha256": object_hash(value),
+                    "head_sha": value["head_sha"],
+                }
+                for path, value in source_plans.items()
+            ],
+            semantic_score_reuse=False,
+        )
+        plan["policy"].update(codec_admission=0)
     return plan
 
 
@@ -783,7 +865,14 @@ def run_arm(
             historical_response_reused=False,
         )
     if case.get("owner") == "source":
-        record.update(owner="source", prompt_ref=deepcopy(case["source_call"]["prompt_ref"]))
+        record.update(
+            owner="source",
+            prompt_ref=deepcopy(
+                case["candidate_prompt_ref"]
+                if arm == "source_concise"
+                else case["source_call"]["prompt_ref"]
+            ),
+        )
     persist(record)
     started = time.monotonic()
     try:
@@ -847,21 +936,28 @@ def execute_plan(plan: dict[str, Any], output: Path, *, plan_sha256: str) -> dic
     candidate_mode = plan.get("candidate_mode", "omitted")
     input_set = plan.get("input_set", "historical3")
     owner = plan.get("owner", "output")
-    if owner not in {"output", "source"} or (
-        owner == "source" and (input_set != "historical3" or candidate_mode != "omitted")
+    if (
+        owner not in {"output", "source"}
+        or (
+            owner == "source"
+            and (input_set != "historical3" or candidate_mode not in {"omitted", "concise"})
+        )
+        or (owner == "output" and candidate_mode == "concise")
     ):
         raise ValueError("unregistered Source comparison")
     if input_set not in {"historical3", "core5"} or (
         input_set == "core5" and candidate_mode != "omitted"
     ):
         raise ValueError("only the registered input set and format mode are allowed")
-    sources = CORE5_SOURCES if input_set == "core5" else SOURCES
+    sources: tuple[tuple[str, str], ...] = CORE5_SOURCES if input_set == "core5" else SOURCES
+    if candidate_mode == "concise":
+        sources = tuple((case_id, arm) for case_id, arm, _ in SOURCE_CONCISE_SOURCES)
     arms = arms_for_mode(candidate_mode)
     expected_order = [
         {"case_id": case_id, "arm": arm}
         for index, (case_id, _) in enumerate(sources)
         for arm in (arms if index % 2 == 0 else tuple(reversed(arms)))
-        if (owner == "source" and arm == "format_omitted")
+        if (owner == "source" and arm == arms[1])
         or (owner == "output" and (candidate_mode != "json" or arm == "format_json"))
     ]
     if (
@@ -874,7 +970,7 @@ def execute_plan(plan: dict[str, Any], output: Path, *, plan_sha256: str) -> dic
         or plan["policy"]["max_http_generation_calls"]
         != len(sources) * (1 if candidate_mode == "json" or owner == "source" else 2)
         or plan["policy"]["reused_baseline_calls"]
-        != (3 if candidate_mode == "json" or owner == "source" else 0)
+        != (len(sources) if candidate_mode == "json" or owner == "source" else 0)
     ):
         raise ValueError("only the registered inputs and mode-bound one-shot arms are allowed")
     reused = []

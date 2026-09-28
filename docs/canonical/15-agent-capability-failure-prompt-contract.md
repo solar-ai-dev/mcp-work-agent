@@ -925,6 +925,11 @@ Source 판단의 개발 구조 비교는 기존 요청 원문·선택 identity·
 의미 통과로 취급하지 않는다. 비활성 후보의 직접 모델 호출은 Production budget,
 Prompt activation 또는 release evidence를 대체하지 않는다.
 
+Source 지시량 비교는 기존 책임·원문/선택/Work binding·입력·출력 Schema·sampling·format을
+유지한 채 중첩 설명만 축소할 수 있다. candidate source와 PromptRef/hash를 별도로 결속하고
+기존 strict schema/owner validation을 그대로 적용한다. 다른 Source 표현 변경과 섞거나
+Gold·사례별 정답 규칙을 추가하지 않으며, 직접 FIRST 결과만으로 Product 활성화를 허용하지 않는다.
+
 Source/Output owner의 decoding 경계는 동일한 실제 요청 payload에서 top-level `format`의 전체
 schema / JSON 문법만 제약 / 생략 중 사전 고정한 한 후보를 비교하는 비활성 EVALUATION을
 허용한다. instruction·본문 schema·입력·sampling은
