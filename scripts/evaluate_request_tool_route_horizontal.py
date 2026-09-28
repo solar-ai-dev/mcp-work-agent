@@ -57,6 +57,10 @@ from scripts.ru_source_family_bound_candidate import BoundSourceFamilyCandidate
 from scripts.ru_source_family_candidate import SourceFamilyCandidate
 from scripts.ru_source_item_repair_candidate import source_item_repair_candidate
 from scripts.ru_source_scope_candidate import source_scope_candidate
+from scripts.ru_source_scope_discriminated_candidate import (
+    SourceScopeDiscriminatedCandidate,
+    source_scope_discriminated_candidate,
+)
 from scripts.ru_source_scope_handoff_candidate import (
     SourceScopeHandoffCandidate,
     source_scope_handoff_candidate,
@@ -293,6 +297,7 @@ def main() -> None:
             "output-source-handoff-v20",
             "request-grounded-goal-v21",
             "scope-handoff-v24",
+            "scope-discriminated-v25",
         ),
         default="none",
     )
@@ -442,6 +447,7 @@ def main() -> None:
             "output-source-handoff-v20": OutputSourceHandoffCandidate,
             "request-grounded-goal-v21": RequestGroundedGoalCandidate,
             "scope-handoff-v24": SourceScopeHandoffCandidate,
+            "scope-discriminated-v25": SourceScopeDiscriminatedCandidate,
         }.get(args.semantic_candidate)
         semantic_candidate = (
             candidate_class(
@@ -620,11 +626,16 @@ def main() -> None:
             case_stack = ExitStack()
             scope_handoff = None
             try:
-                if args.semantic_candidate == "scope-handoff-v24":
+                if args.semantic_candidate in {"scope-handoff-v24", "scope-discriminated-v25"}:
                     scope_events: list[dict[str, Any]] = []
                     record["source_scope_handoff_events"] = scope_events
+                    scope_context = (
+                        source_scope_discriminated_candidate
+                        if args.semantic_candidate == "scope-discriminated-v25"
+                        else source_scope_handoff_candidate
+                    )
                     scope_handoff = case_stack.enter_context(
-                        source_scope_handoff_candidate(
+                        scope_context(
                             user_request=request.request_text,
                             events=scope_events,
                         )

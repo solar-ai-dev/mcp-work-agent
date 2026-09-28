@@ -440,3 +440,48 @@ raw SHA256: `37bd8c0d9ea87849eeec10648c4a331457190196f7ce63d9a6d2c74b08e6171a`.
 실제 Evidence 확보·업무 성공을 분리한다. 기존 raw/점수는 수정하지 않는다.
 v20의 기존 REJECT는 Product 미채택 기록으로 유지하되 전체 business 실패의 증명으로 쓰지
 않는다. 013/023/025/027의 사실 접근 가능성 회복과049 메일 책임 누락을 함께 기록한다.
+
+## v25 동일 scope 계약의 discriminated schema — 실행 전 계획
+
+v24 CORE002의 첫 출력과 repair는 scope 값은 만들었으나 조건부 필수 proof를 둘 다
+누락했다. 다음은 의미 규칙 추가가 아니라 동일 valid output 언어의 Schema 표현 비교다.
+WorkUnit IDs를 기존 builder로 닫은 뒤 additional_constraints.items의 조건부
+if/then을 ordinary / required_sources / forbidden_sources의 명시적 oneOf로 표현한다.
+범주 선택이나 scope 생성 자체를 강제하지 않고 Goal/Source Prompt와 의미·provenance
+계약은 그대로 유지한다. 6,600개 조합 및 malformed 반례에서 두 Schema의 허용/거절
+동등성을 먼저 검사했다. 이로써 Ollama의 특정 Schema keyword 미지원이 확정된 것은 아니다.
+
+v24와 같은 frozen Goal5를 각각1회, repair최대1회로 비교한다. 실제 scope 누락·잘못된
+범주·Output 오판과 구조 누락을 별도 기록한다. 구조만 나아져도 의미 개선으로 표현하지 않는다.
+v24 raw는 보존하며, 새 후보는 다른 Schema hash의 고정 비교로서 실패 Trial 대체가 아니다.
+
+### v25 결과
+
+first schema5/5, repair0으로 v24의3/5→repair후4/5보다 구조가 안정됐다. 002는
+EMAIL 허용과 TASK/CALENDAR 제외 및 실제 원문 proof를 모두 생성했다. 반면001은
+'다른 메일 검색 금지'를 TASK/CALENDAR/ISSUE 금지로 잘못 표현했고,004도 같은
+identity/category 구분 오류 위험이 남았다. 009는 여전히 정보 요청에 Draft CREATE와
+Task UPDATE를 추가했다. 013의 Draft CREATE/수신자와 내용 범위는 유지됐다.
+따라서 **동등 Schema 표현의 필드 누락 감소는 관측 / 의미 안정화·Production 채택은 아님**.
+추가 규칙이나 범주 강제 생성으로 이를 보정하지 않는다.
+
+raw: `evaluation/results/064-scope-discriminated-v25-t1/raw.json`
+SHA256: `b244d62179c8359e156212fcf5b3aa927c9a2928989095f74758f5cf512bd10f`.
+신규5calls, input17,942/output2,436tokens, reported95,850ms/wall96,048ms.
+기존 v24와 같은 Goal Prompt·frozen 입력·sampler이며 출력 Schema 표현만 다르다.
+보호된 typed handoff의 직접 관련62 PASS와 실제 모델 의미 결과를 합쳐 성공률로 쓰지 않는다.
+
+### frozen Source→connected component gate (모델 호출0)
+
+Core001/013/023/027의 v20 Source와 같은 authority의 기존 raw를 재사용하되, 후속 owner
+입력이 정확히 일치할 때만 과거 응답을 허용했다. 4건 모두 Source-status 입력이 달라져
+`NEW_SEMANTIC_CALL_REQUIRED`에서 멈췄다. 과거 빈 status/ambiguity를 새 Source에 복사해
+가짜 connected 성공을 만들지 않았다. 변경 없는 v4 finalized Intent의 실제 compiled
+ToolRoute control4개는 반환됐지만 v20 성공으로 세지 않는다.
+
+별도 deterministic merge→policy→Registry component에서013의 Draft와023의
+Draft/Attachment가 업무 필수 READ인데 해당 fixture inventory가 비어 있음을 확인했다.
+이는 과잉 acquisition의 구체적 위험이며, 실제 Query/Evidence/Sufficiency를 실행한
+BLOCKED 판정은 아니다. 직접10 + 기존 connected2 PASS, 모델/Provider I/O0.
+raw: `evaluation/results/064-source-frozen-connected-component-gate/diagnostic-final.json`
+SHA256: `c188c4792bbb11d3d9dd224d7d388d38f2c017d56eda4563a38208676f2a4863`.
