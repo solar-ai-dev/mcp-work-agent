@@ -1628,6 +1628,12 @@ class ReviewInspectorResultV1:
 
 최종 PASS·REVISE·RETRIEVE_MORE·ROUTE_RECONSIDERATION·CONFIRM·BLOCK은 닫힌 Schema와 결정적 aggregation으로 제한한다.
 
+개발 후보에서는 현재 Intent 자체와 authoritative 요청 provenance의 불일치를 Review가
+별도의 typed finding으로 표현하고 Request Understanding 재판정 입력에 결속하는 계약을
+비교할 수 있다. 이는 evaluation-only이며 위 Production result/edge 또는 Work Analysis의
+Evidence 기반 RequestReconsiderationRequiredV1을 암묵적으로 확장하지 않는다. 원문 관측을
+외부 Evidence로 위장하거나 finding의 자유 문자열로 revision owner를 재분류하지 않는다.
+
 ## 6. Workflow Phase
 
 `WorkflowPhaseV2`의 값은 §2.1의 선언 한곳에서 정의한다. Phase는 Main routing/checkpoint 위치이며, Query 계획·Read·RAG·Sufficiency는 Retrieval 내부 Node State다.

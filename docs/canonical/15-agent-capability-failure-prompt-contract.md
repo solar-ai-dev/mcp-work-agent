@@ -193,6 +193,12 @@ Source owner의 잘못된 누락은 의미 평가 실패로 남으며, 구조적
 승격하지 않는다. selected identity, 확인된 target의 필수 Source, Work binding, closed Resource,
 명시 금지·권한·승인 검증은 해당 typed 경계에서 그대로 유지한다.
 
+Review의 개발 후보는 원문 provenance와 현재 Intent의 의미 불일치를 기존 Route/Planning
+문제와 구별하는 typed 결과·입력 결속을 평가할 수 있다. 후보 Schema/Prompt는 EVALUATION
+범위에서 식별하며, 현재 Work/field/ref와 revision만 결정적으로 검증한다. 검증기는 어떤
+의미가 옳은지 판정하거나 기존 finding을 새 종류로 바꾸지 않는다. 활성 Prompt·Production
+result/signal 계약·checkpoint 호환은 후보 연결 통과만으로 변경된 것으로 간주하지 않는다.
+
 #### Complexity Metadata와 Gate
 
 각 LLM Node는 최소 다음 Metadata를 실험에 노출한다.
