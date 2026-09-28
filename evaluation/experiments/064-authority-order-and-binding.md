@@ -648,3 +648,38 @@ WorkUnit 내 scope 충돌은 기존 계약대로 거절한다. 실제 Query/LLM 
 Product 채택에는 owner-local 타입/Schema/validator, merge, Prompt의 출력 형상 설명과
 버전/hash, Canonical06·15, raw/fake adapter/repair 호환을 함께 닫아야 한다. 현재는 미활성
 prototype이며 9B 생성 정확도·tokens/latency·local revision 호환을 검증하지 않았다.
+
+## Ambiguity 업무 귀속 손실과 전역 target 소비 수정
+
+확정된 두 Source의 WorkUnit 귀속을 서로 바꾸어도 실제 ambiguity infer 입력이 완전히
+같아졌다. projection이 requested_work와 source work_unit_ids를 버렸기 때문이다.
+이제 기존 Work 정의·item binding·exact provenance를 복사해 전달하고 connector-owned
+information에도 원항목 binding만 유지한다. legacy binding은 만들어 채우지 않는다.
+입력 v3/Prompt1.0.18/hash/Canonical06·15를 정합화했고 출력2/State/Node/Edge/DB는 불변이다.
+
+또한 ambiguity의 missing_fields에는 WorkUnit ID가 없는데, 전역 anchor 양수나 같은 Resource
+종류의 selected identity만으로 USER/target_resource를 CONNECTOR로 덮거나 거절했다.
+명시적 multi-work에서는 그 증거만으로 다른 업무의 target이 해결됐다고 판정하지 않고
+원래 USER 후보를 보존한다. 단일 업무·legacy·CONNECTOR/NONE·repository 검증은 유지한다.
+Source/Output 의미를 만들거나 어느 업무의 target인지 코드로 추정하지 않는다.
+
+carry 반례4 FAIL→5 PASS(legacy control 포함), 소비 반례3 FAIL→12 PASS(controls 포함).
+직접/compiled node/Prompt97 PASS, root RU·Prompt339 PASS. 모델·Provider0이다.
+기존 Prompt의 전역 count 기반 판단 설명은 입력 형상 설명 외에는 변경하지 않았다.
+따라서 모델 ambiguity 의미 안정화 자체는 미검증이며, 이 기계적 count 판단이 복수 업무
+binding과 충돌하는 문제는 별도 평가 후보로 다룬다. 입력 보존을 의미 PASS로 승계하지 않는다.
+
+### v27 명시적 상태 slot 결과
+
+HEAD52f95859에서 v26 raw6개를 동일 input/Schema/Prompt/runtime/모델 digest/owner 코드
+hash 검증 후 재사용했다. 신규 후보는6회만 호출, first schema6/6, repair0이다.
+v26의3/6→v27의4/6: 불필요 필터(NONE·CORE005)는 없어졌지만 서로 다른 Task 상태의
+기존 PASS가 NO_FILTER 두 개로 회귀했다. Mail Draft/Sent는 계속 누락됐다.
+공통 미완료/UPDATE 효과 구분은 유지했다. 공통 상태의 proof가 각 slot에 중복됐지만
+동일 필터의 업무 귀속은 유지되므로 이를 업무 실패나 회귀로 세지 않는다.
+
+**새 후보 역시 미채택**이며 불필요 필터와 명시 필터 누락 사이의 의미 불안정이 남는다.
+신규6calls/input12,450/output240tokens/reported21,838ms, 재사용6calls는 신규비용에서 분리.
+rerun0/Provider0/activation0. raw:
+`evaluation/results/064-status-explicit-slot-owner6-v27-reuse-t1/raw.json`, SHA256
+`855a7c51e331652afdb87d1e15ad9d93986a5956eff0104e915a54a17546161d`.
