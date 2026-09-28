@@ -40,6 +40,7 @@ from google_work_agent.adapters.langgraph.main.supervisor_state_projection impor
     project_supervisor_state,
 )
 from google_work_agent.adapters.langgraph.profiles.profile_registry import GraphProfile
+from google_work_agent.adapters.langgraph.subgraphs.planning.graph import PlanningSubgraph
 from google_work_agent.adapters.llm.ollama import transport
 from google_work_agent.application.agents.retrieval.resolve_task_calendar_snapshot import (
     resolve_task_calendar_snapshot,
@@ -81,6 +82,11 @@ HISTORY_HASH = "3ce662090733ad1d7c8811a566f8f4541514198463212b69615540beca6a8a1b
 CALENDAR = RESULTS / "065-read-answer-handoff-t1/plan.json"
 CALENDAR_HASH = "00fd6f33489da6d33660e204bfafcabf68c9b88780c09da41b372eb64e614fb4"
 CRITERIA = "evaluation/experiments/088-registered-answer-choice-criteria.md"
+TASK_FIELD_CRITERIA = "evaluation/experiments/094-product-task-field-scope-criteria.md"
+ANSWER_CHOICE_MODE = "ANSWER_CHOICE_088"
+PRODUCT_TASK_FIELD_SCOPE = "PRODUCT_TASK_FIELD_SCOPE"
+PLANNING_MODES = (ANSWER_CHOICE_MODE, PRODUCT_TASK_FIELD_SCOPE)
+TASK_FIELD_GROUPS = ("PRODUCT_TASK_FIELD_FULL", "PRODUCT_TASK_FIELD_PARTIAL")
 MODEL_ID: Literal["qwen3.5:9b"] = "qwen3.5:9b"
 SEED = 20260923
 DISPATCH_CAP, CALL_TIMEOUT, WALL_SECONDS = 4, 180, 1200
@@ -111,14 +117,25 @@ def _verify_snapshots(projection: dict[str, Any], snapshots: dict[str, Any]) -> 
             raise ValueError("missing, conflicting, or invalid same-resource/version snapshot")
 
 
-def expected_first(projection: dict[str, Any], snapshots: dict[str, Any]) -> dict[str, Any]:
+def expected_first(
+    projection: dict[str, Any],
+    snapshots: dict[str, Any],
+    *,
+    planning_mode: str = ANSWER_CHOICE_MODE,
+) -> dict[str, Any]:
     """Capture current actual transport construction, with no external dispatch."""
     from scripts.answer_fact_selection_candidate import bind_fact_selection_schema
     from scripts.answer_rendering_choice_candidate import bind_answer_rendering_choice_schema
 
+    if planning_mode not in PLANNING_MODES:
+        raise ValueError("unknown compiled Planning mode")
     _verify_snapshots(projection, snapshots)
     arguments = handoff._call_arguments(projection)
-    has_catalog = bind_fact_selection_schema(projection, source_snapshots=snapshots) is not None
+    has_catalog = (
+        bind_fact_selection_schema(projection, source_snapshots=snapshots) is not None
+        if planning_mode == ANSWER_CHOICE_MODE
+        else None
+    )
     if has_catalog:
         registry = _EvaluationRegistry(
             product_registry=PromptRegistry(),
@@ -268,9 +285,13 @@ def _synthetic_component_state(projection: dict[str, Any], *, group: str) -> dic
     return {"request_intent": intent, "tool_route_plan": plan, "retrieval_result": retrieval}
 
 
-def make_plan(model: dict[str, Any]) -> dict[str, Any]:
+def make_plan(model: dict[str, Any], *, planning_mode: str = ANSWER_CHOICE_MODE) -> dict[str, Any]:
+    if planning_mode not in PLANNING_MODES:
+        raise ValueError("unknown compiled Planning mode")
     if model.get("model_id") != MODEL_ID or not model.get("model_digest"):
         raise ValueError("actual fixed model metadata required")
+    if planning_mode == PRODUCT_TASK_FIELD_SCOPE:
+        return _make_task_field_plan(model)
     if model != _read(HISTORY)["binding"]["model"]:
         raise ValueError("historical model digest/parameters/backend metadata changed")
     cases = []
@@ -330,29 +351,118 @@ def make_plan(model: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _make_task_field_plan(model: dict[str, Any]) -> dict[str, Any]:
+    from scripts.task_field_scope_diagnostic import build_cases
+
+    cases = deepcopy(build_cases())
+    if [(case["group"], case["case_id"], case["trial"]) for case in cases] != [
+        (group, f"{group}-T1", 1) for group in TASK_FIELD_GROUPS
+    ]:
+        raise ValueError("094 requires exactly full then partial, one trial each")
+    for case in cases:
+        if case["input_binding_sha256"] != object_hash(
+            [case["prompt_input"], case["snapshots"], case["component_state"]]
+        ):
+            raise ValueError("094 fixture input binding changed")
+        case["expected_first"] = expected_first(
+            case["prompt_input"], case["snapshots"], planning_mode=PRODUCT_TASK_FIELD_SCOPE
+        )
+    hashes = handoff._bound_files()
+    for path in (
+        "scripts/evaluate_registered_answer_choice.py",
+        "scripts/task_field_scope_diagnostic.py",
+        "scripts/production_snapshot_runtime.py",
+        "scripts/serve_canonical_v8_product.py",
+        "scripts/verify_answer_fact_handoff.py",
+        "evaluation/datasets/e2e/canonical_cases_v8.jsonl",
+        "evaluation/datasets/e2e/dataset-manifest-v8.json",
+        "evaluation/datasets/e2e/fixtures/google_workspace/provider-snapshot-v8.json",
+        "tests/evaluation/test_evaluate_registered_answer_choice.py",
+        "tests/evaluation/test_task_field_scope_diagnostic.py",
+        TASK_FIELD_CRITERIA,
+    ):
+        hashes[path] = file_hash(ROOT / path)
+    return {
+        "kind": "094_PRODUCT_COMPILED_PLANNING",
+        "planning_mode": PRODUCT_TASK_FIELD_SCOPE,
+        "head_sha": head(),
+        "model": model,
+        "source_hashes": hashes,
+        "history_hashes": {},
+        "cases": cases,
+        "scope": "SYNTHETIC_PRODUCT_COMPONENT_NOT_MAIN_OR_CANONICAL_SCORE",
+        "runtime_account_scaffold": "CASE-CORE-005_NOT_SEMANTIC_INPUT_OR_CANONICAL_TRIAL",
+        "terminal_intent": "NOT_EVALUATED",
+        "policy": {
+            "expected_first": 2,
+            "trials_per_input": 1,
+            "per_trial_actual_dispatch_cap": 1,
+            "total_actual_dispatch_cap": 2,
+            "call_timeout_seconds": CALL_TIMEOUT,
+            "wall_seconds": WALL_SECONDS,
+            "wall_enforcement": "BEFORE_NEXT_DISPATCH_NOT_THREAD_CANCELLATION",
+            "product_schema_semantic_repair": "FOLLOWUP_BLOCKED_BEFORE_DISPATCH_BY_EVALUATION_CAP",
+            "product_run_budget": (
+                "UNCHANGED_NORMAL_PROFILE_WITH_ADDITIONAL_EVALUATION_DISPATCH_CAP"
+            ),
+            "rerun": 0,
+            "concurrency": 1,
+            "provider_read_write": 0,
+            "answer_choice_overlay": False,
+        },
+    }
+
+
 def validate_plan(plan: dict[str, Any]) -> None:
     for case in plan["cases"]:
         first = case["expected_first"]
         if transport_hash(first["payload"]) != first["transport_sha256"]:
             raise ValueError("stored FIRST HTTP byte/order seal changed")
-    if plan != make_plan(plan["model"]):
+    planning_mode = plan.get("planning_mode", ANSWER_CHOICE_MODE)
+    regenerated = (
+        make_plan(plan["model"])
+        if planning_mode == ANSWER_CHOICE_MODE
+        else make_plan(plan["model"], planning_mode=planning_mode)
+    )
+    if plan != regenerated:
         raise ValueError("registered code, input, snapshot, wire or plan changed")
 
 
 class _Observation:
-    def __init__(self, case: dict[str, Any], *, started: float, save: Any, fake: bool) -> None:
+    def __init__(
+        self,
+        case: dict[str, Any],
+        *,
+        started: float,
+        save: Any,
+        fake: bool,
+        planning_mode: str = ANSWER_CHOICE_MODE,
+    ) -> None:
+        if planning_mode not in PLANNING_MODES:
+            raise ValueError("unknown compiled Planning mode")
         self.case, self.started, self.save, self.fake = case, started, save, fake
+        self.planning_mode = planning_mode
         self.calls: list[dict[str, Any]] = []
         self.active: dict[str, Any] | None = None
+        self.blocked_dispatches: list[str] = []
+        self.transport_interrupted = False
 
     def _guard(self) -> None:
         if time.monotonic() - self.started >= WALL_SECONDS:
             raise RuntimeError("EXPERIMENT_WALL_BOUND_BEFORE_DISPATCH")
-        if len(self.calls) >= DISPATCH_CAP:
+        cap = 1 if self.planning_mode == PRODUCT_TASK_FIELD_SCOPE else DISPATCH_CAP
+        if len(self.calls) >= cap:
+            if self.planning_mode == PRODUCT_TASK_FIELD_SCOPE:
+                self.blocked_dispatches.append("EXPERIMENT_TRIAL_DISPATCH_CAP")
+                self.save()
             raise RuntimeError("EXPERIMENT_TRIAL_DISPATCH_CAP")
 
     def decorate(self, raw: Any) -> Any:
-        delegate = decorate_answer_choice_provider(raw)
+        delegate = (
+            raw
+            if self.planning_mode == PRODUCT_TASK_FIELD_SCOPE
+            else decorate_answer_choice_provider(raw)
+        )
         owner = self
 
         class ObservedProvider:
@@ -472,8 +582,15 @@ class _Observation:
                     "done_reason": "stop",
                 }
             else:
-                response = original(**kwargs)
+                try:
+                    response = original(**kwargs)
+                except Exception:
+                    self.transport_interrupted = True
+                    raise
             # Hidden thinking text is deliberately not copied into the local record.
+            if self.planning_mode == PRODUCT_TASK_FIELD_SCOPE:
+                # Keep failed JSON FIRSTs before the Product parser consumes them.
+                event["provider_visible_output"] = response.get("response")
             event["provider_response_metadata"] = {
                 key: deepcopy(response[key])
                 for key in (
@@ -491,6 +608,13 @@ class _Observation:
                 if key in response
             }
             self.save()
+            if self.planning_mode == PRODUCT_TASK_FIELD_SCOPE and (
+                response.get("model") != MODEL_ID or response.get("done") is not True
+            ):
+                self.transport_interrupted = True
+                event["rejected_response_content"] = response.get("response")
+                self.save()
+                raise ValueError("094 requires the completed response from the fixed model")
             return response
 
         with patch.object(transport, "_post_json", dispatch):
@@ -593,8 +717,34 @@ def _boundary_observations(boundary: Any | None) -> dict[str, Any]:
     }
 
 
+def _planning_subgraph(
+    *,
+    planning_mode: str,
+    runtime: Any,
+    store: Any,
+    graph_profile: GraphProfile,
+    merge: Any,
+    observations: list[dict[str, Any]],
+) -> PlanningSubgraph:
+    options = {
+        "llm_runtime": runtime,
+        "prompt_manifest_path": runtime.prompt_manifest_path,
+        "prompt_execution_scope": EVALUATION,
+        "evidence_store": store,
+        "id_factory": lambda: str(uuid4()),
+        "graph_profile": graph_profile,
+        "merge_decision": merge,
+    }
+    if planning_mode == PRODUCT_TASK_FIELD_SCOPE:
+        return PlanningSubgraph(**options)
+    if planning_mode != ANSWER_CHOICE_MODE:
+        raise ValueError("unknown compiled Planning mode")
+    return AnswerChoicePlanningSubgraph(**options, observations=observations)
+
+
 def execute_plan(plan: dict[str, Any], output: Path, *, fake_wire: bool = False) -> dict[str, Any]:
     validate_plan(plan)
+    planning_mode = plan.get("planning_mode", ANSWER_CHOICE_MODE)
     output = output.resolve()
     if not output.is_relative_to(RESULTS.resolve()) or output == RESULTS.resolve():
         raise ValueError("dedicated evaluation/results directory required")
@@ -603,8 +753,11 @@ def execute_plan(plan: dict[str, Any], output: Path, *, fake_wire: bool = False)
     if inspect_diagnostic_model("presence_zero") != plan["model"]:
         raise ValueError("current model/backend differs from sealed plan")
     if not fake_wire:
+        claim_namespace = (
+            ".094-plan-claims" if planning_mode == PRODUCT_TASK_FIELD_SCOPE else ".088-plan-claims"
+        )
         write_json(
-            RESULTS / ".088-plan-claims" / (object_hash(plan) + ".json"),
+            RESULTS / claim_namespace / (object_hash(plan) + ".json"),
             {"plan_sha256": object_hash(plan), "output": output.relative_to(RESULTS).as_posix()},
             exclusive=True,
         )
@@ -644,7 +797,9 @@ def execute_plan(plan: dict[str, Any], output: Path, *, fake_wire: bool = False)
                 "events": [],
             }
             raw["trials"].append(result)
-            observation = _Observation(case, started=started, save=save, fake=fake_wire)
+            observation = _Observation(
+                case, started=started, save=save, fake=fake_wire, planning_mode=planning_mode
+            )
             result["calls"] = observation.calls
             trial_directory = output / case["case_id"]
             trial_started = time.monotonic()
@@ -713,14 +868,12 @@ def execute_plan(plan: dict[str, Any], output: Path, *, fake_wire: bool = False)
                         return projection.state
 
                     runtime = container.structured_inference_port
-                    planning = AnswerChoicePlanningSubgraph(
-                        llm_runtime=runtime,
-                        prompt_manifest_path=runtime.prompt_manifest_path,
-                        prompt_execution_scope=EVALUATION,
-                        evidence_store=store,
-                        id_factory=lambda: str(uuid4()),
+                    planning = _planning_subgraph(
+                        planning_mode=planning_mode,
+                        runtime=runtime,
+                        store=store,
                         graph_profile=GraphProfile(container.graph_profile),
-                        merge_decision=merge,
+                        merge=merge,
                         observations=result["events"],
                     )
                     with provider_dispatch_execution_scope(
@@ -772,8 +925,23 @@ def execute_plan(plan: dict[str, Any], output: Path, *, fake_wire: bool = False)
                 result["input_binding_unchanged"] = case["input_binding_sha256"] == object_hash(
                     [case["prompt_input"], case["snapshots"], case["component_state"]]
                 )
+                if planning_mode == PRODUCT_TASK_FIELD_SCOPE:
+                    result["blocked_dispatches"] = observation.blocked_dispatches
+                    if observation.blocked_dispatches:
+                        result.update(
+                            state="ERROR", evaluation_bound="EXPERIMENT_TRIAL_DISPATCH_CAP"
+                        )
                 save()
-        raw["completed"] = True
+            if planning_mode == PRODUCT_TASK_FIELD_SCOPE and observation.transport_interrupted:
+                remaining = plan["cases"][len(raw["trials"]) :]
+                raw["not_dispatched"] = [
+                    {"case_id": item["case_id"], "reason": "PRIOR_TRANSPORT_INCOMPLETE"}
+                    for item in remaining
+                ]
+                raw["circuit_break"] = "PRIOR_TRANSPORT_INCOMPLETE"
+                break
+        else:
+            raw["completed"] = True
     finally:
         raw["binding_unchanged"] = False
         try:
@@ -785,6 +953,16 @@ def execute_plan(plan: dict[str, Any], output: Path, *, fake_wire: bool = False)
         raw["wall_latency_ms"] = int((time.monotonic() - started) * 1000)
         raw["actual_wire_calls"] = sum(item.get("wire_request_count", 0) for item in raw["calls"])
         raw["actual_model_generations"] = 0 if fake_wire else raw["actual_wire_calls"]
+        if planning_mode == PRODUCT_TASK_FIELD_SCOPE:
+            raw["execution_coverage"] = {
+                "planned_cases": len(plan["cases"]),
+                "started_cases": len(raw["trials"]),
+                "dispatched_firsts": raw["actual_wire_calls"],
+                "not_dispatched_cases": len(raw.get("not_dispatched", [])),
+                "returned_trials": sum(item["state"] == "RETURNED" for item in raw["trials"]),
+                "failed_trials": sum(item["state"] == "ERROR" for item in raw["trials"]),
+                "completion_means": "FIXED_TRIALS_ATTEMPTED_NOT_SEMANTIC_SUCCESS",
+            }
         boundaries = [trial["provider_boundary"] for trial in raw["trials"]]
         raw["provider_observation_complete"] = all(item["observed"] for item in boundaries)
         raw["provider_counts"] = (
@@ -811,11 +989,15 @@ def main() -> None:
     mode.add_argument("--execute-plan", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--fake-wire", action="store_true")
+    parser.add_argument("--planning-mode", choices=PLANNING_MODES)
     args = parser.parse_args()
     if args.prepare:
         if args.fake_wire or args.output:
             parser.error("prepare writes only its sealed plan; no generation")
-        plan = make_plan(inspect_diagnostic_model("presence_zero"))
+        plan = make_plan(
+            inspect_diagnostic_model("presence_zero"),
+            planning_mode=args.planning_mode or ANSWER_CHOICE_MODE,
+        )
         write_json(args.prepare, plan, exclusive=True)
         print(
             json.dumps(
@@ -823,6 +1005,8 @@ def main() -> None:
             )
         )
     else:
+        if args.planning_mode is not None:
+            parser.error("execute uses only the sealed plan mode; no CLI override")
         if args.output is None:
             parser.error("--output is required for execution")
         raw = execute_plan(_read(args.execute_plan), args.output, fake_wire=args.fake_wire)
