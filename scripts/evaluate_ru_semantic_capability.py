@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from collections.abc import Callable
 from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
@@ -167,13 +168,35 @@ def _output_directory(output: Path) -> Path:
 
 
 def execute_plan(plan: dict[str, Any], output: Path, *, plan_sha256: str) -> dict[str, Any]:
+    return execute_registered_plan(
+        plan,
+        output,
+        plan_sha256=plan_sha256,
+        reconstruct_plan=lambda: make_plan(existing.inspect_diagnostic_model("presence_zero")),
+        claim_directory=".ru-capability-trials",
+        reference_results=[deepcopy(c["historical_source_result"]) for c in plan["cases"]],
+        reference_metric="source_historical_reference",
+    )
+
+
+def execute_registered_plan(
+    plan: dict[str, Any],
+    output: Path,
+    *,
+    plan_sha256: str,
+    reconstruct_plan: Callable[[], dict[str, Any]],
+    claim_directory: str,
+    reference_results: list[dict[str, Any]],
+    reference_metric: str,
+) -> dict[str, Any]:
+    """Shared FIRST recorder; each fixed diagnostic owns its full plan reconstruction."""
     if object_hash(plan) != plan_sha256:
         raise ValueError("plan hash mismatch")
-    if make_plan(existing.inspect_diagnostic_model("presence_zero")) != plan:
+    if reconstruct_plan() != plan:
         raise ValueError("HEAD/code/input/model/runtime drift")
     output = _output_directory(output)
     write_json(
-        RESULTS / ".ru-capability-trials" / f"{plan_sha256}.json",
+        RESULTS / claim_directory / f"{plan_sha256}.json",
         {"output": output.as_posix()},
         exclusive=True,
     )
@@ -183,9 +206,7 @@ def execute_plan(plan: dict[str, Any], output: Path, *, plan_sha256: str) -> dic
         "calls": [],
         "not_dispatched": [],
         "completed": False,
-        "historical_reference_results": [
-            deepcopy(c["historical_source_result"]) for c in plan["cases"]
-        ],
+        "historical_reference_results": deepcopy(reference_results),
         "provider_calls": 0,
         "graph_calls": 0,
         "semantic_verdict": "NOT_REVIEWED",
@@ -269,12 +290,10 @@ def execute_plan(plan: dict[str, Any], output: Path, *, plan_sha256: str) -> dic
         raw["actual_http_calls"] = len(raw["calls"])
         raw["metrics"] = {
             "control_new": metrics(raw["calls"]),
-            "source_historical_reference": metrics(raw["historical_reference_results"]),
+            reference_metric: metrics(raw["historical_reference_results"]),
         }
         try:
-            raw["binding_unchanged"] = (
-                make_plan(existing.inspect_diagnostic_model("presence_zero")) == plan
-            )
+            raw["binding_unchanged"] = reconstruct_plan() == plan
         except Exception as error:
             raw.update(binding_unchanged=False, end_binding_error=str(error)[:500])
         raw["diagnostic_status"] = (
