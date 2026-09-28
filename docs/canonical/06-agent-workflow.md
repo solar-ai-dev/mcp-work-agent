@@ -1530,6 +1530,15 @@ Draft 중 하나를 선택할 수 있다. Source snapshot의 표현 가능한 �
 분기나 추가 호출로 자동 구제하지 않는다. 요약/분석을 원문 인용으로 대체하는 누락도
 의미 실패로 관측한다. 이 실험은 자동 Product 적용이나 기존 ANSWER caller 교체가 아니다.
 
+등록된 추론 경계의 비활성 연결 후보는 이 선택을 현재 물리 compose 호출 안에서만
+결속한다. 같은 Run의 승인 Evidence·versioned snapshot으로 참조 catalog를 만들며,
+snapshot은 Prompt나 새로운 공유 State가 아니라 호출의 private 입력으로 유지한다.
+catalog가 없는 경우와 기존 semantic revision은 원 Product callable을 그대로 사용한다.
+snapshot resolution 실패를 유효한 사실로 승격하지 않으며, 기존 일반 답변 경로가 남는
+것과 사실 참조 경로의 자격을 구분한다. 추론 router의 budget·bounded schema repair와
+기존 compose validation·Answer artifact를 유지한다. 물리 Node trace의 PromptRef와
+실제 FIRST/repair dispatch의 등록 ref를 각각 관측한다.
+
 Planning 진입 시 Tool Route는 이미 확정되어 있다.
 
 | 현재 입력 | 적용 책임 |
