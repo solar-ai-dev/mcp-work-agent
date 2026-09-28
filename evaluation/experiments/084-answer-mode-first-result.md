@@ -44,7 +44,7 @@ SHA256/property-order를 별도 봉인했고 loaded plan 및 actual dispatch의 
 입력 토큰은 동일하고 출력은354 감소했다. 정리2회 output은592→210, 완료 control은
 106→134였다. reported 합계는11,709ms 감소했지만 시점/cache/cold load가 있어 제품
 전체 지연 개선으로 단정하지 않는다. 084 첫 lookup load7,609ms(083은7,638ms).
-새 호출6, retry/repair/rerun0, usage누락0, 동시성1. GPU약6.4GiB로 단일9B만 실행했다.
+새 호출6, retry/repair/rerun0, usage누락0, 동시성1. GPU약6.24GiB로 단일9B만 실행했다.
 모델 digest/Ollama/seed/ctx/think 및 미전송 sampling은083 실제 wire 그대로다.
 
 직접·인접98 tests PASS, scoped Ruff/mypy PASS. tests는 byte-order drift, 두 branch의
@@ -59,6 +59,13 @@ Resource/partial/복합 답변, 실제 upstream 재실행, broader regression은
 다음에는 새로운 규칙을 더하지 않고 기존 별도 Task notes·Calendar control을 재사용해
 인접 회귀를 확인한다. 실제 CORE005 외 compose input 기록이 없는 사례를 기존 실제
 upstream 성공으로 꾸미지 않는다.
+
+Source 쪽에도 같은 원인인지 기존080 raw와 현 Product를 read-only 대조했다.
+`identify_source_dependencies.py`는 이미 `resource_type → dependency → required_information
+→ target_scope → work_unit_ids` 순서이고 실제 FIRST도 같다. 080 provenance 후보 역시
+dependency 뒤에 source span/상세를 생성한다. 새 Draft/Task/Event를 기존 Source로
+오판한 사례들은 decision-first에서도 실패한 것이므로084 결과를 그대로 일반화해
+Source 순서 실험을 추가하지 않았다. Source 오판 해결은 아직 별개 미완료다.
 
 raw(local ignored): `evaluation/results/084-answer-mode-first-t1/raw.json`
 
