@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any, cast
 
@@ -212,7 +213,7 @@ def test_bound_snapshot__through_answer_nodes__requires_zero_llm_calls() -> None
         "source_snapshots": snapshots,
     }
 
-    def never(*_args: object) -> dict[str, object]:
+    def never(prompt_id: str, prompt_input: Mapping[str, object]) -> dict[str, object]:
         raise AssertionError("bounded Task facts need no model")
 
     outline = outline_answer_node(state, invoke=never)
@@ -247,8 +248,8 @@ def test_old_or_unavailable_snapshot__never_uses_latest_or_excerpt__returns_to_l
     )
     calls: list[dict[str, object]] = []
 
-    def invoke(_prompt_id: str, prompt_input: Any) -> dict[str, object]:
-        calls.append(prompt_input)
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> dict[str, object]:
+        calls.append(dict(prompt_input))
         assert "source_snapshots" not in prompt_input
         return {
             "schema_version": 2,
