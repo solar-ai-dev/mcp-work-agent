@@ -45,6 +45,18 @@ def test_prompt_registry__loads_exact__canonical_slot_set() -> None:
     assert registry.product_release_ready is False
 
 
+def test_output_prompt_describes_work_local_prohibition_not_global_schema_exclusion() -> None:
+    registry = PromptRegistry()
+    slot = "request_understanding.identify_output_responsibilities"
+    ref = registry.lookup_for_development_smoke(slot)
+    source = registry.source_text(slot)
+    assert "`work_unit_ids`가 겹치는 Output에 적용" in source
+    assert "Schema 선택지에서도 제외" not in source
+    assert ref.content_hash == hashlib.sha256(source.encode()).hexdigest()
+    with pytest.raises(InactivePromptArtifactError):
+        registry.lookup_for_product_release(slot)
+
+
 def test_prompt_registry__rejects_draft__product_selection(tmp_path: Path) -> None:
     manifest_path, contract_path = copy_prompt_runtime_artifacts(tmp_path)
     deactivate_prompt_slot(manifest_path, "planning.compose_answer")
