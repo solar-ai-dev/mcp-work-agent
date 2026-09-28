@@ -1,4 +1,4 @@
-# 067 — 採택한 exact-ref Schema 수정의 실제 MainGraph 사후 확인
+# 067 — 채택한 exact-ref Schema 수정의 실제 MainGraph 사후 확인
 
 ## 이번 확인의 이유와 제한
 
