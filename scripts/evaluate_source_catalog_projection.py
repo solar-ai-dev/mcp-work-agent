@@ -136,13 +136,27 @@ def execute_plan(plan: dict[str, Any], output: Path, *, plan_sha256: str) -> dic
         raise ValueError("plan hash mismatch")
     if make_plan(existing.inspect_diagnostic_model("presence_zero")) != plan:
         raise ValueError("HEAD/code/input/model/runtime drift")
+    return execute_registered_firsts(
+        plan, output, plan_sha256=plan_sha256, claim_directory=".source-catalog-trials"
+    )
+
+
+def execute_registered_firsts(
+    plan: dict[str, Any],
+    output: Path,
+    *,
+    plan_sha256: str,
+    claim_directory: str,
+    response_model: str | None = None,
+) -> dict[str, Any]:
+    """Execute a preflight-validated, fixed plan; callers own reconstruction checks."""
     output = output.resolve()
     if output == RESULTS.resolve() or not output.is_relative_to(RESULTS.resolve()):
         raise ValueError("dedicated evaluation/results directory required")
     if output.exists() and any(output.iterdir()):
         raise ValueError("previous trial cannot be overwritten")
     write_json(
-        RESULTS / ".source-catalog-trials" / f"{plan_sha256}.json",
+        RESULTS / claim_directory / f"{plan_sha256}.json",
         {"output": output.as_posix()},
         exclusive=True,
     )
@@ -196,6 +210,10 @@ def execute_plan(plan: dict[str, Any], output: Path, *, plan_sha256: str) -> dic
                 value = response.get(source)
                 row[target] = value // 1_000_000 if type(value) is int else None
             write_json(path, raw)
+            if response_model is not None:
+                row["response_model_matches"] = row["model"] == response_model
+                if not row["response_model_matches"]:
+                    raise ValueError("actual response model differs from registered model")
             row["validation"] = existing.validate_response(row["content"], case)
         except Exception as error:
             row.update(state="ERROR", error_type=type(error).__name__, error=str(error)[:500])
