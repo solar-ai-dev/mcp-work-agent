@@ -7,13 +7,19 @@ from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from uuid import uuid4
 
 import pytest
 from langgraph.graph import END, START, StateGraph
+from scripts import evaluate_production_snapshot_workflow as snapshot_runner
 from scripts import production_goal_output_candidate as candidate_module
 from scripts.evaluate_production_snapshot_workflow import TrialObservation
+from scripts.production_snapshot_runtime import PROJECT_ROOT, load_case, snapshot_production_runtime
 from tests.support.llm_runtime import runtime_selection, settings_view
 
+from google_work_agent.adapters.langgraph.confirmation_llm_runtime import (
+    ConfirmationAwareLLMRuntime,
+)
 from google_work_agent.adapters.langgraph.main.state import initial_graph_state
 from google_work_agent.adapters.langgraph.profiles.profile_registry import GraphProfile
 from google_work_agent.adapters.llm.ollama import transport
@@ -59,6 +65,7 @@ from google_work_agent.ports.system.contracts.workflow_execution import (
     WorkflowCorrelationContext,
     WorkflowStartRequest,
 )
+from google_work_agent.ports.system.settings_port import SettingsPatchV1
 
 
 def _fixtures(external: bool = False) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -592,3 +599,107 @@ def test_actual_product_identify_goal_node_consumes_cached_output_in_compiled_gr
     assert result["retry_budget"]["llm_calls_used"] == len(calls) == 5
     assert events[0]["cached_response_count"] == 1
     assert all(call["prompt_id"] != candidate_module.OUTPUT_SLOT for call in observation.calls)
+
+
+def test_known_confirmation_wrapper_preserves_delegate_and_rejects_pending_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    context, raw = _fixtures()
+    router, observation, calls, _ = _runtime(tmp_path, monkeypatch, [raw])
+    wrapper = ConfirmationAwareLLMRuntime(router)
+    candidate = _candidate(wrapper)
+    assert candidate._delegate is wrapper and candidate._router is router
+    with observation.wire_observer(), provider_dispatch_execution_scope(run_id="run-1"):
+        goal = _goal(candidate, context)
+        assert _output(candidate, _output_input(candidate, context, goal)).structured_output == {
+            "output_responsibilities": []
+        }
+        wrapper.register(
+            run_id="run-1",
+            origin_target="request.detect_ambiguity",
+            response={"response_text": "fixture confirmation"},
+        )
+        with pytest.raises(ValueError, match="pending confirmation"):
+            _output(candidate, _output_input(candidate, context, goal))
+        with pytest.raises(ValueError, match="pending confirmation"):
+            _candidate(wrapper)
+    assert len(calls) == 1
+
+
+def test_actual_snapshot_main_graph_passes_confirmation_wrapper_to_joint_router(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = PROJECT_ROOT / "evaluation/results" / f"joint-composition-preflight-{uuid4().hex}"
+    observation, events = TrialObservation(root), []
+    case = load_case("CASE-CORE-005")
+    _, goal = _fixtures()
+    goal["goal"] = case["canonical_user_prompt"]
+    replies = [
+        {"schema_version": 1, "work_units": [{"request_spans": [case["canonical_user_prompt"]]}]},
+        goal,
+    ]
+
+    def fake_wire(**_kwargs: Any) -> dict[str, Any]:
+        index = len(observation.calls) - 1
+        if index >= len(replies):
+            raise RuntimeError("FAKE_GATE_STOP_AFTER_JOINT_AUTHORITY")
+        return {
+            "response": json.dumps(replies[index]),
+            "model": "qwen3.5:9b",
+            "prompt_eval_count": 1,
+            "eval_count": 1,
+            "total_duration": 1_000_000,
+        }
+
+    monkeypatch.setattr(transport, "_post_json", fake_wire)
+    with (
+        observation.wire_observer(),
+        snapshot_runner.candidate_scope(snapshot_runner.CANDIDATE, observation, events) as decorate,
+        snapshot_production_runtime(
+            root / "runtime",
+            sampling_seed=20260923,
+            llm_provider_decorator=decorate,
+        ) as (container, boundary),
+        snapshot_runner.drain_before_guard_release(container),
+    ):
+        router = container.structured_inference_port
+        model = ApprovedModelInfo("qwen3.5:9b", "OLLAMA", "1", "1")
+        router.runtime_selection = runtime_selection(
+            deployment_profile="LOCAL_CAPABLE", model=model
+        )
+        router.status_service = SimpleNamespace(get_model_for_prompt=lambda _: model)
+        router.hardware_probe = SimpleNamespace(
+            probe=lambda: SimpleNamespace(
+                architecture="AMD64",
+                cpu_logical_cores=8,
+                ram_total_bytes=16 * 1024**3,
+                gpu_present=True,
+                gpu_name="fake-test-only",
+                vram_total_bytes=8 * 1024**3,
+                local_runtime_eligible=True,
+                local_runtime_reason_codes=(),
+            )
+        )
+        scope = snapshot_runner.selected_task_scope(case, boundary.resources)
+        container.settings_port.update_settings(
+            SettingsPatchV1(
+                1,
+                preferred_local_model_id=model.model_id,
+                preferred_llm_mode="LOCAL_GPU",
+                selected_tasklist_ids=tuple(scope["selected_tasklist_ids"]),
+                google_resource_account_id=scope["google_resource_account_id"],
+            ),
+            operation_ref=str(uuid4()),
+        )
+        assert isinstance(container.workflow_runtime._llm_runtime, ConfirmationAwareLLMRuntime)
+        report: dict[str, Any] = {}
+        admitted = snapshot_runner.start_case(container, boundary, case, scope=scope, report=report)
+        assert container.schedule_run_execution._workflow_execution.await_drained(5000)
+        assert len(observation.calls) >= 2
+        assert observation.calls[0]["prompt_id"] == "request_understanding.identify_requested_work"
+        assert observation.calls[1]["prompt_id"] == candidate_module.EVALUATION_SLOT
+        assert observation.calls[1]["state"] == "RETURNED"
+        assert events[0]["run_id"] == admitted.run_id
+        assert events[0]["events"][0]["operation"] == "GOAL_OUTPUT_AUTHORITY"
+        assert boundary.provider.read_calls == boundary.provider.write_calls == []
+        assert not any(event.get("decision") == "DENY" for event in boundary.events)

@@ -30,3 +30,32 @@ runner는 후보 선택·구현/Prompt hash를 plan에 결속한다. worker drai
 - 금지 의미가 없어도 WRITE가 발생하지 않았다는 이유로 prohibition PASS를 주지 않는다. 남은 owner 실패는 그대로 기록한다.
 - 외부 Google/GitHub 연결·WRITE/SEND·승인/resume 0. Provider는 기존 로컬 snapshot만 사용한다.
 - 후보가 통과하면 성공/반례/모호/복합 Core 소집합으로 확장할 근거이지 Production 채택이나 Canonical92 성공이 아니다.
+
+## 연결 T1 — 모델 호출 전 평가 adapter 결함
+
+HEAD `bd34f4910764e419873c833ba3cfb0a40990f13f`, Trial
+`3be76343-6ce6-49da-a2ef-473c6b59b6d1`을 한 번 실행했다. 실제 composition의 RU는
+`ConfirmationAwareLLMRuntime`으로 감싼 router를 받는데, 후보가 router 자체만
+허용하여 생성자에서 거절됐다. 앞의 compiled 직접 gate는 actual router를 직접
+주입했으므로 이 composition wrapper를 놓쳤다.
+
+모델 dispatch/토큰/Provider READ/WRITE 모두 0. Product가 이 adapter 예외를
+`CONTRACT_VIOLATION`/RECOVERY_REQUIRED로 보존한 것이며, Product 의미 실패나
+모델 후보 점수로 집계하지 않는다. HEAD/Product hash는 실행 중 불변이다.
+원 raw는 `evaluation/results/064-core005-goal-output-main-t1/raw.json`, SHA256
+`c2d8f161e3a50182793e2d6845ccc3a9a70d990efffe11e01add529f71b699e2`에 보존했다.
+
+기존 wrapper의 역할을 제거하지 않고 알려진 실제 composition을 수용하도록
+평가 adapter만 수정한다. pending confirmation은 기존 Product 경로를 유지한다.
+수정 후 실제 composition을 사용하는 모델0 직접 gate를 먼저 추가하고, 모델 연결은
+새 HEAD/Trial의 후보 1회로 구분한다. T1을 덮어쓰거나 성공 Trial로 교체하지 않는다.
+
+### T1 평가 adapter 수정 직접 확인
+
+알려진 `ConfirmationAwareLLMRuntime`만 명시적으로 인식하여 joint 호출의 실제 router를
+참조하고, 나머지 owner에는 기존 wrapper를 유지한다. 같은 Run의 pending confirmation이
+있으면 후보를 적용하지 않는다. 임의 wrapper chain을 추정해 벗기지 않는다.
+actual snapshot composition → StartRun → schedule → MainGraph를 사용하는 fake-wire gate에서
+실제 Work 호출과 joint Goal 호출의 RETURNED를 확인했다. 그 뒤 의도적 fake stop이며 업무
+성공 판정이 아니다. snapshot/runtime/runner/candidate 합계 **50 PASS**(후보18 포함).
+제품 코드·활성 Prompt·안전 gate 변경은 없다.

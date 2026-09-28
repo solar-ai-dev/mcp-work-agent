@@ -24,6 +24,9 @@ from evaluation.request_semantic_authority_candidate import (
 )
 from scripts.ru_observation import object_hash
 
+from google_work_agent.adapters.langgraph.confirmation_llm_runtime import (
+    ConfirmationAwareLLMRuntime,
+)
 from google_work_agent.adapters.langgraph.subgraphs.request_understanding import graph as ru_graph
 from google_work_agent.adapters.langgraph.subgraphs.request_understanding.projections.identify_goal_projection import (  # noqa: E501
     project_identify_goal_input,
@@ -60,6 +63,22 @@ _GOAL_FIELDS = ("goal", "completion_conditions", "constraints", "analysis_requir
 _active_registry: ContextVar[_EvaluationRegistry | None] = ContextVar(
     "evaluation_goal_output_registry", default=None
 )
+
+
+def _product_router(delegate: Any) -> StructuredInferenceRuntimeRouter:
+    """Resolve only the known Product forwarding wrapper, never an arbitrary delegate chain."""
+    if isinstance(delegate, ConfirmationAwareLLMRuntime):
+        delegate = delegate._delegate
+    if not isinstance(delegate, StructuredInferenceRuntimeRouter):
+        raise TypeError("connected candidate requires the actual Product inference router")
+    return delegate
+
+
+def _has_pending_confirmation(delegate: Any, run_id: str) -> bool:
+    if not isinstance(delegate, ConfirmationAwareLLMRuntime):
+        return False
+    with delegate._lock:
+        return run_id in delegate._pending
 
 
 class _EvaluationRegistry:
@@ -129,14 +148,15 @@ class ConnectedGoalOutputCandidate(GoalOutputModalityAuthorityCandidate):
 
     def __init__(self, *, run_id: str, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        if not isinstance(self._delegate, StructuredInferenceRuntimeRouter):
-            raise TypeError("connected candidate requires the actual Product inference router")
-        if self._delegate.runtime_policy.sampling_seed != self._sampling_seed:
+        self._router = _product_router(self._delegate)
+        if _has_pending_confirmation(self._delegate, run_id):
+            raise ValueError("pending confirmation remains Product-owned")
+        if self._router.runtime_policy.sampling_seed != self._sampling_seed:
             raise ValueError("candidate seed differs from the actual Product runtime")
         self._run_id = run_id
         self._context: dict[str, object] | None = None
         self._closed = False
-        manifest = self._delegate.prompt_manifest_path
+        manifest = self._router.prompt_manifest_path
         self._product_registry = PromptRegistry(
             manifest,
             None if manifest is None else manifest.parent / "prompt_runtime_input_contract_v1.json",
@@ -161,9 +181,10 @@ class ConnectedGoalOutputCandidate(GoalOutputModalityAuthorityCandidate):
         self._goal_output = None
 
     def _require_run(self) -> None:
-        router = cast(StructuredInferenceRuntimeRouter, self._delegate)
-        if self._closed or router.run_context_provider() != self._run_id:
+        if self._closed or self._router.run_context_provider() != self._run_id:
             raise ValueError("joint authority is outside its physical Run invocation")
+        if _has_pending_confirmation(self._delegate, self._run_id):
+            raise ValueError("pending confirmation remains Product-owned")
 
     def infer(
         self,
@@ -254,7 +275,7 @@ class ConnectedGoalOutputCandidate(GoalOutputModalityAuthorityCandidate):
             expected_input=prompt_input,
             product_registry=self._product_registry,
         )
-        router = cast(StructuredInferenceRuntimeRouter, self._delegate)
+        router = self._router
         if not isinstance(router.schema_repairer, PromptRepairSchemaRepairer):
             raise TypeError("existing bounded Product schema repair owner is required")
         joint_router = replace(
@@ -299,6 +320,7 @@ def goal_output_node_candidate(
             or state.get("request_intent") is not None
             or "confirmation_response" in projected
             or "request_reconsideration" in projected
+            or _has_pending_confirmation(kwargs["llm_runtime"], projected["request"].run_id)
         ):
             return original(state, **kwargs)
         candidate = ConnectedGoalOutputCandidate(
