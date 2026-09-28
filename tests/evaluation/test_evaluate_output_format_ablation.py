@@ -917,3 +917,258 @@ def test_core5_fixed_pair_budget_rejects_extra_or_reused_baseline_calls(
     with pytest.raises(ValueError, match="registered"):
         runner.execute_plan(plan, tmp_path / "no-run", plan_sha256=runner.object_hash(plan))
     assert not (tmp_path / "no-run").exists()
+
+
+@pytest.fixture
+def frozen_source(frozen: tuple[Path, dict[str, Any]]) -> tuple[Path, dict[str, Any]]:
+    root, model = frozen
+    plan_path = root / "plan.json"
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    plan["preregistered_reference_time_ms"] = 1786060800000
+    registry = PromptRegistry()
+    ref = registry.lookup_for_evaluation(runner.SOURCE_PROMPT_ID)
+    canonical = runner.load_cases()
+    for binding, (case_id, arm) in zip(plan["cases"], runner.SOURCES, strict=True):
+        reference = (canonical[case_id].raw.get("evaluation_context") or {}).get(
+            "run_reference_time"
+        )
+        binding.update(
+            request_sha256=runner.object_hash(canonical[case_id].raw["canonical_user_prompt"]),
+            case_reference_time=reference,
+            effective_reference_time_ms=1786060800000,
+            reference_time_source="CASE" if reference else "PREREGISTERED_PAIR_START",
+        )
+        calls_path = root / case_id / arm / "calls.json"
+        previous = json.loads(calls_path.read_text(encoding="utf-8"))["calls"][0]
+        call = deepcopy(previous)
+        call.update(call_index=4, prompt_id=runner.SOURCE_PROMPT_ID, prompt_ref=asdict(ref))
+        projection = call["input"]
+        del projection["output_candidates"], projection["effect_prohibitions"]
+        projection["run_reference_time"] = {
+            "reference_time": "2026-08-07T09:00:00+09:00",
+            "timezone": "Asia/Seoul",
+        }
+        projection["source_candidates"] = [
+            {
+                "resource_type": "TASK",
+                "read_tool_ids": ["tasks_get_task"],
+                "owned_fact_kinds": ["task_identity", "title", "due", "completion_status"],
+            },
+            {
+                "resource_type": "GMAIL_DRAFT",
+                "read_tool_ids": ["gmail_get_draft"],
+                "owned_fact_kinds": ["draft_identity", "body"],
+            },
+        ]
+        schema = runner.build_source_dependency_output_schema(
+            projection["source_candidates"], work_unit_ids=["work-1"]
+        )
+        options = {"num_ctx": 16384, "temperature": 0.05, "seed": 20260923}
+        payload = {
+            "model": model["model_id"],
+            "system": assemble_prompt(
+                ref, projection, registry=registry, execution_scope=EVALUATION
+            ),
+            "prompt": json.dumps(
+                {
+                    "prompt_ref": {
+                        "prompt_id": ref.prompt_id,
+                        "prompt_version": ref.prompt_version,
+                        "content_hash": ref.content_hash,
+                    },
+                    "input": projection,
+                    "output_schema": schema.json_schema,
+                },
+                sort_keys=True,
+                ensure_ascii=False,
+            ),
+            "stream": False,
+            "think": False,
+            "format": schema.json_schema,
+            "options": options,
+        }
+        call.update(
+            input_sha256=runner.object_hash(projection),
+            output_schema=schema.json_schema,
+            temperature=0.05,
+            wire_options=options,
+            wire_sha256=runner.object_hash(payload),
+            content=json.dumps(
+                {
+                    "source_dependencies": [
+                        {
+                            "resource_type": "TASK",
+                            "dependency": "SOURCE_REQUIRED",
+                            "required_information": [
+                                "task_identity",
+                                "title",
+                                "due",
+                                "completion_status",
+                            ],
+                            "target_scope": "SINGULAR",
+                            "work_unit_ids": ["work-1"],
+                        },
+                        {"resource_type": "GMAIL_DRAFT", "dependency": "SOURCE_NOT_REQUIRED"},
+                    ]
+                }
+            ),
+            input_tokens=100,
+            output_tokens=20,
+            latency_ms=30,
+            wall_latency_ms=32,
+        )
+        call["runtime_policy"]["sampling_temperature"] = 0.05
+        runner.write_json(calls_path, {"calls": [call, previous]})
+    runner.write_json(plan_path, plan)
+    for binding, (case_id, arm) in zip(plan["cases"], runner.SOURCES, strict=True):
+        runner.write_json(
+            root / case_id / arm / "raw.json",
+            {
+                "case_binding": binding,
+                "arm": arm,
+                "plan_sha256": runner.object_hash(plan),
+            },
+        )
+    return root, model
+
+
+def test_source_plan_reuses_three_exact_firsts_without_regenerating_baseline(
+    frozen_source: tuple[Path, dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, model = frozen_source
+    before = {path: runner.file_hash(path) for path in root.rglob("*.json")}
+
+    def forbidden(**_kwargs: Any) -> Any:
+        raise AssertionError("Source dry-plan must never call a model")
+
+    monkeypatch.setattr(runner.transport, "_post_json", forbidden)
+    plan = runner.make_plan(model, source_root=root, owner="source")
+    assert plan["owner"] == "source"
+    assert plan["policy"]["max_http_generation_calls"] == 3
+    assert plan["policy"]["reused_baseline_calls"] == 3
+    assert [row["arm"] for row in plan["execution_order"]] == ["format_omitted"] * 3
+    assert runner.SOURCE_CRITERIA in plan["source_hashes"]
+    for case, prior in zip(plan["cases"], plan["reused_source_baseline"], strict=True):
+        assert (
+            prior["new_call"] is False and prior["origin_row_sha256"] == case["source_call_sha256"]
+        )
+        assert prior["validation_origin"] == "CURRENT_OWNER_REVALIDATION_OF_ORIGINAL_FIRST"
+        assert prior["semantic_verdict"] == "UNREVIEWED"
+        payload = runner.payload_for(case, "schema_constrained")
+        candidate = runner.payload_for(case, "format_omitted")
+        assert runner.object_hash(payload) == case["source_call"]["wire_sha256"]
+        assert candidate == {k: v for k, v in payload.items() if k != "format"}
+        assert candidate["options"] == {"num_ctx": 16384, "temperature": 0.05, "seed": 20260923}
+        assert prior["source_observations"]["decisions"][0]["full_capability_inventory_selected"]
+        assert (
+            prior["source_observations"]["business_review"]["unnecessary_source_use"]
+            == "UNREVIEWED"
+        )
+    assert before == {path: runner.file_hash(path) for path in before}
+
+
+@pytest.mark.parametrize(
+    "mutation", ["missing", "duplicate", "unknown_work", "empty_information", "new_source"]
+)
+def test_source_same_exact_set_and_work_binding_owner_reject_invalid_firsts(
+    frozen_source: tuple[Path, dict[str, Any]], mutation: str
+) -> None:
+    root, model = frozen_source
+    case = runner.make_plan(model, source_root=root, owner="source")["cases"][0]
+    value = json.loads(case["source_call"]["content"])
+    rows = value["source_dependencies"]
+    if mutation == "missing":
+        rows.pop()
+    elif mutation == "duplicate":
+        rows[1] = deepcopy(rows[0])
+    elif mutation == "unknown_work":
+        rows[0]["work_unit_ids"] = ["invented-work"]
+    elif mutation == "empty_information":
+        rows[0]["required_information"] = ["{}"]
+    else:
+        rows[1]["resource_type"] = "CALENDAR_EVENT"
+    content = json.dumps(value)
+    result = runner.validate_fenced_response(f"```json\n{content}\n```", case)
+    assert result["strict_validation"]["structural_result"] == "INVALID_JSON"
+    assert result["candidate_validation"]["structural_result"] in {
+        "INVALID_SCHEMA",
+        "OWNER_REJECTED",
+    }
+    assert result["candidate_validation"] == runner.validate_response(content, case)
+    assert result["model_calls"] == 0
+
+
+def test_source_executes_three_only_and_preserves_baseline_usage_and_strict_raw(
+    frozen_source: tuple[Path, dict[str, Any]], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, model = frozen_source
+    plan = runner.make_plan(model, source_root=root, owner="source")
+    before = {path: runner.file_hash(path) for path in root.rglob("*.json")}
+    monkeypatch.setattr(runner, "RESULTS", tmp_path)
+    output = tmp_path / "source-trial"
+    calls = []
+
+    def post(**kwargs: Any) -> dict[str, Any]:
+        payload = kwargs["payload"]
+        assert "format" not in payload and kwargs["timeout_seconds"] == 180
+        assert payload["options"]["temperature"] == 0.05
+        calls.append(kwargs)
+        content = plan["cases"][len(calls) - 1]["source_call"]["content"]
+        return {"response": f"```json\n{content}\n```", "eval_count": 4}
+
+    monkeypatch.setattr(runner.transport, "_post_json", post)
+    result = runner.execute_plan(plan, output, plan_sha256=runner.object_hash(plan))
+    assert result["actual_http_calls"] == len(calls) == 3
+    assert result["reused_http_calls"] == 3 and result["new_call_metrics"]["output_tokens"] == 12
+    assert result["reused_call_metrics"]["output_tokens"] == 60
+    assert all(row["new_call"] is False for row in result["reused_results"])
+    for row in result["results"]:
+        assert row["validation"]["structural_result"] == "INVALID_JSON"
+        assert row["fence_validation"]["candidate_validation"]["structural_result"] == "VALIDATED"
+        assert row["fence_validation"]["raw_content"] == row["content"]
+        assert row["strict_source_observations"]["decisions"] == []
+        assert len(row["source_observations"]["decisions"]) == 2
+        assert (
+            row["source_observations"]["business_review"]["new_output_as_existing_source"]
+            == "UNREVIEWED"
+        )
+    assert before == {path: runner.file_hash(path) for path in before}
+    with pytest.raises(ValueError, match="prior partial/failed"):
+        runner.execute_plan(plan, output, plan_sha256=runner.object_hash(plan))
+    assert len(calls) == 3
+
+
+@pytest.mark.parametrize(
+    "drift", ["prompt_hash", "wire_hash", "temperature", "new_baseline", "origin_file"]
+)
+def test_source_reuse_rejects_drift_or_extra_baseline_generation(
+    frozen_source: tuple[Path, dict[str, Any]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    drift: str,
+) -> None:
+    root, model = frozen_source
+    monkeypatch.setattr(runner, "RESULTS", tmp_path)
+    plan = runner.make_plan(model, source_root=root, owner="source")
+    case = plan["cases"][0]
+    if drift == "new_baseline":
+        plan["execution_order"].insert(0, {"case_id": case["case_id"], "arm": "schema_constrained"})
+    elif drift == "origin_file":
+        path = Path(case["source_calls_path"])
+        document = json.loads(path.read_text(encoding="utf-8"))
+        document["calls"][0]["output_tokens"] += 1
+        runner.write_json(path, document)
+    else:
+        call = deepcopy(case["source_call"])
+        if drift == "prompt_hash":
+            call["prompt_ref"]["content_hash"] = "changed"
+        elif drift == "wire_hash":
+            call["wire_sha256"] = "changed"
+        else:
+            call["wire_options"]["temperature"] = 0.0
+        with pytest.raises(ValueError):
+            runner.reconstruct_payload(call)
+        return
+    with pytest.raises(ValueError):
+        runner.execute_plan(plan, tmp_path / "no-call", plan_sha256=runner.object_hash(plan))
+    assert not (tmp_path / "no-call").exists()

@@ -1,10 +1,11 @@
-"""Fixed Output FIRST format diagnostics; no Graph or repair.
+"""Fixed RU owner FIRST format diagnostics; no Graph or repair.
 
 Historical inputs are provenance, not new scores. Both arms retain the schema
 inside the Prompt and use the same Product schema/owner validator afterwards.
 The historical omitted mode uses six new calls; JSON mode reuses three constrained
 records and performs only three new JSON-mode calls. Core5 rebinds inputs to the
 current Prompt and uses ten new calls, with separate strict/fence validation.
+Source mode reuses three exact-wire FIRSTs and generates three omitted candidates.
 """
 
 from __future__ import annotations
@@ -36,6 +37,10 @@ from google_work_agent.application.agents.request_understanding.identify_output_
     build_output_responsibility_output_schema,
     validate_output_responsibility_candidate,
 )
+from google_work_agent.application.agents.request_understanding.identify_source_dependencies import (  # noqa: E501
+    build_source_dependency_output_schema,
+    validate_source_dependency_candidate,
+)
 from google_work_agent.application.prompt_runtime.assemble_prompt import assemble_prompt
 from google_work_agent.application.prompt_runtime.prompt_registry import EVALUATION, PromptRegistry
 from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
@@ -46,6 +51,8 @@ RESULTS = ROOT / "evaluation/results"
 SOURCE_ROOT = RESULTS / "064-work-span-codec-v35-connected-t1"
 BASELINE_RAW = RESULTS / "064-output-format-v36-t1/raw.json"
 PROMPT_ID = "request_understanding.identify_output_responsibilities"
+SOURCE_PROMPT_ID = "request_understanding.identify_source_dependencies"
+SOURCE_CRITERIA = "evaluation/experiments/064-source-format-v40-criteria.md"
 SOURCES = (
     ("CASE-CORE-005", "production"),
     ("CASE-CORE-017", "work-span-codec-v35"),
@@ -82,8 +89,13 @@ def reconstruct_payload(
     call: dict[str, Any], *, rebind_current_prompt: bool = False
 ) -> dict[str, Any]:
     """Run actual Product payload construction with an in-memory HTTP sink only."""
+    prompt_id = call.get("prompt_id", PROMPT_ID)
+    if prompt_id not in {PROMPT_ID, SOURCE_PROMPT_ID}:
+        raise ValueError("unregistered semantic owner")
+    if prompt_id == SOURCE_PROMPT_ID and rebind_current_prompt:
+        raise ValueError("Source comparison requires the exact historical Prompt")
     registry = PromptRegistry()
-    ref = registry.lookup_for_evaluation(PROMPT_ID)
+    ref = registry.lookup_for_evaluation(prompt_id)
     current_ref = asdict(ref)
     if not rebind_current_prompt and call["prompt_ref"] != current_ref:
         raise ValueError("historical Output PromptRef differs from current artifact")
@@ -93,8 +105,14 @@ def reconstruct_payload(
         if key not in {"prompt_version", "content_hash"}
     ):
         raise ValueError("current Prompt rebind cannot change owner/schema contract")
-    schema = build_output_responsibility_output_schema(
-        call["input"]["output_candidates"], work_unit_ids=_work_ids(call)
+    schema = (
+        build_source_dependency_output_schema(
+            call["input"]["source_candidates"], work_unit_ids=_work_ids(call)
+        )
+        if prompt_id == SOURCE_PROMPT_ID
+        else build_output_responsibility_output_schema(
+            call["input"]["output_candidates"], work_unit_ids=_work_ids(call)
+        )
     )
     if schema.json_schema != call["output_schema"]:
         raise ValueError("historical Output schema differs from current owner schema")
@@ -176,8 +194,14 @@ def make_plan(
     baseline_raw: Path = BASELINE_RAW,
     input_set: str = "historical3",
     core5_root: Path = RESULTS,
+    owner: str = "output",
 ) -> dict[str, Any]:
     arms = arms_for_mode(candidate_mode)
+    if owner not in {"output", "source"} or (
+        owner == "source" and (input_set != "historical3" or candidate_mode != "omitted")
+    ):
+        raise ValueError("Source permits only three frozen FIRSTs and omitted candidate calls")
+    prompt_id = SOURCE_PROMPT_ID if owner == "source" else PROMPT_ID
     if input_set not in {"historical3", "core5"} or (
         input_set == "core5" and candidate_mode != "omitted"
     ):
@@ -212,7 +236,7 @@ def make_plan(
         matches = [
             (index, call)
             for index, call in enumerate(calls)
-            if call.get("prompt_id") == PROMPT_ID and "base_projection" not in call["input"]
+            if call.get("prompt_id") == prompt_id and "base_projection" not in call["input"]
         ]
         if len(matches) != 1:
             raise ValueError("exactly one original Output FIRST required per fixed source")
@@ -229,8 +253,10 @@ def make_plan(
             or call["model"] != model["model_id"]
         ):
             raise ValueError("frozen Case/Run/request/model provenance mismatch")
-        if input_set == "core5":
+        if input_set == "core5" or owner == "source":
             _validate_core5_reference_time(call, binding, canonical[case_id].raw, source_plan)
+        if owner == "source" and call["temperature"] != 0.05:
+            raise ValueError("Source diagnostic must preserve its registered temperature 0.05")
         payload = reconstruct_payload(call, rebind_current_prompt=input_set == "core5")
         candidate_payload = {k: v for k, v in payload.items() if k != "format"}
         if candidate_mode == "json":
@@ -271,6 +297,15 @@ def make_plan(
                 historical_score_reused=False,
                 fence_admission="EVALUATION_ONLY_SINGLE_JSON_FENCE",
             )
+        if owner == "source":
+            case.update(
+                owner="source",
+                source_plan_path=source_plan_path.resolve().as_posix(),
+                source_plan_sha256=file_hash(source_plan_path),
+                source_call_array_index=call_index,
+                source_call_sha256=object_hash(call),
+                fence_admission="EVALUATION_ONLY_SINGLE_JSON_FENCE",
+            )
         cases.append(case)
     bound_files: tuple[str, ...] = (
         "scripts/evaluate_output_format_ablation.py",
@@ -290,6 +325,13 @@ def make_plan(
     )
     if input_set == "core5":
         bound_files += (CORE5_CRITERIA,)
+    if owner == "source":
+        bound_files += (
+            SOURCE_CRITERIA,
+            "src/google_work_agent/application/agents/request_understanding/identify_source_dependencies.py",
+            "src/google_work_agent/application/agents/request_understanding/contracts/source_dependency_decision.py",
+            "src/google_work_agent/application/prompt_runtime/sources/request_understanding.identify_source_dependencies.md",
+        )
     plan: dict[str, Any] = {
         "schema_version": 1,
         "kind": "FROZEN_OUTPUT_FIRST_FORMAT_ONLY_OWNER_DIAGNOSTIC",
@@ -347,6 +389,13 @@ def make_plan(
         )
     if candidate_mode == "json":
         plan["reused_baseline"] = load_reused_baseline(baseline_raw, plan)
+    if owner == "source":
+        plan.update(owner="source", kind="FROZEN_SOURCE_FIRST_FORMAT_ONLY_OWNER_DIAGNOSTIC")
+        plan["execution_order"] = [
+            {"case_id": case["case_id"], "arm": "format_omitted"} for case in cases
+        ]
+        plan["policy"].update(max_http_generation_calls=3, reused_baseline_calls=3)
+        plan["reused_source_baseline"] = load_source_baseline(cases)
     return plan
 
 
@@ -453,6 +502,99 @@ def load_reused_baseline(path: Path, plan: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def load_source_baseline(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Reuse the actual Source FIRST, with explicit current structural revalidation."""
+    rows = []
+    for case in cases:
+        for kind in ("calls", "raw", "plan"):
+            if file_hash(Path(case[f"source_{kind}_path"])) != case[f"source_{kind}_sha256"]:
+                raise ValueError("frozen Source baseline file changed")
+        calls = json.loads(Path(case["source_calls_path"]).read_text(encoding="utf-8"))["calls"]
+        call = calls[case["source_call_array_index"]]
+        if (
+            call != case["source_call"]
+            or object_hash(call) != case["source_call_sha256"]
+            or call["prompt_id"] != SOURCE_PROMPT_ID
+            or reconstruct_payload(call) != case["payload"]
+        ):
+            raise ValueError("frozen Source FIRST input/wire/Prompt changed")
+        validation = validate_response(call["content"], case)
+        rows.append(
+            {
+                "case_id": case["case_id"],
+                "arm": "schema_constrained",
+                "new_call": False,
+                "owner": "source",
+                "origin_path": case["source_calls_path"],
+                "origin_raw_sha256": case["source_calls_sha256"],
+                "origin_row_sha256": case["source_call_sha256"],
+                "origin_array_index": case["source_call_array_index"],
+                **{
+                    key: deepcopy(call[key])
+                    for key in (
+                        "state",
+                        "content",
+                        "input_sha256",
+                        "wire_sha256",
+                        "wire_options",
+                        "wire_think",
+                        "wire_request_count",
+                        "prompt_ref",
+                        "model",
+                    )
+                },
+                **{
+                    key: call.get(key)
+                    for key in (
+                        "input_tokens",
+                        "output_tokens",
+                        "latency_ms",
+                        "wall_latency_ms",
+                    )
+                },
+                "format_present": True,
+                "schema_repairs": 0,
+                "http_retries": 0,
+                "validation": validation,
+                "validation_origin": "CURRENT_OWNER_REVALIDATION_OF_ORIGINAL_FIRST",
+                "source_observations": source_observations(validation, case),
+                "semantic_verdict": "UNREVIEWED",
+                "business_success": "NOT_EVALUATED",
+            }
+        )
+    return rows
+
+
+def source_observations(validation: dict[str, Any], case: dict[str, Any]) -> dict[str, Any]:
+    """Copy decisions and inventory equality only; never infer business necessity."""
+    decisions = validation.get("validated_output", {}).get("source_dependencies", [])
+    inventory = {
+        item["resource_type"]: item["owned_fact_kinds"]
+        for item in case["source_call"]["input"]["source_candidates"]
+    }
+    return {
+        "decisions": [
+            {
+                **deepcopy(item),
+                "candidate_owned_fact_kinds": deepcopy(inventory[item["resource_type"]]),
+                "full_capability_inventory_selected": (
+                    item["dependency"] == "SOURCE_REQUIRED"
+                    and set(item["required_information"]) == set(inventory[item["resource_type"]])
+                ),
+                "business_necessity": "UNREVIEWED_REQUIRED_OPTIONAL_OR_UNNECESSARY",
+            }
+            for item in decisions
+        ],
+        "business_review": {
+            "required_source_omission": "UNREVIEWED",
+            "optional_source_use": "UNREVIEWED",
+            "unnecessary_source_use": "UNREVIEWED",
+            "new_output_as_existing_source": "UNREVIEWED",
+        },
+        "structural_validation_only": True,
+    }
+
+
 def validate_response(content: object, case: dict[str, Any]) -> dict[str, Any]:
     try:
         value = json.loads(content) if isinstance(content, str) else None
@@ -463,11 +605,19 @@ def validate_response(content: object, case: dict[str, Any]) -> dict[str, Any]:
         return {"structural_result": "INVALID_SCHEMA", "schema_errors": errors}
     projection = case["source_call"]["input"]
     try:
-        validated = validate_output_responsibility_candidate(
-            value,
-            output_candidates=projection["output_candidates"],
-            effect_prohibitions={"effect_prohibitions": projection["effect_prohibitions"]},
-            work_unit_ids=_work_ids(case["source_call"]),
+        validated = (
+            validate_source_dependency_candidate(
+                value,
+                source_candidates=projection["source_candidates"],
+                work_unit_ids=_work_ids(case["source_call"]),
+            )
+            if case.get("owner") == "source"
+            else validate_output_responsibility_candidate(
+                value,
+                output_candidates=projection["output_candidates"],
+                effect_prohibitions={"effect_prohibitions": projection["effect_prohibitions"]},
+                work_unit_ids=_work_ids(case["source_call"]),
+            )
         )
     except ValueError as error:
         return {
@@ -632,6 +782,8 @@ def run_arm(
             historical_wire_sha256=case["historical_wire_sha256"],
             historical_response_reused=False,
         )
+    if case.get("owner") == "source":
+        record.update(owner="source", prompt_ref=deepcopy(case["source_call"]["prompt_ref"]))
     persist(record)
     started = time.monotonic()
     try:
@@ -656,14 +808,24 @@ def run_arm(
             output_tokens=response.get("eval_count"),
             latency_ms=total_duration // 1_000_000 if type(total_duration) is int else None,
         )
-        if case.get("input_set") == "core5":
+        if case.get("input_set") == "core5" or case.get("owner") == "source":
             for field in ("load_duration", "prompt_eval_duration", "eval_duration"):
                 duration = response.get(field)
                 record[f"{field}_ms"] = duration // 1_000_000 if type(duration) is int else None
         persist(record)
         record["validation"] = validate_response(record["content"], case)
-        if case.get("input_set") == "core5" and arm == "format_omitted":
+        if (
+            case.get("input_set") == "core5" or case.get("owner") == "source"
+        ) and arm == "format_omitted":
             record["fence_validation"] = validate_fenced_response(record["content"], case)
+        if case.get("owner") == "source":
+            record["strict_source_observations"] = source_observations(record["validation"], case)
+            record["source_observations"] = source_observations(
+                record.get("fence_validation", {}).get(
+                    "candidate_validation", record["validation"]
+                ),
+                case,
+            )
     except Exception as error:
         record.update(
             state="ERROR",
@@ -684,6 +846,11 @@ def execute_plan(plan: dict[str, Any], output: Path, *, plan_sha256: str) -> dic
         raise ValueError("dedicated evaluation/results directory required")
     candidate_mode = plan.get("candidate_mode", "omitted")
     input_set = plan.get("input_set", "historical3")
+    owner = plan.get("owner", "output")
+    if owner not in {"output", "source"} or (
+        owner == "source" and (input_set != "historical3" or candidate_mode != "omitted")
+    ):
+        raise ValueError("unregistered Source comparison")
     if input_set not in {"historical3", "core5"} or (
         input_set == "core5" and candidate_mode != "omitted"
     ):
@@ -694,21 +861,28 @@ def execute_plan(plan: dict[str, Any], output: Path, *, plan_sha256: str) -> dic
         {"case_id": case_id, "arm": arm}
         for index, (case_id, _) in enumerate(sources)
         for arm in (arms if index % 2 == 0 else tuple(reversed(arms)))
-        if candidate_mode != "json" or arm == "format_json"
+        if (owner == "source" and arm == "format_omitted")
+        or (owner == "output" and (candidate_mode != "json" or arm == "format_json"))
     ]
     if (
         plan["execution_order"] != expected_order
         or plan["arms"] != list(arms)
         or any(case.get("candidate_mode", "omitted") != candidate_mode for case in plan["cases"])
         or any(case.get("input_set", "historical3") != input_set for case in plan["cases"])
+        or any(case.get("owner", "output") != owner for case in plan["cases"])
         or tuple(item["case_id"] for item in plan["cases"]) != tuple(row[0] for row in sources)
         or plan["policy"]["max_http_generation_calls"]
-        != len(sources) * (1 if candidate_mode == "json" else 2)
-        or plan["policy"]["reused_baseline_calls"] != (3 if candidate_mode == "json" else 0)
+        != len(sources) * (1 if candidate_mode == "json" or owner == "source" else 2)
+        or plan["policy"]["reused_baseline_calls"]
+        != (3 if candidate_mode == "json" or owner == "source" else 0)
     ):
         raise ValueError("only the registered inputs and mode-bound one-shot arms are allowed")
     reused = []
-    if candidate_mode == "json":
+    if owner == "source":
+        reused = load_source_baseline(plan["cases"])
+        if reused != plan["reused_source_baseline"]:
+            raise ValueError("Source baseline revalidation changed after registration")
+    elif candidate_mode == "json":
         authority = plan["reused_baseline"]
         if load_reused_baseline(Path(authority["path"]), plan) != authority:
             raise ValueError("reused baseline file/row hashes changed after registration")
@@ -769,6 +943,7 @@ def main() -> None:
     parser.add_argument("--expected-plan-sha256")
     parser.add_argument("--candidate-mode", choices=tuple(CANDIDATE_ARMS), default="omitted")
     parser.add_argument("--input-set", choices=("historical3", "core5"), default="historical3")
+    parser.add_argument("--owner", choices=("output", "source"), default="output")
     parser.add_argument("--reuse-baseline-raw", type=Path, default=BASELINE_RAW)
     parser.add_argument("--regrade-fenced-raw", type=Path, action="append")
     args = parser.parse_args()
@@ -780,6 +955,7 @@ def main() -> None:
             args.execute_plan is not None
             or args.expected_plan_sha256 is not None
             or args.input_set != "historical3"
+            or args.owner != "output"
         ):
             raise ValueError("offline revalidation cannot be combined with model execution")
         report = regrade_fenced_raw(args.regrade_fenced_raw)
@@ -792,6 +968,7 @@ def main() -> None:
         candidate_mode=args.candidate_mode,
         baseline_raw=args.reuse_baseline_raw,
         input_set=args.input_set,
+        owner=args.owner,
     )
     if args.execute_plan is None:
         path = output / "preregistered-plan.json"
