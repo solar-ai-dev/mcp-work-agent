@@ -43,12 +43,14 @@ from scripts.ru_observation import (
     thinking_envelope,
 )
 from scripts.ru_ordered_authority_candidate import OrderedGoalOutputAuthorityCandidate
+from scripts.ru_scope_authority_candidate import ScopeAuthorityCandidate, scope_authority_candidate
 from scripts.ru_source_demand_candidate import (
     JointRoleAuthorityCandidate,
     KeyedSourceCandidate,
     SourceDemandBindingCandidate,
     SourceNeedsThenBindingCandidate,
 )
+from scripts.ru_source_family_bound_candidate import BoundSourceFamilyCandidate
 from scripts.ru_source_family_candidate import SourceFamilyCandidate
 from scripts.ru_source_scope_candidate import source_scope_candidate
 
@@ -250,6 +252,7 @@ def main() -> None:
     parser.add_argument("--record-atomic", action="store_true")
     parser.add_argument("--source-replay-from", type=Path)
     parser.add_argument("--goal-replay-from", type=Path)
+    parser.add_argument("--family-replay-from", type=Path)
     parser.add_argument("--reference-inputs-from", type=Path)
     parser.add_argument("--source-format-only-envelope", action="store_true")
     parser.add_argument("--source-thinking", action="store_true")
@@ -269,12 +272,18 @@ def main() -> None:
             "keyed-source-v9",
             "ordered-goal-output-v11",
             "source-family-v15",
+            "scope-authority-v16",
+            "bound-source-family-v18",
         ),
         default="none",
     )
     args = parser.parse_args()
     if args.source_replay_from and args.goal_replay_from:
         raise ValueError("choose exactly one owner replay boundary")
+    if (args.semantic_candidate == "bound-source-family-v18") != bool(args.family_replay_from):
+        raise ValueError("bound Source-family candidate requires its frozen family replay")
+    if args.family_replay_from and not args.source_replay_from:
+        raise ValueError("frozen family refinement must run with Source owner replay")
     if args.source_thinking and args.source_format_only_envelope:
         raise ValueError("compare one transport axis at a time")
     if args.result_path.exists():
@@ -318,7 +327,9 @@ def main() -> None:
     if model is None or model.digest is None:
         raise ValueError("selected local model/digest is unavailable")
     with ExitStack() as close_stack:
-        if args.source_scope_expression:
+        if args.semantic_candidate == "scope-authority-v16":
+            close_stack.enter_context(scope_authority_candidate())
+        elif args.source_scope_expression:
             close_stack.enter_context(source_scope_candidate())
         transport_calls: list[dict[str, Any]] = []
         close_stack.enter_context(observe_local_calls(transport_calls))
@@ -376,6 +387,8 @@ def main() -> None:
             "keyed-source-v9": KeyedSourceCandidate,
             "ordered-goal-output-v11": OrderedGoalOutputAuthorityCandidate,
             "source-family-v15": SourceFamilyCandidate,
+            "scope-authority-v16": ScopeAuthorityCandidate,
+            "bound-source-family-v18": BoundSourceFamilyCandidate,
         }.get(args.semantic_candidate)
         semantic_candidate = (
             candidate_class(
@@ -383,6 +396,11 @@ def main() -> None:
                 tool_catalog=catalog,
                 model_id=MODEL_ID,
                 sampling_seed=args.seed,
+                **(
+                    {"family_replay_path": args.family_replay_from}
+                    if args.family_replay_from
+                    else {}
+                ),
             )
             if candidate_class is not None
             else None
@@ -476,7 +494,9 @@ def main() -> None:
                 "source_format_only_envelope": args.source_format_only_envelope,
                 "source_thinking": args.source_thinking,
                 "source_endpoint": "chat" if args.source_chat else "generate",
-                "source_scope_expression": args.source_scope_expression,
+                "source_scope_expression": (
+                    args.source_scope_expression or args.semantic_candidate == "scope-authority-v16"
+                ),
                 "semantic_candidate": (
                     None if semantic_candidate is None else semantic_candidate.binding
                 ),

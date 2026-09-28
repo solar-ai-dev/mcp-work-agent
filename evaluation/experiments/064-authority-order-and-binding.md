@@ -164,3 +164,89 @@ family recall/과잉 family → subtype → required_information → schema를 �
 추가하지 않고 후보를 기각한다. ISSUE positive가 없으므로 그 의미 정확도는 미검증이다.
 보통 Source1→2call, family가 없으면 후단0call이다. 품질 이득 없는 호출 증가는 채택하지
 않는다. 이 후보만으로 Goal/Output·Source 범위 제한의 잔여 문제가 해결됐다고 하지 않는다.
+
+## v16 Source 범위 Constraint의 producer/consumer 어휘 정합화 — 실행 전
+
+v14는 필드만 열고 Goal Prompt의 'Source를 판단하지 않는다'와 additional_constraints의
+'명시적 실행 값' 설명을 그대로 두었다. 반면 consumer는 required_sources를 조회 필요성
+목록이 아닌 **배타적 허용 category**로 소비한다. 이름만 열어서는 owner 계약이 닫히지 않는다.
+기존 Goal의 Constraint ownership은 유지하고 Source responsibility/capability 선택만 별도
+owner라는 뜻으로 기존 문장 한 곳을 한정한다. Schema 설명도 기존 consumer의 범위 뜻과
+정합화한다. v14와 같은 허용값/필드/cardinality/normalizer이며 새 Node/State/규칙 예시는 없다.
+선택 identity 내부의 다른 객체 탐색 금지를 category 전체 금지로 확대해서는 안 된다.
+
+기존 v14와 같은 Goal frozen Core002/001/004/009/013 각1회. scope의 개선과 Goal/Output
+회귀를 함께 확인한다. 단발 개선이면 다음 검증은 compiled owner/소비 경계이지 더 많은
+Prompt 문구 추가가 아니다. 이 후보도 사용되지 않으면 표현만의 문제가 아니라 원문과
+제약의 결속 구조를 다시 검토한다. 실제 Provider I/O는 0으로 유지한다.
+
+## v15 결과 → v18 positive handoff (실행 전)
+
+v15는 8/8 반환/schema 유효지만 의미 성공은 아니다. family 선택은 013의 Output 초안을
+EMAIL Source로 오인한 1건을 제외하면 필요한 family를 포함했다. 그 뒤 기존 Source owner가
+025 EMAIL+TASK, 027 TASK, 045 전체, 049 EMAIL+TASK를 다시 NOT_REQUIRED로 바꿨다.
+023은 필요한 family가 있지만 불필요 Draft도 추가한다. 001/002의 실제 selected identity
+결속은 Route를 실행하지 않아 미검증이다. family 선택의 오류와 다음 owner의 삭제를 분리한다.
+
+v18은 v15의 실제 Stage1 raw(오답013 포함)를 **같은 원문/선택/WorkUnit/catalog hash일 때만**
+재사용한다. 새 Stage1 호출0. Stage2 입력에 확정된 selected_source_families를 명시하고
+각 family 안에서 하나 이상 구체 Source를 선택하는 계약으로 닫는다. subtype·조회 정보는
+모델이 판단하며 validator가 답을 대신 만들지 않는다. family 필요 여부를 후단에서 다시
+생성하지 않는 typed handoff 후보로, schema만 바꾼 실험이라고 표현하지 않는다.
+Product Prompt allowlist에 몰래 필드를 추가하지 않고 evaluation-owned Prompt ID/입력/
+책임 설명을 사용한다. 원본 Source 설명에 handoff 책임을 붙인 hash도 기록한다.
+
+Core001/013/025/045 각1회 Source refinement, repair 기존1회. 원래 family가 틀린013을
+의미 성공으로 세지 않는다. family retention, 실제 subtype/facts, 최초/repair 의미를 분리한다.
+잘못된 family가 고정되는 위험 때문에 retention 자체는 품질 향상의 충분조건이 아니다.
+
+### v16/v18 실제 결과와 다음 handoff 축
+
+v16: 5건 모두 첫 출력/schema 유효지만 002/013의 category 범위 제한은 여전히 누락됐다.
+004는 required_sources=[CALENDAR]를 생성했으나 이는 다른 Calendar 검색 금지의 정확한
+표현이 아니다. 001의 다른 메일 검색 금지도 typed scope로 보존되지 않았고 009의 잘못된
+Draft+Task CREATE가 지속됐다. **REJECT**, 문구·설명을 더 누적하지 않는다.
+
+v18: 4건 중 3건 반환, 025는 첫 출력과 기존1회 repair 모두 EMAIL/TASK 결속을 빠뜨려
+schema 실패로 남았다. 045는 앞서 제거됐던 세 family를 유지했으나 subtype/fact 정확성과
+후속 사용은 별도다. 013은 기존 잘못된 EMAIL/Draft 판단을 그대로 보존해 의미 실패다.
+001은 Thread 외 Message도 추가했으며 실제 selected-route 중복 여부는 미검증이다.
+**REJECT**: positive retention guard는 손실을 탐지하지만 스스로 의미 판단을 개선하지 못했다.
+v18 family0 cached logical-call 관측은 실험 뒤 테스트로 수정했다. 이번 4건은 모두
+nonempty family여서 실제 실행·채점·raw는 변경하지 않았다.
+
+| 범위 | 실제 신규 calls | input/output tokens | reported/wall ms |
+| --- | ---: | --- | --- |
+| v15 Source8 | 16 | 33,130 / 1,378 | 67,597 / 69,184 |
+| v16 Goal5 | 5 | 15,217 / 1,536 | 60,214 / 60,388 |
+| v18 Source4 refinement | 5 | 15,098 / 1,028 | 43,627 / 43,825 |
+
+v18의 Stage1은 이전 실제 결과 재사용이며 0회로 숨긴 신규 추론이 아니다. Production 적용 시
+Stage1 비용도 다시 필요하다. 위 숫자는 scope가 다르므로 후보간 총비용 우열로 비교하지 않는다.
+
+- v15 raw hash: `99e5a44433ef35a4b8d6c5f6cd3535697252b179356be24ae541342ad8a0399e`
+- v16 raw hash: `cb2dff3b5f5a375f24450f33be9081b45c1fc29c13fd4f827293b2dbe1601d77`
+- v18 raw hash: `dd507a2fd46f1a39b7e88ecdf7b80c80b659ae8c86208064358ed379c6b1ff08`
+
+`67e68be5`의 연결 회귀2건은 실제 compiled ToolRouting·Planning과 실제 Query/READ/finalize
+소비 경계를 확인했다. shared READ는 fake Connector dispatch1/Evidence1로 WorkUnit2개에
+결속되고, 독립 Draft는 같은 capability에서도 Route/Action2 및 각각의 수신자를 유지한다.
+ANSWER 호출은1이다. acquisition/selection은 fixture이고 실제 모델 의미나 전체 Retrieval
+workflow 검증이 아니다. 이번 새 후보/관측/연결 관련 검증은 69 PASS다.
+
+다음 원인 가설: v4 Goal 호출에서 Output이 이미 생성됐지만 Source에 그 typed 역할은
+전달되지 않고 Source 이후 Output operation에서만 cache를 반환한다. 기존 joint schema 통과를
+effect-prohibition 검증까지 마친 확정으로 혼동하지 않는다. 앞에서 기존 Output validator와
+동일 WorkUnit 금지 검증을 먼저 적용한 읽기전용 역할 handoff를 평가한다. 전체 역할을 한 번에
+다시 생성한 v8과 달리 Source만 판단하며 원문/WorkUnit/선택/Output을 변경하지 않는다.
+
+## v20 Output → Source handoff — 실행 전 계획
+
+Core001/009/013/023/025/027/049/060 각각1회 Source replay. 같은 v4 기록의 실제 GoalOutput,
+effect prohibitions, Source input을 hash로 연결하며 Gold를 입력하지 않는다. READ-only와
+upstream WRITE 오판, 신규 Draft, 복수 Source 성공/실패, 금지, 복합 CREATE, Task UPDATE를
+포함한다. Source가 009의 잘못된 Output을 후처리로 고쳐서는 안 된다. CREATE와 같은 Resource의
+기존 Source를 삭제하지 않으며 UPDATE의 기존 상태 읽기도 보존한다.
+새 field는 evaluation-only input 계약에서 선언하고 Product loader/Prompt activation은 유지한다.
+이득이 있으면 actual upstream을 쓰는 compiled RU→Route로 비교를 확장하며, replay 성공만으로
+Production을 채택하지 않는다.
