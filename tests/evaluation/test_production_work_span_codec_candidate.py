@@ -186,6 +186,19 @@ def test_fresh_scope_rejects_another_request_or_run(monkeypatch: pytest.MonkeyPa
 def test_actual_product_compiled_goal_node_keeps_all_wire_inputs_schema_and_budget(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from google_work_agent.adapters.langgraph.subgraphs.request_understanding.nodes import (
+        identify_goal_node as physical_owner,
+    )
+
+    # Keep this frozen candidate's historical exact-only baseline explicit after
+    # Product adoption. The real fresh admission has separate Product regressions.
+    historical_owner = physical_owner.identify_goal_with_budget
+
+    def exact_baseline(**kwargs: Any) -> Any:
+        kwargs["allow_whitespace_work_selector"] = False
+        return historical_owner(**kwargs)
+
+    monkeypatch.setattr(physical_owner, "identify_goal_with_budget", exact_baseline)
     original_runtime = goal_tests._runtime
     recorded: list[Any] = []
 

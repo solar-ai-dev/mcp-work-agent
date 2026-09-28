@@ -52,6 +52,29 @@ Conversation Timeline은 사용자에게 보여 주는 저장 이력이지 Produ
 | 확인 응답이 upstream Intent 의미를 변경 | 현재 owner가 Typed Back-edge를 반환한다. | Prompt가 다른 Agent 책임을 직접 수행하지 않는다. |
 | 이전 Run 없이는 해석되지 않는 요청 | `관련 메일 찾아줘`처럼 current-run explicit Resource가 없으면 Request Understanding의 `NEEDS_CONFIRMATION` 경계로 보낸다. | 과거 Conversation History를 모델에 주입해 해결하지 않는다. |
 
+#### Work selector admission과 exact provenance
+
+Work provenance는 LLM의 `request_spans` 선택 표현과 최종 provenance를 구분한다.
+fresh `request.identify_goal`에만 검증된 selector codec admission을 적용한다. 기존
+Goal/RequestIntent가 없고 Confirmation/pending response/reconsideration이 없는 physical
+invocation에서만 내부 owner 옵션을 허용한다. 기본 caller, budgetless caller 및 resume는
+exact-only이며 기존 checkpoint의 확정 Work를 다시 쓰지 않는다. exact match가 없을 때만
+공백 이외의 모든 codepoint가 동일한 유일한 연속 원문 구간으로 결속한다. exact match가
+여러 개인 경우, 공백 비교 view에서도 여러 구간인 경우, 문자·대소문자·문장부호·Unicode
+정규화가 달라지는 경우는 거절한다. 다른 Work의 위치나 업무 의미로 대상을 추정하지 않는다.
+이는 LLM selector admission의 계약 확장이지 기존 검사와 동일하다는 주장이 아니다.
+최종 `source_text`는 반드시 현재 Run 원문 slice이며 offset·겹침·closed Work binding
+검사는 유지한다. 이 codec을 Resource identity, Constraint 값, Evidence 또는 Confirmation
+provenance 검증으로 확대하지 않는다. 공백은 Unicode White_Space 25개 codepoint
+(U+0009~000D, U+0020, U+0085, U+00A0, U+1680, U+2000~200A, U+2028/2029/202F,
+U+205F, U+3000)만 비교 view에서 제외하며 zero-width/BOM·Unicode 정규화는 적용하지 않는다.
+fresh admission은 공백만인 selector를 거절한다. exact-only caller의 기존 동작은 유지한다.
+fallback은 첫/마지막 비공백 위치의 최소 원문 구간이고 Python 문자열 offset을 유지한다.
+Prompt 본문·wire Schema·runtime·호출/repair 예산은 변경하지 않는다. 업무 분해·금지·
+Source/Output 의미 정확도와 connected handoff는 별도 검증한다. State shape와
+interrupt/resume topology가 같으므로 이 admission 변경만으로 checkpoint를 승격하거나
+graph/schema version을 변경하지 않는다.
+
 ### 0.4 Node별 입력 Projection
 
 각 Node는 Parent/Main State 전체가 아니라 자기 작업에 필요한 Typed Projection만 받는다.
@@ -892,17 +915,9 @@ Source 판단의 개발 구조 비교는 기존 요청 원문·선택 identity·
 의미 통과로 취급하지 않는다. 비활성 후보의 직접 모델 호출은 Production budget,
 Prompt activation 또는 release evidence를 대체하지 않는다.
 
-Work provenance의 개발 후보는 LLM의 `request_spans` 선택 표현과 최종 provenance를
-구분해 비교할 수 있다. 현 Product의 exact-string-only admission은 유지한다. 비활성
-EVALUATION 후보에 한해 exact match가 없을 때 공백 이외의 모든 codepoint가 동일한
-유일한 연속 원문 구간으로 결속하는 selector codec을 비교할 수 있다. exact match가
-여러 개인 경우, 공백 비교 view에서도 여러 구간인 경우, 문자·대소문자·문장부호·Unicode
-정규화가 달라지는 경우는 거절한다. 다른 Work의 위치나 업무 의미로 대상을 추정하지 않는다.
-이는 LLM selector admission의 계약 확장이지 기존 검사와 동일하다는 주장이 아니다.
-최종 `source_text`는 반드시 현재 Run 원문 slice이며 offset·겹침·closed Work binding
-검사는 유지한다. 이 codec을 Resource identity, Constraint 값, Evidence 또는 Confirmation
-provenance 검증으로 확대하지 않는다. 업무 분해·금지·Source/Output 의미 정확도와 connected
-handoff는 별도 검증하고, Product 적용에는 해당 owner·테스트와 호환성 검토가 필요하다.
+Work selector의 Product admission 범위는 0.3의 일반 계약을 따른다. 기존 EVALUATION
+raw와 codec-only 결과는 Work binding 증거이며, 후보·의미 성공·Prompt release activation을
+자동 승격하지 않는다.
 
 #### Activation evidence
 

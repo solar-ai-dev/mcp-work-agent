@@ -319,6 +319,25 @@ def test_actual_product_goal_node_consumes_work_refs_without_changing_other_owne
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Reuse the existing compiled Product RU gate, replacing only its fake Work reply."""
+    from google_work_agent.adapters.langgraph.subgraphs.request_understanding.nodes import (
+        identify_goal_node as physical_owner,
+    )
+
+    # This frozen v34 candidate predates the fresh-only Product codec option.
+    # Explicitly retain its original exact-only caller and supporting-owner API.
+    historical_owner = physical_owner.identify_goal_with_budget
+    historical_identify = candidate.ConnectedWorkRefCandidate.identify
+
+    def exact_baseline(**kwargs: Any) -> Any:
+        kwargs["allow_whitespace_work_selector"] = False
+        return historical_owner(**kwargs)
+
+    def historical_work_api(self: Any, **kwargs: Any) -> Any:
+        assert not kwargs.pop("allow_whitespace_selector", False)
+        return historical_identify(self, **kwargs)
+
+    monkeypatch.setattr(physical_owner, "identify_goal_with_budget", exact_baseline)
+    monkeypatch.setattr(candidate.ConnectedWorkRefCandidate, "identify", historical_work_api)
     original_runtime = goal_tests._runtime
     original_decorator = goal_candidate.decorate_goal_output_provider
     monkeypatch.setattr(

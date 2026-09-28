@@ -251,6 +251,7 @@ def identify_goal_with_budget(
     request_reconsideration: Mapping[str, object] | None = None,
     prior_goal_candidate: RequestGoalCandidateV1 | None = None,
     prior_ambiguity_candidate: AmbiguityV1 | None = None,
+    allow_whitespace_work_selector: bool = False,
 ) -> tuple[RequestGoalCandidateV1, RunBudgetV2]:
     """Identify the goal with one bounded semantic contract revision."""
 
@@ -296,6 +297,12 @@ def identify_goal_with_budget(
                 requested_mode=request.requested_mode,
                 prompt_ref=resolved_requested_work_prompt_ref,
                 user_request=request.request_text,
+                allow_whitespace_selector=(
+                    allow_whitespace_work_selector
+                    and confirmation_response is None
+                    and prior_goal_candidate is None
+                    and request_reconsideration is None
+                ),
             )
         retry_budget = merge_provider_dispatch_usage(retry_budget)
     unit_ids = work_unit_ids(requested_work)

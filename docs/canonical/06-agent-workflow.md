@@ -812,6 +812,7 @@ class RequestIntentV3:
 #### Requested Work binding과 관계
 
 - WorkUnit은 사용자 요청의 독립 결과 경계와 원문 provenance만 소유한다. Constraint, Source responsibility, Output responsibility와 explicit effect prohibition의 의미 권위는 기존 atomic owner에 남는다.
+- fresh `request.identify_goal`의 Work selector admission은 exact match를 우선하며, exact가 없을 때만 공백 이외 codepoint가 동일한 유일한 연속 원문 구간을 결속할 수 있다. 최종 provenance는 생성 문자열이 아니라 원문 slice다. exact/공백 비교의 복수 위치, 비공백 변조, 공백만 있는 selector와 구간 겹침은 거절한다. 기존 Goal/RequestIntent·Confirmation(미전달 pending 응답 포함)·reconsideration 경로와 기본 supporting-operation caller는 exact-only를 유지하며, persisted Work를 재결속하지 않는다. 이는 candidate admission의 확장이지 업무 의미 보정이나 persisted provenance 검증 완화가 아니다.
 - Confirmation의 검증된 제약을 기존 후보에 병합할 때는 값뿐 아니라 적용 WorkUnit 집합·provenance·Source Resource binding까지 동일한 항목만 중복 제거한다. 다른 업무의 동일 값은 보존하고, 이미 확정된 Goal·Output·금지·source status는 다시 생성하지 않는다.
 - 동일 READ capability가 여러 WorkUnit에 필요하면 Input Route와 Provider READ를 복제하지 않고 해당 Route의 `work_unit_ids`를 stable union한다.
 - 같은 Resource/effect라도 서로 다른 사용자 결과인 Output responsibility는 별도 Output Route로 보존한다. Tool capability 선택은 공유할 수 있으나 Route 의미는 합치지 않는다.

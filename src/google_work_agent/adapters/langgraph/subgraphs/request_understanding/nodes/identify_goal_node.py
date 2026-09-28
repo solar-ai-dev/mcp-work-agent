@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from google_work_agent.adapters.langgraph.agent_kernel import ensure_llm_call_budget
+from google_work_agent.adapters.langgraph.confirmation_llm_runtime import (
+    ConfirmationAwareLLMRuntime,
+)
 from google_work_agent.adapters.langgraph.subgraphs.request_understanding.state import (
     RequestUnderstandingStateV2,
 )
@@ -62,6 +65,16 @@ def identify_goal_node(
         request_reconsideration=projection.get("request_reconsideration"),
         prior_goal_candidate=projection.get("prior_goal_candidate"),
         prior_ambiguity_candidate=projection.get("prior_ambiguity_candidate"),
+        allow_whitespace_work_selector=(
+            state.get("goal_candidate") is None
+            and state.get("request_intent") is None
+            and "confirmation_response" not in projection
+            and "request_reconsideration" not in projection
+            and not (
+                isinstance(llm_runtime, ConfirmationAwareLLMRuntime)
+                and llm_runtime.has_pending_confirmation(run_id=projection["request"].run_id)
+            )
+        ),
     )
     return {
         "goal_candidate": candidate,

@@ -65,6 +65,10 @@ class ConfirmationAwareLLMRuntime:
         with self._lock:
             self._pending.pop(run_id, None)
 
+    def has_pending_confirmation(self, *, run_id: str) -> bool:
+        with self._lock:
+            return run_id in self._pending
+
     def invoke_structured(self, **kwargs: Any) -> Any:
         return self._delegate.invoke_structured(**self._with_confirmation(kwargs))
 
