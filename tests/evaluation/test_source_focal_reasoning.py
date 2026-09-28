@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 from scripts import evaluate_source_focal_reasoning as candidate
 from scripts import ru_source_focal_candidate as focal
-from tests.evaluation.test_source_interpretation_handoff import product_wire as product_wire
+from tests.support.source_dependency_wire import product_wire as product_wire
 
 
 def test_build_payload__frozen_focal__changes_only_think(product_wire: dict[str, Any]) -> None:
@@ -45,7 +45,7 @@ def test_structural_stop__semantically_wrong_valid_output__does_not_stop_or_corr
     product_wire: dict[str, Any],
 ) -> None:
     payload = focal.build_payload(product_wire, "TASK")
-    # The request needs the selected Task; this negative is deliberately semantically wrong.
+    # The request needs Tasks; this negative is deliberately semantically wrong.
     output = {
         "source_dependencies": [{"resource_type": "TASK", "dependency": "SOURCE_NOT_REQUIRED"}]
     }

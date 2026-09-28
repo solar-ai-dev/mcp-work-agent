@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 from scripts import ru_source_focal_candidate as candidate
-from tests.evaluation.test_source_interpretation_handoff import product_wire as product_wire
+from tests.support.source_dependency_wire import product_wire as product_wire
 
 from google_work_agent.application.agents.request_understanding.identify_source_dependencies import (  # noqa: E501
     build_source_dependency_output_schema,
