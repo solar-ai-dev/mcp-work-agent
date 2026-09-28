@@ -14,6 +14,7 @@ from google_work_agent.adapters.system.memory.retrieval_evidence_store import Ru
 from google_work_agent.application.prompt_runtime.prompt_registry import DEVELOPMENT_SMOKE
 from google_work_agent.application.use_cases.run.account_provider_dispatch import (
     account_provider_dispatch,
+    bind_provider_dispatch_budget,
     provider_dispatch_execution_scope,
 )
 from google_work_agent.application.use_cases.run.guard_run_budget import build_default_run_budget
@@ -203,8 +204,26 @@ def test_two_route_exact_titles__zero_calls_even_at_cap__no_lazy_prompt_keyerror
     assert result["trace_context"]["prompt_refs"] == []
     if node == "arguments":
         assert [
-            item["arguments"]["payload"]["title"] for item in result["argument_candidates"]
+            cast(dict[str, Any], item)["arguments"]["payload"]["title"]
+            for item in result["argument_candidates"]
         ] == ["First", "Second"]
+
+
+@pytest.mark.parametrize("node", ["objective", "arguments"])
+@pytest.mark.parametrize("used", [99, 100])
+def test_deterministic_route__does_not_merge_stale_bound_budget(node: str, used: int) -> None:
+    stale_budget = build_default_run_budget()
+    stale_budget["llm_calls_used"] = 1
+    bind_provider_dispatch_budget(stale_budget)
+    state, runtime = _state(second_title=True, used=used), _DispatchRuntime()
+
+    result = _run(node, state, runtime)
+
+    assert runtime.calls == []
+    assert result["retry_budget"]["llm_calls_used"] == used
+    assert result["trace_context"]["llm_call_count"] == 0
+    assert result["trace_context"]["prompt_refs"] == []
+    assert stale_budget["llm_calls_used"] == 1
 
 
 @pytest.mark.parametrize("node", ["objective", "arguments"])
@@ -229,7 +248,8 @@ def test_other_work_without_exact_title__one_infer__actual_dispatches_counted(
         assert observed["user_request"] == state["user_request"]
     else:
         assert (
-            result["argument_candidates"][1]["arguments"]["payload"]["title"] == "Second composed"
+            cast(dict[str, Any], result["argument_candidates"][1])["arguments"]["payload"]["title"]
+            == "Second composed"
         )
 
 

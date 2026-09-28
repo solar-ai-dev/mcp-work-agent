@@ -315,6 +315,8 @@ Arguments Projection에는 현재 검증된 `request_intent` 제약도 포함한
 
 Objective/Arguments의 budget preflight는 실제 owner와 동일한 route-local 의미·Evidence projection 및 결정적 materialization 조건을 사용한다. 실제 LLM 호출 계수는 Provider dispatch ledger의 노드 전후 차이를 기록하며, 예상 Route 수나 semantic invoker 횟수를 Provider 호출 수로 대신하지 않는다. 상한과 dispatch 직전의 guard는 변경하지 않는다.
 
+Planning ANSWER 및 Review도 semantic 결과 개수 대신 실제 dispatch 차이를 기록한다. Review의 결정적 검사에서 호출하지 않는 Prompt를 위해 예산을 예약·차단하지 않는다. 실제 semantic invocation 직전에는 기존 사전 검사를 유지하며, Prompt·Schema·Review 의미 판정이나 승인 권한은 이 계측 경계에서 변경하지 않는다.
+
 **비활성 개발 후보 — Planning 업무 관계 context**
 
 Evaluation-only injectable projection은 objective/arguments의 기존 route-local Intent를

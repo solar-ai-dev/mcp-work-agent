@@ -1540,6 +1540,7 @@ class PlanningStateV2:
 - `draft_action_objective_per_output_route`는 frozen Output Route 하나에 대해 `ActionObjectiveCandidateV1`을 만들고 해당 `route_id`의 `action_objective_candidates`만 갱신한다. 사용자 목표·target semantics·scope constraint만 작성하며 Tool identity/effect/arguments를 바꾸지 않는다.
 - `compose_arguments_per_output_route`는 같은 `route_id`의 검증된 `ActionObjectiveCandidateV1` + 현재 Route의 `selected_tool_id` + 해당 Tool Schema + 현재 검증된 Request Intent 제약만 보고 `ToolArgumentCandidateV1`의 business arguments를 직렬화한다. objective가 없거나 route_id가 맞지 않으면 fail closed한다.
 - 두 per-route Node의 호출 사전 검사는 실제 작성 owner와 같은 WorkUnit별 Intent·Evidence projection 및 결정적 작성 조건을 소비한다. 다른 업무의 제약을 섞어 호출 필요 여부를 예측하지 않는다. `trace_context.llm_call_count` 증분은 예상 Route 수가 아니라 노드 전후 실제 Provider dispatch budget 차이이며, repair/fallback도 기존 dispatch ledger에서 차감된 횟수만 기록한다. 결정적 작성은 호출·Prompt ref를 만들어내지 않는다.
+- Planning ANSWER와 Review도 실제 dispatch ledger의 노드 전후 차이로 호출을 관측한다. Review의 결정적 검사에는 LLM 호출 사전 검사를 적용하지 않으며, semantic invocation이 필요한 경우에만 호출 직전 기존 예산 검사를 수행한다. Review 판정·Approval 및 dispatch 시점의 상한 검증은 그대로 유지한다.
 #### 대상 Evidence 보존
 
 | 상황 | 보존·검증 조건 |

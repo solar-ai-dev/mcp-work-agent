@@ -80,10 +80,7 @@ from google_work_agent.ports.llm.structured_inference_contracts import (
     OutputSchemaDefinition,
     PromptReference,
 )
-from google_work_agent.ports.llm.structured_inference_port import (
-    StructuredInferencePort,
-    StructuredInferenceResultV1,
-)
+from google_work_agent.ports.llm.structured_inference_port import StructuredInferencePort
 from google_work_agent.ports.system.contracts.confirmation import (
     ConfirmationResponseProjectionV1,
 )
@@ -414,18 +411,28 @@ class ReviewSubgraph:
         node_name: str,
         operation: Callable[[ReviewSemanticInvoker], Mapping[str, object]],
     ) -> ReviewState:
-        results: list[StructuredInferenceResultV1] = []
-        if self._is_production_integration:
-            ensure_llm_call_budget(cast(Any, original))
-        patch = operation(self.semantic_invoker(working, on_result=results.append))
+        llm_calls_before = (
+            original["retry_budget"]["llm_calls_used"] if self._is_production_integration else 0
+        )
+        semantic_invoke = self.semantic_invoker(working)
+        llm_invoked = False
+
+        def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+            nonlocal llm_invoked
+            if self._is_production_integration:
+                ensure_llm_call_budget(cast(Any, original))
+                llm_invoked = True
+            return semantic_invoke(prompt_id, prompt_input)
+
+        patch = operation(invoke)
         result = cast(ReviewState, {**working, **patch})
         if self._is_production_integration:
-            consumed = len(results)
             result["retry_budget"] = (
                 consume_llm_call_budget(cast(Any, original))
-                if consumed
-                else cast(Any, original["retry_budget"])
+                if llm_invoked
+                else original["retry_budget"]
             )
+            consumed = result["retry_budget"]["llm_calls_used"] - llm_calls_before
             assert self._graph_profile is not None
             result["trace_context"] = merge_trace_context(
                 original,
@@ -435,7 +442,9 @@ class ReviewSubgraph:
                 agent_invocation_id=str(original.get("run_id", "review")),
                 subgraph_namespace="review",
                 node_name=node_name,
-                llm_call_id=f"{original.get('run_id', 'review')}:review.{node_name}",
+                llm_call_id=(
+                    f"{original.get('run_id', 'review')}:review.{node_name}" if consumed else None
+                ),
                 agent_invocation_increment=(
                     1 if node_name in {"inspect_goal_and_evidence", "recheck"} else 0
                 ),
@@ -679,8 +688,6 @@ class ReviewSubgraph:
     def semantic_invoker(
         self,
         state: Mapping[str, object],
-        *,
-        on_result: Callable[[StructuredInferenceResultV1], None] | None = None,
     ) -> ReviewSemanticInvoker:
         if self._dependencies is not None:
             return self._dependencies.invoke
@@ -733,8 +740,6 @@ class ReviewSubgraph:
                 prompt_input,
                 output_schema,
             )
-            if on_result is not None:
-                on_result(result)
             if not isinstance(result.structured_output, Mapping):
                 raise ValueError("Review structured output must be an object")
             return result.structured_output

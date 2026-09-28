@@ -299,6 +299,7 @@ class PlanningSubgraph:
         working = self._project_runtime_inputs(state)
         semantic_invoke = self._semantic_invoker(state)
         llm_invoked = False
+        llm_calls_before = state["retry_budget"]["llm_calls_used"] if self._llm_runtime else 0
 
         def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
             nonlocal llm_invoked
@@ -336,11 +337,13 @@ class PlanningSubgraph:
                 )
             trace_state = cast(PlanningLocalState, {**state, **result})
             result["retry_budget"] = consume_llm_call_budget(cast(Any, state))
+            calls_used = result["retry_budget"]["llm_calls_used"] - llm_calls_before
             result["trace_context"] = self._trace(
                 trace_state,
                 "outline_answer",
                 self._prompt_refs["planning.outline_answer"],
                 first=not isinstance(state.get(PLANNING_AGENT_LOCAL_KEY), Mapping),
+                llm_call_increment=calls_used,
             )
         return result
 
@@ -350,6 +353,7 @@ class PlanningSubgraph:
         working = self._project_runtime_inputs(state)
         semantic_invoke = self._semantic_invoker(state)
         llm_invoked = False
+        llm_calls_before = state["retry_budget"]["llm_calls_used"] if self._llm_runtime else 0
 
         def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
             nonlocal llm_invoked
@@ -386,8 +390,12 @@ class PlanningSubgraph:
         update = cast(GraphStateUpdateV1, {"planning_result": answer})
         if llm_invoked:
             update["retry_budget"] = consume_llm_call_budget(cast(Any, state))
+            calls_used = update["retry_budget"]["llm_calls_used"] - llm_calls_before
             update["trace_context"] = self._trace(
-                state, "compose_answer", self._prompt_refs["planning.compose_answer"]
+                state,
+                "compose_answer",
+                self._prompt_refs["planning.compose_answer"],
+                llm_call_increment=calls_used,
             )
         merged = self._merge_decision(state, update, decision)
         merged.pop(PLANNING_AGENT_LOCAL_KEY, None)
@@ -424,9 +432,19 @@ class PlanningSubgraph:
         llm_calls_before = state["retry_budget"]["llm_calls_used"] if self._llm_runtime else 0
         if self._llm_runtime is not None and inference_count:
             ensure_llm_call_budget(cast(Any, working), provider_calls_requested=inference_count)
+        semantic_invoke = self._semantic_invoker(state)
+        llm_invoked = False
+
+        def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+            nonlocal llm_invoked
+            if self._llm_runtime is not None:
+                ensure_llm_call_budget(cast(Any, working))
+                llm_invoked = True
+            return semantic_invoke(prompt_id, prompt_input)
+
         patch = objective_node_module.draft_action_objective_per_output_route_node(
             cast(Mapping[str, object], working),
-            invoke=self._semantic_invoker(state),
+            invoke=invoke,
         )
         result = cast(
             PlanningLocalState,
@@ -445,7 +463,9 @@ class PlanningSubgraph:
         if "work_analysis" in working:
             result["work_analysis"] = working["work_analysis"]
         if self._llm_runtime is not None:
-            result["retry_budget"] = consume_llm_call_budget(cast(Any, state))
+            result["retry_budget"] = (
+                consume_llm_call_budget(cast(Any, state)) if llm_invoked else state["retry_budget"]
+            )
             calls_used = result["retry_budget"]["llm_calls_used"] - llm_calls_before
             first = not isinstance(state.get(PLANNING_AGENT_LOCAL_KEY), Mapping)
             if first:
@@ -502,10 +522,20 @@ class PlanningSubgraph:
         llm_calls_before = state["retry_budget"]["llm_calls_used"] if self._llm_runtime else 0
         if self._llm_runtime is not None and inference_count:
             ensure_llm_call_budget(cast(Any, working), provider_calls_requested=inference_count)
+        semantic_invoke = self._semantic_invoker(state)
+        llm_invoked = False
+
+        def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+            nonlocal llm_invoked
+            if self._llm_runtime is not None:
+                ensure_llm_call_budget(cast(Any, working))
+                llm_invoked = True
+            return semantic_invoke(prompt_id, prompt_input)
+
         try:
             patch = arguments_node_module.compose_arguments_per_output_route_node(
                 cast(Mapping[str, object], working),
-                invoke=self._semantic_invoker(state),
+                invoke=invoke,
                 default_tasklist_id_provider=self._default_tasklist_id_provider,
                 default_calendar_id_provider=self._default_calendar_id_provider,
             )
@@ -555,7 +585,11 @@ class PlanningSubgraph:
             )
             update = cast(GraphStateUpdateV1, {"planning_result": answer})
             if self._llm_runtime is not None:
-                update["retry_budget"] = consume_llm_call_budget(cast(Any, state))
+                update["retry_budget"] = (
+                    consume_llm_call_budget(cast(Any, state))
+                    if llm_invoked
+                    else state["retry_budget"]
+                )
                 calls_used = update["retry_budget"]["llm_calls_used"] - llm_calls_before
                 update["trace_context"] = self._trace(
                     state,
@@ -622,7 +656,9 @@ class PlanningSubgraph:
         context.pop("planning_missing_container", None)
         result["prompt_context"] = context
         if self._llm_runtime is not None:
-            result["retry_budget"] = consume_llm_call_budget(cast(Any, state))
+            result["retry_budget"] = (
+                consume_llm_call_budget(cast(Any, state)) if llm_invoked else state["retry_budget"]
+            )
             calls_used = result["retry_budget"]["llm_calls_used"] - llm_calls_before
             result["trace_context"] = self._trace(
                 state,
