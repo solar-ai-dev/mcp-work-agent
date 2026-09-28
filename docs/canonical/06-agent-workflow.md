@@ -1325,6 +1325,11 @@ class ToolRouteStateV1:
 파생한다. 공유 READ는 해당 binding만 union하고, 범위 제한은 각 적용 WorkUnit의
 Constraint와 비교한다. 무관한 업무의 금지를 전역화하거나 다른 업무의 허용 범위로
 금지를 상쇄하지 않는다. 적용 업무 하나라도 범위 확장이 필요하면 기존 확인을 유지한다.
+같은 검사는 Request Understanding에서 넘어온 direct Source READ에도 Registry
+materialization 전에 적용한다. Source 후보가 이미 존재하거나 사용자가 Resource를
+선택했다는 사실은 같은 업무의 명시적 Source 제외를 덮어쓰는 권한이 아니다.
+동일 Resource의 direct·Policy READ는 적용 업무를 union하여 한 번 확인하며 기존
+current-Run intent revision·interrupt·범위에 결속된 receipt만 재개를 허용한다.
 
 | 상황 | 처리 |
 | --- | --- |

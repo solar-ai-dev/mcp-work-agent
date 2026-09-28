@@ -72,7 +72,7 @@ def resolve_policy_preconditions(
     current_interrupt_id: str | None = None,
     scope_expansion: ScopeExpansionResolver | None = None,
 ) -> PolicyPreconditionResolutionV1:
-    """Resolve mandatory policy READ resources without changing any OUT route.
+    """Check direct and mandatory READ scope without changing any OUT route.
 
     An out-of-scope READ is never materialized until the Application-owned
     confirmation receipt for the current interrupt validates successfully.
@@ -80,12 +80,15 @@ def resolve_policy_preconditions(
 
     required_reads = _required_reads(candidate)
     required_bindings = _required_read_bindings(candidate)
+    scope_reads, scope_bindings = _scope_read_bindings(
+        candidate, required_reads=required_reads, required_bindings=required_bindings
+    )
     resolver = scope_expansion or ScopeExpansionResolver()
     out_of_scope = resolver.out_of_scope_reads(
         request_intent=request_intent,
-        required_reads=required_reads,
+        required_reads=scope_reads,
         category_of=coarse_resource_category,
-        required_work_unit_bindings=required_bindings,
+        required_work_unit_bindings=scope_bindings,
     )
     if out_of_scope:
         required_resource_types = tuple(sorted({read[1] for read in out_of_scope}))
@@ -147,6 +150,33 @@ def _required_read_bindings(
     return bindings
 
 
+def _scope_read_bindings(
+    candidate: SemanticRouteCandidate,
+    *,
+    required_reads: Sequence[tuple[str, str, str]],
+    required_bindings: Mapping[tuple[str, str, str], tuple[str, ...]],
+) -> tuple[
+    tuple[tuple[str, str, str], ...],
+    dict[tuple[str, str, str], tuple[str, ...]],
+]:
+    reads_by_resource = {read[1]: read for read in required_reads}
+    bindings = {read: required_bindings.get(read, ()) for read in required_reads}
+    direct_reasons = dict(candidate.input_reason_codes)
+    direct_bindings = dict(candidate.input_work_unit_bindings)
+    for resource_type in candidate.input_resource_types:
+        read = reads_by_resource.setdefault(
+            resource_type,
+            ("", resource_type, direct_reasons.get(resource_type, "REQUESTED_INPUT")),
+        )
+        direct_ids = direct_bindings.get(resource_type, ())
+        # A missing legacy binding cannot narrow the comparison to known IDs.
+        if not direct_ids or (read in bindings and not bindings[read]):
+            bindings[read] = ()
+        else:
+            bindings[read] = tuple(dict.fromkeys((*bindings.get(read, ()), *direct_ids)))
+    return tuple(sorted(bindings)), bindings
+
+
 def _merge_required_reads(
     candidate: SemanticRouteCandidate,
     *,
@@ -187,7 +217,7 @@ PolicyReadTriple = tuple[str, str, str]
 
 
 class ScopeExpansionResolver:
-    """Pure comparison of Policy Precondition reads against explicit user scope.
+    """Compare direct and Policy Precondition reads against explicit user scope.
 
     "Explicit scope" is read from ``RequestIntentV3.constraints`` entries with
     ``kind="SCOPE"``, ``field in {"required_sources", "forbidden_sources"}``
