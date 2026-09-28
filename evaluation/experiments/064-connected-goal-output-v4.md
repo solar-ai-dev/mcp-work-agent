@@ -100,3 +100,81 @@ unknown/forbidden fields 거부는 유지하며 Work별 LLM/Provider 호출을 �
 connected 소비 회귀 **1,967 PASS**. raw 모델 실행 없이 계약 결함을 직접 닫았다.
 별도 새 연결 Trial로 실제 답변 생성 여부를 확인할 예정이며 이 직접 검사 수를 모델
 의미 성공률로 사용하지 않는다.
+
+## 연결 T3 — 실제 답변 연결 완료, 금지 의미와 상태 표현은 미완료
+
+HEAD `c8708b1d95298e934dfa9ad7cc8ca5d5d7f611cf`, Trial
+`4322da9d-f1a5-41da-be84-94a8cc72f0cd`, Run
+`ddafd49a-83ca-4ea4-a63c-945971835456`에서 별도 후보 1회를 실행했다.
+T1/T2 실패는 그대로 보존한다. Product 입력 계약 수정 후 실제 `compose_answer`까지
+연결됐다는 증거이며, 기존 실패를 성공 Trial로 교체하거나 Production 채택을 뜻하지 않는다.
+
+### 첫 출력 → handoff → 실제 근거 → 답변
+
+| 경계 | 실제 관측 | 의미 판정 |
+| --- | --- | --- |
+| Work | 단일 `work-1`, 조회 문장만 exact provenance에 포함. 뒤의 생성 금지 문장은 Work span 밖이지만 모든 관련 owner의 `user_request`에 그대로 존재 | 단일 업무 자체는 타당. span 밖이라는 이유로 원문의 금지를 무시할 수 없음 |
+| joint Goal/Output FIRST | 선택 Task 상태·기한 조회, `ANSWER_ONLY`, `requested_outputs=[]`; Output handoff도 빈 목록, 추가 dispatch 0 | 요청하지 않은 WRITE 생성 없음. Goal에 `Ion 온보딩`이라는 업무 개념이 생겼지만 이번 selected identity READ를 변경하지 않음 |
+| prohibition FIRST | 원문 `새 작업은 만들지 마.`가 입력에 있지만 CREATE 포함 네 effect 모두 `NOT_FORBIDDEN` | **첫 확정 의미 손실**. 최종 RequestIntent와 Planning 입력의 `effect_prohibitions=[]`로 이어짐. repair/normalizer가 삭제한 것이 아님 |
+| Source / ambiguity | TASK만 REQUIRED, SINGULAR/work-1, 상태·due 포함; 다른 Source 9개 NOT_REQUIRED. source status 조건은 빈 목록, ambiguity CONNECTOR | 현 상태를 묻는 요청이지 미완료 Task만 찾는 필터 요청은 아니므로 status 조건 없음은 오류가 아님. 선택 identity가 조회에 유지됨 |
+| Route / Retrieval | `tasks_get_task` 1회, canonical 선택 Task와 parent 정확히 일치. snapshot/Evidence 모두 `status: needsAction`, `due: 2026-08-10T00:00:00.000Z`. route의 work-1 binding과 Evidence ref가 Planning까지 유지 | Source 선택과 실제 snapshot 연결 통과. 다른 Provider 조회·외부 변경 없음 |
+| Sufficiency / Planning | SUFFICIENT, issues 없음. `compose_answer` FIRST가 한 Evidence ref와 답변 반환 | ANSWER 생성 연결 통과. 실제 상태 의미의 정확성과 typed 금지 보존은 별도로 판정 |
+
+최종 원문:
+
+> 선택한 Ion 신입 온보딩 체크리스트의 상태는 진행 중 (needsAction)이며 기한은 2026 년 8 월 10 일입니다.
+
+Task title/identity와 날짜는 실제 같은 Case의 ION snapshot에서 왔고, 시각이나 업무 마감
+시각을 발명하지 않았다. 다만 `needsAction`은 **미완료**를 뒷받침할 뿐 착수·진행 사실을
+증명하지 않는다. 기존 `project_task_read_answer._task_status` 및 Task detail projection도
+이를 미완료/incomplete로 취급한다. 원 enum을 병기했고 완료라고 답하지는 않았으므로
+전체 답변을 무근거로 간주하지 않되, **업무 답변 의미는 PARTIAL(상태 표현 과장)**로 남긴다.
+이 표현은 `compose_answer` FIRST에서 생겼다. Provider/Evidence가 진행 상태로 변조된 것이
+아니다. 별도 Draft materializer의 `진행 중` 매핑은 이번 ANSWER 입력에 없으므로 원인으로
+귀속하지 않는다.
+
+### 수정 계약의 실제 dispatch 증거
+
+- call 8 `planning.compose_answer`: input version **3**, output version 1,
+  Prompt version `1.0.19`, content hash
+  `9139d83cf3a2cf1e0ccb87b77e7e4fb532d8482043d9619e46c81327741c39f1`.
+- 실제 입력에 `evidence_by_work_unit=[{work_unit_id: work-1, evidence_refs: [...]}]`과
+  같은 route의 `source_statuses.work_unit_ids`가 존재한다. 입력 hash
+  `da1483e810cf27004ae463a6619f3286682b6e693decd8d58c335cef26e56384`,
+  actual wire hash `e8a59a076538a0916f365e57bcfac6de0b2e57c868bd81835b40097fbfddea3a`.
+- 실행 HEAD의 registry/assembler, 기록된 각 입력·Schema·PromptRef·options로 payload를
+  메모리에서 재구성하여 **8/8 actual wire hash 일치**를 확인했다. 모델 재호출은 하지 않았다.
+  `outline_answer` LLM 호출은 이번 경로에 없으므로 해당 slot의 실제 모델 검증으로 확대하지 않는다.
+- 실행 중 HEAD/Product tree 불변. worker drain 전후 영속 Run은 동일한 COMPLETED/SUCCESS다.
+  activity cursor만 추가됐다. raw의 `semantic_verdict=UNREVIEWED`는 변경하지 않았으며,
+  Product terminal SUCCESS를 Gold/의미 PASS로 승계하지 않는다.
+
+### 비용·안전·비교 한계
+
+actual wire/FIRST **8**, schema repair **0**, semantic revision **0**.
+입력 **22,838**, 출력 **727 tokens**, LLM 합계 **39,363ms**, 전체 **42,390ms**,
+usage 누락 **0**. snapshot READ **1**, 실제 외부 Provider READ/WRITE/SEND **0**,
+승인/resume **0**, rerun-to-pass **0**. 관측의 `provider_dispatch_attempts=8`은 LLM
+Provider 호출 수이며 Connector READ 8회라는 뜻이 아니다. 상한/timeout 종료가 아니다.
+
+joint Goal은 temperature0, Source0.05, ambiguity0; Work/prohibition/status/Sufficiency/
+compose는 temperature option 미전송으로 현 모델 default를 사용한다. seed20260923,
+think=false, num_ctx16384가 wire에 결속됐다. 이 Trial만으로 Goal/Output 구조의 인과 효과나
+반복 안정성을 증명하지 않는다. T2와 SHA·실제 Goal/Work 출력·시각이 다르므로 단순 paired
+성공률/지연 개선으로 환산하지 않는다.
+
+**판정:** 연결/입력 계약 통과, 선택 READ와 Evidence 귀속 통과, 업무 답변 PARTIAL,
+typed 생성 금지 보존 FAIL. 기존 Production T2에서 Goal이 있어도 CREATE 금지를 생성한
+반례와 함께 보존한다. joint 후보는 비활성 유지하며 Production/Canonical92 채택 근거는
+아직 부족하다. 이 검수에서 제품·Prompt·runner·raw 변경 및 추가 모델 실행은 0이다.
+
+안전 결과와 파일 bytes SHA256:
+
+- `evaluation/results/064-core005-goal-output-main-t3/raw.json`:
+  `051602b04ccc2b89ca93df4015d63700af5cfeb2b24f69b646e5bc7fda6f94dc`
+- 같은 폴더 `calls.json`:
+  `148dabca5044d08fa0a25c9e1bd2169b29ce813420c11dcdb740fdc42b8f2b0e`
+- 같은 폴더 `plan.json`:
+  `f4d851e82f2bbd438bea1eb29ad2d64b35ea984824b0369f5ff3eaefb3359ab6`
+- 같은 폴더 `end_binding.json`:
+  `c4c522f7cbb37f2479e89ebc705fa99e9088cd1cff75b8a0a4244084ba662e49`
