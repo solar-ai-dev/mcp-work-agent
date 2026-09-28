@@ -40,9 +40,12 @@ from scripts.ru_observation import (
     observe_local_calls,
     source_chat_envelope,
     source_format_only_envelope,
+    source_input_once_envelope,
     thinking_envelope,
 )
 from scripts.ru_ordered_authority_candidate import OrderedGoalOutputAuthorityCandidate
+from scripts.ru_output_source_handoff_candidate import OutputSourceHandoffCandidate
+from scripts.ru_request_grounded_goal_candidate import RequestGroundedGoalCandidate
 from scripts.ru_scope_authority_candidate import ScopeAuthorityCandidate, scope_authority_candidate
 from scripts.ru_source_demand_candidate import (
     JointRoleAuthorityCandidate,
@@ -253,8 +256,10 @@ def main() -> None:
     parser.add_argument("--source-replay-from", type=Path)
     parser.add_argument("--goal-replay-from", type=Path)
     parser.add_argument("--family-replay-from", type=Path)
+    parser.add_argument("--authority-replay-from", type=Path)
     parser.add_argument("--reference-inputs-from", type=Path)
     parser.add_argument("--source-format-only-envelope", action="store_true")
+    parser.add_argument("--source-input-once-envelope", action="store_true")
     parser.add_argument("--source-thinking", action="store_true")
     parser.add_argument("--source-chat", action="store_true")
     parser.add_argument("--source-scope-expression", action="store_true")
@@ -274,6 +279,8 @@ def main() -> None:
             "source-family-v15",
             "scope-authority-v16",
             "bound-source-family-v18",
+            "output-source-handoff-v20",
+            "request-grounded-goal-v21",
         ),
         default="none",
     )
@@ -284,8 +291,25 @@ def main() -> None:
         raise ValueError("bound Source-family candidate requires its frozen family replay")
     if args.family_replay_from and not args.source_replay_from:
         raise ValueError("frozen family refinement must run with Source owner replay")
+    if args.authority_replay_from and (
+        args.semantic_candidate != "output-source-handoff-v20" or not args.source_replay_from
+    ):
+        raise ValueError("frozen Output authority requires its Source handoff replay candidate")
+    if (
+        args.semantic_candidate == "output-source-handoff-v20"
+        and args.source_replay_from
+        and not args.authority_replay_from
+    ):
+        raise ValueError("Source handoff replay requires matching frozen Output authority")
     if args.source_thinking and args.source_format_only_envelope:
         raise ValueError("compare one transport axis at a time")
+    if args.source_input_once_envelope and (
+        args.semantic_candidate != "none"
+        or args.source_thinking
+        or args.source_chat
+        or args.source_format_only_envelope
+    ):
+        raise ValueError("Source input-once comparison changes only the Product input envelope")
     if args.result_path.exists():
         raise ValueError("result path already exists; preserve every prior trial")
     case_ids = _selected_case_ids(all_canonical=args.all_canonical, requested=args.case)
@@ -333,6 +357,8 @@ def main() -> None:
             close_stack.enter_context(source_scope_candidate())
         transport_calls: list[dict[str, Any]] = []
         close_stack.enter_context(observe_local_calls(transport_calls))
+        if args.source_input_once_envelope:
+            close_stack.enter_context(source_input_once_envelope(transport_calls))
         if args.source_format_only_envelope:
             close_stack.enter_context(source_format_only_envelope(transport_calls))
         if args.source_chat:
@@ -389,6 +415,8 @@ def main() -> None:
             "source-family-v15": SourceFamilyCandidate,
             "scope-authority-v16": ScopeAuthorityCandidate,
             "bound-source-family-v18": BoundSourceFamilyCandidate,
+            "output-source-handoff-v20": OutputSourceHandoffCandidate,
+            "request-grounded-goal-v21": RequestGroundedGoalCandidate,
         }.get(args.semantic_candidate)
         semantic_candidate = (
             candidate_class(
@@ -399,6 +427,11 @@ def main() -> None:
                 **(
                     {"family_replay_path": args.family_replay_from}
                     if args.family_replay_from
+                    else {}
+                ),
+                **(
+                    {"authority_replay_path": args.authority_replay_from}
+                    if args.authority_replay_from
                     else {}
                 ),
             )
@@ -473,6 +506,9 @@ def main() -> None:
                 "model_id": MODEL_ID,
                 "model_digest": model.digest,
                 "temperature": 0.0,
+                "temperature_scope": (
+                    "CONFIGURED_DEFAULT; actual prompt overrides in transport_calls"
+                ),
                 "seed": args.seed,
                 "graph_version": RESUME_CONTRACT_VERSION,
                 "trials_per_case": 1,
@@ -492,6 +528,7 @@ def main() -> None:
                 "think": False,
                 "num_ctx": 16384,
                 "source_format_only_envelope": args.source_format_only_envelope,
+                "source_input_once_envelope": args.source_input_once_envelope,
                 "source_thinking": args.source_thinking,
                 "source_endpoint": "chat" if args.source_chat else "generate",
                 "source_scope_expression": (

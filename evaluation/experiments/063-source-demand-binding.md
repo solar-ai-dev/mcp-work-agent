@@ -25,6 +25,9 @@ Product manifest/Prompt/State/Node/안전 계약을 활성화하지 않는다.
   각 schema repair 최대 1회 포함 시 48 dispatch)를 실행한다.
 - 모델 qwen3.5:9b, digest 고정 확인, temperature 0, seed 20260923,
   think=false, num_ctx=16384. actual input/hash/첫 출력/repair/오류/호출 비용 보존.
+  064 Runtime 감사 정정: 위0은 기본 설정이다. v6/v7/v9 직접 Source는 실제0.0,
+  v10 및 v15의 기존 Product Source는 실제0.05다. 서로 다른 후보 묶음의 결과이며
+  sampling까지 같은 단일변수 인과 비교가 아니다. 최초 raw 실패 위치는 그대로 유효하다.
 - 첫 오류도 기록하며 rerun-to-pass 금지. 기존 성공 source 손실·불필요 source 증가가
   반복되면 전수 평가로 확장하지 않는다. 작은 변경마다 92개 실행 금지.
 - node source 계약, RU→Route 연결, Retrieval 이후 업무 성공을 별도로 판정한다.

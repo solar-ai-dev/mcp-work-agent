@@ -47,7 +47,9 @@ STRESS fault recovery 또는 E2E 성공으로 승계하지 않는다.
 - Prompt manifest SHA-256: `29161dcc93325b50655571c91b7e7cebc0eac07214f4617216ba541009ed2ea9`
 - Model/digest: `qwen3.5:9b` /
   `6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7`
-- Temperature/seed: `0.0 / 20260923`
+  - 설정 기본 Temperature/seed: `0.0 / 20260923`. 064 Runtime 감사 정정: Product
+    Goal/Source는 당시 router에서 각각0.1/0.05로 override됐다. v4 직접 Goal 후보는0.0을
+    명시했다. 이 과거 raw에는 wire 관측이 없어 실측으로 소급 확정하지 않는다.
 - Provider READ/WRITE/SEND: `0 / 0 / 0`
 
 Core 후보 선택은 사전에 고정한 성공·실패·반례 21개를 Case당 2회 실행했다.

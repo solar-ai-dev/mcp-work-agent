@@ -250,3 +250,102 @@ upstream WRITE 오판, 신규 Draft, 복수 Source 성공/실패, 금지, 복합
 새 field는 evaluation-only input 계약에서 선언하고 Product loader/Prompt activation은 유지한다.
 이득이 있으면 actual upstream을 쓰는 compiled RU→Route로 비교를 확장하며, replay 성공만으로
 Production을 채택하지 않는다.
+
+## v21 생성 Goal 제거 — 실행 전 계획
+
+v11과 같은 Core009/012/013/019/023/025/027/049/059의 frozen Goal 입력을 각각1회 사용한다.
+v11의 mode→Output 순서와 나머지 판단은 유지하고 생성 schema에서 goal만 제거한다.
+제품에 전달되는 goal은 현재 user_request 원문을 deterministic하게 복사한다.
+원시 모델 출력과 deterministic projection은 별개로 보존한다. 완료조건은 실제 관측 가능한
+업무 완료의 의미를 담아야 하므로 raw span으로 대체하지 않고 기존 owner가 판단한다.
+Source는 이미 원문 extractive projection을 받으므로 이 후보를 Source 원문 복원으로
+보고하지 않는다. 생성 Goal만 제거해도 Output/조건 오판이 남으면 그 실패를 그대로 기록한다.
+이 후보는 confirmation resume 의미·후속 Planning의 Goal 계약까지 검증한 제품 변경이 아니다.
+
+### v21 결과
+
+9/9 첫 출력/schema 유효, 신규9calls, input25,034/output3,353tokens,
+reported129,269ms/wall129,636ms. v11과 같은 frozen 입력을 사용했다.
+원문 Goal은9/9 정확하게 전달됐지만 의미 성공을 보장하지 못했다.
+009는 v11 ANSWER에서 불필요 GMAIL_MESSAGE/SEND로 회귀했고, 023은 확인할 기존 Task가
+완료됐는지를 완료조건으로 바꾸었다. 049는 CREATE/due는 유지되지만 completion의
+'작업 완료'가 생성 완료인지 업무 수행 완료인지 불명확하다. 실제 UPDATE 지시로 단정하지 않는다.
+025의 잘못된 title 강제와027의 메일 발송시각 치환은 사라졌지만, 원문 보존과 생성된
+Output/완료조건 사이의 충돌은 남는다. 027은 정보 부족 시 한계 답변 대신 있음/없음을
+확정하도록 요구하는 위험이 남는다. 012/013/019/059의 요청 Output은 유지됐다.
+REJECT: 단순히 Goal 재서술을 제거하는 것만으로 공동 해석이 안정되지는 않았다.
+Source/Route/Planning은 이 replay에서 실행하지 않았다.
+
+raw: `evaluation/results/064-grounded-goal-v21-t1/raw.json`
+SHA256: `93cdd9e5fd99eb38e77447ed06cc8fa71b71f7f3c85e2a1bcc5f5e18c1a9473a`.
+최초 CLI 호출은 모듈 경로 오류로 모델 호출 전에 종료했고, `python -m scripts...`로
+정정했다. 실패 Trial을 재실행한 것이 아니며 위9건 외 모델 호출은 없다.
+
+### 실제 Runtime 조건 정정 (감사 진행 중)
+
+runner의 sampling_temperature=0.0 설정은 모든 owner의 실효값이 아니다.
+Product router는 Goal0.1/Source0.05 등을 prompt별로 override한다.
+v15 family는0.0, 기존 Source owner는0.05였고, v18 직접 Source adapter는0.0이었다.
+따라서 v15↔v18을 sampling까지 같은 단일변수 비교로 표현하지 않는다.
+실패 raw는 그대로 보존하며 비교 제한을 추가한다. v20은 기존 Source router 정책을
+직접 재사용하고 first/repair의 actual transport sampling도 별도로 기록한다.
+
+## v22 Source의 동일 입력 중복 envelope 제거 — 실행 전 계획
+
+runtime 감사에서 Product Source는 동일 입력 JSON을 system assembly와 user prompt.input에
+두 번 전달하는 것으로 확인됐다. v10은 schema 본문 중복만 제거했으므로 이번 input 중복은
+다른 미검증 축이다. 중복이 의미 실패 원인이라는 결론은 아직 내리지 않는다.
+현재 Product Source 경로의 FIRST 호출에서 system에 동일 JSON이 이미 존재함을 검증하고
+wire prompt.input 복사만 제거한다. system bytes, Prompt 의미, schema 본문/format, 모델·
+seed·실효 temperature0.05·timeout은 유지한다. revision/repair는 다른 정보이므로 그대로
+유지하고 별도로 기록한다. precondition 불일치는 dispatch 전 오류이며 조용히 조건을 바꾸지 않는다.
+
+Core001/013/019/023/025/027/045/049: 같은 v4 frozen Source 입력에 현재 Product 대조1회,
+v22 후보1회. source owner 입력·actual sampler를 맞춘 새로운 paired 진단이다.
+새 Schema·Source 규칙·Few-shot을 추가하지 않는다. 과거 다른 집합의 결과로 성공률을 주장하거나
+성공할 때까지 반복하지 않는다. Source recall/과잉/대상·사실 결속/repair/토큰·지연을 비교한다.
+대조와 후보 각8개가 범위이며, 의미 개선이 없으면 추가 반복·전수평가는 하지 않는다.
+
+### v20/v22 결과
+
+v20은 Output authority/input 검증8/8, first schema7/8→repair후8/8이다. 그러나
+013은 불필요 Draft까지 조회하고, 023/025는 Google Source9종을 전부 선택하며,
+049는 이전 Event Source마저 없앤다. 009는 upstream의 잘못된 Output을 보존한 상태라
+새 Output 오류로 이중 집계하지 않는다. 060의 UPDATE snapshot 필요는 유지한다.
+**REJECT**, Output 역할을 알려줬다는 사실만으로 Source 의미가 안정되지 않았다.
+
+v22는 같은 actual input/schema/system/model/temperature0.05/seed/timeout을 쓰는
+fresh Product 대조와 비교했다. 025는 Mail·Task가 사라지고,027은 Mail·Task 마감 근거를
+버린 뒤 원문에 없는09:00~10:00 조회창을 required_information에 생성한다. 013은
+첫 출력부터 Draft만 선택한다. 비용 감소는 있지만 의미 회귀 때문에 **REJECT**다.
+대조 HEAD7a60e505→후보6c5630a9는 confirmation 병합 수정이며 frozen Source 호출의
+입력·코드 변화가 아니다. 같은 전체 제품 SHA의 connected 평가로 표현하지 않는다.
+
+| 범위 | calls/repair | input/output tokens | reported/wall ms |
+| --- | --- | --- | --- |
+| v20 Source8 | 9/1 | 37,527/2,267 | 99,915/100,320 |
+| fresh Product Source8 | 9/1 | 36,559/1,792 | 84,063/85,471 |
+| v22 Source8 | 8/0 | 25,195/1,602 | 69,785/71,120 |
+
+- v20 raw SHA256: `87d476d2badd5323c075a7851a165246d6d9e521cf42897f752f2da90b3755d1`
+- paired baseline raw SHA256: `3f8ae5d4cfe28f0ba306558e0a7ac4aa152114d4593bf66947acb070c33c6ef5`
+- v22 raw SHA256: `2b397faf0754a4bfe22e86d3a2fefa76cccf72dfb20ab07b4a49cfe7ed22ffa6`
+
+추가 최초 손실을 분리했다. fresh baseline013의 첫 출력에는 Task+Event가 이미 있었다.
+TaskList/Task 중복과 누락 후보를 고치는 schema repair가 이를 전부 NOT_REQUIRED로
+바꿨다. v20은 같은 첫 의미를 schema-valid하게 내서 repair 손실을 피했을 뿐이다.
+따라서 'Output 전달로 처음 Task/Event를 이해했다'는 인과 설명은 사용하지 않는다.
+다음 축은 이미 유효한 Source 항목까지 다시 생성하는 **repair 수정 범위**다.
+
+### 확정 코드 결함 수정 추가
+
+`6c5630a9`: confirmation merge가 kind/field/value만으로 중복 제거해 다른 WorkUnit에
+같은 수신자 등을 확정한 결과를 버리는 결함을 수정했다. provenance와 Source binding까지
+동일한 항목만 제거하며 valid status/Goal/Output/금지는 보존한다. RU·Route·Planning·연결
+소비 경계 관련553 PASS. Product Prompt/Schema/Node/안전 경계 변경0, Provider I/O0.
+
+Planning의 route-local Intent는 두 endpoint가 같은 Route 안에 없으면 업무 관계를 제거한다.
+기존 canonical에 이 관계의 별도 context 입력 계약이 없었다. 비활성
+`planning_work_relation_context_candidate.py`는 들어오는 관계와 양끝 provenance만
+별도로 전달하고 타 업무의 Output/조건을 현재 Route로 되살리지 않는다. 직접10 PASS지만
+이는 관계 metadata 전달이며 실제 내부 WorkProduct/계획명세 소비 성공은 아니다.

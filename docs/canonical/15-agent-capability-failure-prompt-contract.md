@@ -266,6 +266,18 @@ Frozen Output Route별로 다음 책임을 분리한다.
 
 Arguments Projection에는 현재 검증된 `request_intent` 제약도 포함한다. 정확한 Task/Calendar CREATE가 이 Projection과 frozen Route로 하나로 결정되면 동일 Typed Candidate를 결정적으로 만들 수 있지만, 추가 semantic 판단이 남으면 Product Prompt 호출을 유지한다. 결정적 materialization도 assemble/validate, Review, Domain Validation, Approval, Verification을 우회하지 않는다.
 
+**비활성 개발 후보 — Planning 업무 관계 context**
+
+Evaluation-only injectable projection은 objective/arguments의 기존 route-local Intent를
+변경하지 않고 `work_relation_context`를 별도 입력으로 비교할 수 있다. 이 context는
+원 RequestIntent revision ref, 현재 Route의 WorkUnit ID, 해당 WorkUnit으로 들어오는
+검증된 WorkRelation과 그 양 endpoint의 원문 provenance만 포함한다. endpoint는
+context 내부의 닫힌 WorkUnit 집합과 대조하며 타 업무의 Constraint/Output/Effect를
+현재 Route에 복원하지 않는다. 이는 **요청 정의 metadata**이지 생성된 내부 WorkProduct,
+작성된 Action 명세 또는 Provider 실행 결과가 아니다. 관계를 Action dependency나 실행
+권한으로 바꾸지 않는다. 이 선언은 Product Prompt Registry·manifest·입력 Schema의
+활성화가 아니며 실제 산출물 전달·업무 성공은 별도 검증 대상이다.
+
 **Task Preview 자연어 수정 준비**
 
 | 항목 | 규칙 |
