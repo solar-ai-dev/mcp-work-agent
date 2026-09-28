@@ -222,12 +222,14 @@ def test_initial_retrieval_planner_input__includes_current_run__user_request() -
     )
 
     assert prompt_input["user_request"] == "Atlas final shipment date"
-    assert prompt_input["required_user_anchors"] == {
-        "applies_to": "INITIAL_GMAIL_SEARCH",
-        "route_ids": [route["route_id"]],
-        "keyword_terms": ["Atlas"],
-        "participant_identities": [],
-    }
+    assert prompt_input["required_user_anchors"] == [
+        {
+            "applies_to": "INITIAL_GMAIL_SEARCH",
+            "route_ids": [route["route_id"]],
+            "keyword_terms": ["Atlas"],
+            "participant_identities": [],
+        }
+    ]
 
 
 def test_followup_retrieval_planner_input__preserves_observed__evidence_projection() -> None:

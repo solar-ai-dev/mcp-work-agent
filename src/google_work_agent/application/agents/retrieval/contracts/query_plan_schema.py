@@ -375,6 +375,8 @@ def bind_retrieval_query_plan_output_schema(
     removable_constraint_kinds: Mapping[str, Collection[str]] | None = None,
     gmail_route_ids: Collection[str] = (),
     initial_gmail_keyword_terms: Collection[str] | None = None,
+    initial_gmail_keyword_terms_by_route: Mapping[str, Collection[str] | None] | None = None,
+    allowed_participant_identities_by_route: Mapping[str, Collection[str]] | None = None,
     next_page_route_ids: Collection[str] | None = None,
 ) -> OutputSchemaDefinition:
     """Bind planner-generated identities to values validated in the current state."""
@@ -418,13 +420,21 @@ def bind_retrieval_query_plan_output_schema(
                 allowed_container_refs=sorted((validated_container_refs or {}).get(route_id, ())),
                 temporal_constraint=(resolved_temporal_constraints or {}).get(route_id),
                 require_temporal_constraint=route_id in required_temporal_routes,
-                allowed_participant_identities=allowed_participant_identities,
+                allowed_participant_identities=(
+                    allowed_participant_identities_by_route.get(route_id, ())
+                    if allowed_participant_identities_by_route is not None
+                    else allowed_participant_identities
+                ),
                 removable_constraint_kinds=set(
                     (removable_constraint_kinds or {}).get(route_id, ())
                 ),
                 gmail_keyword_literals=route_id in gmail_route_ids,
                 initial_gmail_keyword_terms=(
-                    initial_gmail_keyword_terms
+                    (
+                        initial_gmail_keyword_terms_by_route.get(route_id)
+                        if initial_gmail_keyword_terms_by_route is not None
+                        else initial_gmail_keyword_terms
+                    )
                     if route_id in gmail_route_ids and not is_followup
                     else None
                 ),

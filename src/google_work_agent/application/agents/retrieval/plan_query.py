@@ -48,6 +48,9 @@ from google_work_agent.application.agents.retrieval.plan_candidate_detail import
     plan_candidate_detail,
 )
 from google_work_agent.application.agents.retrieval.plan_query_expansion import plan_query_expansion
+from google_work_agent.application.agents.retrieval.project_route_constraints import (
+    project_route_constraints,
+)
 from google_work_agent.application.agents.retrieval.resolve_calendar_query_periods import (
     resolve_calendar_query_periods,
 )
@@ -184,6 +187,7 @@ def deterministic_initial_query_plan(
         prompt_input=prompt_input,
         frozen_routes=frozen_routes,
         route_policies=route_policies,
+        validated_resource_refs=validated_resource_refs,
         validated_container_refs=validated_container_refs,
         is_followup="current_round_no" in prompt_input,
         timezone=timezone,
@@ -211,6 +215,7 @@ def deterministic_initial_query_plan(
         prompt_input=prompt_input,
         frozen_routes=frozen_routes,
         route_policies=route_policies,
+        validated_resource_refs=validated_resource_refs,
         validated_container_refs=validated_container_refs,
         is_followup="current_round_no" in prompt_input,
     )
@@ -570,11 +575,46 @@ def _candidate_detail_precedes_expansion(prompt_input: Mapping[str, object]) -> 
     )
 
 
+def _policy_plan_has_business_source(
+    *,
+    request_intent: Mapping[str, object],
+    frozen_routes: Sequence[InputToolRouteV1],
+    validated_resource_refs: Mapping[str, Collection[str]] | None,
+) -> bool:
+    """A mandatory pre-read does not settle a requested Source's query meaning."""
+    if any(
+        {"REQUESTED_INPUT", "RESOURCE_SELECTED", "EXPLICIT_RESOURCE_ID"}.intersection(
+            route["reason_codes"]
+        )
+        or (validated_resource_refs or {}).get(route["route_id"])
+        for route in frozen_routes
+    ):
+        return True
+    responsibilities = request_intent.get("resource_responsibilities")
+    if not isinstance(responsibilities, Mapping):
+        return False
+    sources = responsibilities.get("source_reads")
+    if not isinstance(sources, list):
+        return False
+    for source in sources:
+        if not isinstance(source, Mapping):
+            continue
+        source_work_ids = _string_collection(source.get("work_unit_ids"))
+        for route in frozen_routes:
+            if source.get("resource_type") != route["resource_type"]:
+                continue
+            route_work_ids = frozenset(route.get("work_unit_ids", ()))
+            if not source_work_ids or not route_work_ids or source_work_ids & route_work_ids:
+                return True
+    return False
+
+
 def _exact_calendar_conflict_check_plan(
     *,
     prompt_input: Mapping[str, object],
     frozen_routes: Sequence[InputToolRouteV1],
     route_policies: Mapping[str, RouteConstraintPolicy],
+    validated_resource_refs: Mapping[str, Collection[str]] | None,
     validated_container_refs: Mapping[str, Collection[str]] | None,
     is_followup: bool,
     timezone: str | None,
@@ -596,6 +636,12 @@ def _exact_calendar_conflict_check_plan(
 
     request_intent = prompt_input.get("request_intent")
     if not isinstance(request_intent, Mapping):
+        return None
+    if _policy_plan_has_business_source(
+        request_intent=request_intent,
+        frozen_routes=frozen_routes,
+        validated_resource_refs=validated_resource_refs,
+    ):
         return None
     if "CREATE" not in _string_collection(request_intent.get("requested_effect_hints")):
         return None
@@ -651,6 +697,7 @@ def _exact_task_duplicate_check_plan(
     prompt_input: Mapping[str, object],
     frozen_routes: Sequence[InputToolRouteV1],
     route_policies: Mapping[str, RouteConstraintPolicy],
+    validated_resource_refs: Mapping[str, Collection[str]] | None,
     validated_container_refs: Mapping[str, Collection[str]] | None,
     is_followup: bool,
 ) -> RetrievalQueryPlanV2 | None:
@@ -666,6 +713,12 @@ def _exact_task_duplicate_check_plan(
         return None
     request_intent = prompt_input.get("request_intent")
     if not isinstance(request_intent, Mapping):
+        return None
+    if _policy_plan_has_business_source(
+        request_intent=request_intent,
+        frozen_routes=frozen_routes,
+        validated_resource_refs=validated_resource_refs,
+    ):
         return None
     requested_effects = _string_collection(request_intent.get("requested_effect_hints"))
     requested_resources = _string_collection(request_intent.get("requested_resource_hints"))
@@ -833,13 +886,17 @@ def plan_query(
         }
     concepts_by_route = resolve_requested_gmail_concepts(prompt_input, frozen_routes)
     planner_kinds: dict[str, Collection[RetrievalConstraintKindV1]] = dict(supported_kinds)
-    keyword_anchors, participant_anchors, _ = _trusted_query_anchors(prompt_input)
-    if not is_followup and (keyword_anchors or participant_anchors):
+    anchors_by_route = {
+        route["route_id"]: _trusted_query_anchors(prompt_input, route=route)
+        for route in frozen_routes
+    }
+    if not is_followup:
         planner_kinds = {
             route["route_id"]: (
                 frozenset(planner_kinds[route["route_id"]]) - {"CONCEPT"}
                 if route["resource_type"]
                 in {"EMAIL", "GMAIL_THREAD", "GMAIL_MESSAGE", "GMAIL_DRAFT"}
+                and any(anchors_by_route[route["route_id"]][:2])
                 else planner_kinds[route["route_id"]]
             )
             for route in frozen_routes
@@ -954,8 +1011,15 @@ def plan_query(
             for route in frozen_routes
             if route["resource_type"] in {"EMAIL", "GMAIL_THREAD", "GMAIL_MESSAGE", "GMAIL_DRAFT"}
         },
-        initial_gmail_keyword_terms=keyword_anchors or None,
-        allowed_participant_identities=resolve_request_participants(prompt_input),
+        initial_gmail_keyword_terms_by_route={
+            route_id: anchors[0] or None for route_id, anchors in anchors_by_route.items()
+        },
+        allowed_participant_identities_by_route={
+            route["route_id"]: resolve_request_participants(
+                {"request_intent": {"constraints": project_route_constraints(prompt_input, route)}}
+            )
+            for route in frozen_routes
+        },
         resolved_temporal_constraints=resolved_temporal_constraints,
         required_temporal_route_ids=calendar_temporal_constraints,
     )
@@ -1223,19 +1287,21 @@ def _validate_initial_user_anchor_preservation(
 
     if "current_round_no" in prompt_input:
         return plan
-    keyword_anchors, participant_anchors, has_business_concept = _trusted_query_anchors(
-        prompt_input
-    )
-    route_resources = {route["route_id"]: route["resource_type"] for route in frozen_routes}
+    routes_by_id = {route["route_id"]: route for route in frozen_routes}
     for query in plan["route_queries"]:
+        route = routes_by_id.get(query["route_id"])
         if (
             query["operation"] != "SEARCH"
-            or route_resources.get(query["route_id"])
+            or route is None
+            or route["resource_type"]
             not in {"EMAIL", "GMAIL_THREAD", "GMAIL_MESSAGE", "GMAIL_DRAFT"}
             or query["search_spec"] is None
             or query["search_spec"]["mode"] != "INITIAL"
         ):
             continue
+        keyword_anchors, participant_anchors, has_business_concept = _trusted_query_anchors(
+            prompt_input, route=route
+        )
         constraints = query["search_spec"]["constraints"]
         keyword_terms = [
             term
@@ -1283,17 +1349,13 @@ def _requires_observed_evidence_pivot(prompt_input: Mapping[str, object]) -> boo
 
 def _trusted_query_anchors(
     prompt_input: Mapping[str, object],
+    *,
+    route: InputToolRouteV1,
 ) -> tuple[tuple[str, ...], frozenset[str], bool]:
-    intent = prompt_input.get("request_intent")
-    constraints = intent.get("constraints") if isinstance(intent, Mapping) else None
-    if not isinstance(constraints, list):
-        return (), frozenset(), False
     keywords: list[str] = []
     participants: set[str] = set()
     has_business_concept = False
-    for constraint in constraints:
-        if not isinstance(constraint, Mapping):
-            continue
+    for constraint in project_route_constraints(prompt_input, route):
         field = str(constraint.get("field", "")).strip().lower()
         if field == "business_concepts" and constraint.get("value"):
             has_business_concept = True
@@ -1811,23 +1873,31 @@ def _required_user_anchor_projection(
     *,
     request_intent: RequestIntentV3,
     input_routes: Sequence[InputToolRouteV1],
-) -> dict[str, object]:
+) -> list[dict[str, object]]:
     """Bind trusted exact user anchors to the Gmail routes that consume them."""
 
-    keyword_terms, participant_identities, _ = _trusted_query_anchors(
-        {"request_intent": request_intent}
-    )
-    route_ids = [
-        route["route_id"]
-        for route in input_routes
-        if route["resource_type"] in {"EMAIL", "GMAIL_THREAD", "GMAIL_MESSAGE", "GMAIL_DRAFT"}
-    ]
-    return {
-        "applies_to": "INITIAL_GMAIL_SEARCH",
-        "route_ids": route_ids,
-        "keyword_terms": list(keyword_terms),
-        "participant_identities": sorted(participant_identities),
-    }
+    projections: list[dict[str, object]] = []
+    for route in input_routes:
+        if route["resource_type"] not in {
+            "EMAIL",
+            "GMAIL_THREAD",
+            "GMAIL_MESSAGE",
+            "GMAIL_DRAFT",
+        }:
+            continue
+        keyword_terms, participant_identities, _ = _trusted_query_anchors(
+            {"request_intent": request_intent}, route=route
+        )
+        projection: dict[str, object] = {
+            "applies_to": "INITIAL_GMAIL_SEARCH",
+            "route_ids": [route["route_id"]],
+            "keyword_terms": list(keyword_terms),
+            "participant_identities": sorted(participant_identities),
+        }
+        if "work_unit_ids" in route:
+            projection["work_unit_ids"] = list(route["work_unit_ids"])
+        projections.append(projection)
+    return projections
 
 
 def followup_retrieval_planner_input(
@@ -1878,6 +1948,8 @@ def _prompt_route(
         "required": route["required"],
         "reason_codes": list(route["reason_codes"]),
     }
+    if "work_unit_ids" in route:
+        prompt_route["work_unit_ids"] = list(route["work_unit_ids"])
     resource_refs = (validated_resource_refs or {}).get(route["route_id"])
     if resource_refs:
         prompt_route["resource_refs"] = list(resource_refs)

@@ -58,7 +58,7 @@ Conversation Timeline은 사용자에게 보여 주는 저장 이력이지 Produ
 
 | Node·호출 상황 | 입력 | 제한 |
 | --- | --- | --- |
-| Retrieval 초기 Round Query Planner | 현재 Run `user_request + request_intent + input_routes + retrieval_budget` | 원문은 typed intent의 의미 손실을 보완하는 입력이며 별도 State·장기 권위·정책 사실로 승격하지 않는다. |
+| Retrieval 초기 Round Query Planner | 현재 Run `user_request + request_intent + input_routes + required_user_anchors + retrieval_budget` | input v6의 Route는 frozen `work_unit_ids`를 보존하고 exact anchor는 05의 route별 목록 계약으로 전달한다. 원문은 typed intent의 의미 손실을 보완하는 입력이며 별도 State·장기 권위·정책 사실로 승격하지 않는다. |
 | Retrieval follow-up Round Query Planner | 초기 입력 + `current_round_no + prior QueryAttemptV1 + unresolved SufficiencyIssueV2 + bounded read-result summary + current-Run selected Evidence projection` | Evidence projection은 `evidence_ref + excerpt + role + resource_ref`로 제한하며 raw Provider payload가 아니다. |
 | Evidence Selector | `request_intent + ranked_segments` | 같은 Run의 detail 재평가에서는 유지된 selected Evidence의 bounded projection을 관계 문맥으로 추가한다. |
 | Work Analysis atomic node | 각 책임에 필요한 최소 Projection | facts/entity-relations/temporal-dependencies/duplicate-conflict-candidates/gaps/risks를 한 번에 요구하지 않는다. |

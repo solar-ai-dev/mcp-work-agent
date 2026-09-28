@@ -84,7 +84,7 @@ class PromptRuntimeInputContractEntryV1:
         if self.prompt_slot_id == "retrieval.select_evidence":
             input_versions = {3, 4, 5, 6}
         elif self.prompt_slot_id == "retrieval.plan_query":
-            input_versions = {1, 2, 3, 4, 5}
+            input_versions = {1, 2, 3, 4, 5, 6}
         elif self.prompt_slot_id == "request_understanding.identify_source_status":
             input_versions = {1}
         elif self.prompt_slot_id.startswith("request_understanding."):

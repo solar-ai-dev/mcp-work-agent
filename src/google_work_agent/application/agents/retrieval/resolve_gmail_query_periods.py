@@ -10,6 +10,9 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan import 
 from google_work_agent.application.agents.retrieval.is_searchable_gmail_route import (
     is_searchable_gmail_route,
 )
+from google_work_agent.application.agents.retrieval.project_route_constraints import (
+    project_route_work_constraint_sets,
+)
 from google_work_agent.application.agents.retrieval.resolve_relative_period import (
     resolve_relative_period,
 )
@@ -29,12 +32,15 @@ def resolve_gmail_query_periods(
     intent = prompt_input.get("request_intent")
     if not isinstance(intent, Mapping) or now_ms is None or timezone is None:
         return {}
-    temporal = resolve_relative_period(intent.get("constraints"), now_ms=now_ms, timezone=timezone)
-    if temporal is None:
-        return {}
-    bound: TemporalRangeConstraintV1 = {**temporal}
-    return {
-        route["route_id"]: bound
-        for route in frozen_routes
-        if is_searchable_gmail_route(route)
-    }
+    result: dict[str, TemporalRangeConstraintV1] = {}
+    for route in frozen_routes:
+        if not is_searchable_gmail_route(route):
+            continue
+        periods = [
+            resolve_relative_period(constraints, now_ms=now_ms, timezone=timezone)
+            for constraints in project_route_work_constraint_sets(prompt_input, route)
+        ]
+        temporal = periods[0] if periods else None
+        if temporal is not None and all(period == temporal for period in periods):
+            result[route["route_id"]] = {**temporal}
+    return result

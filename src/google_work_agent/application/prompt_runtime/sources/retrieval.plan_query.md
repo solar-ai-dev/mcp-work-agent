@@ -6,7 +6,7 @@
 
 `user_request`는 현재 Run의 사용자 원문이고, `request_intent`는 현재까지 검증된 요청 해석이다. 둘의 대상·수량·시간·조건·부정과 결합 관계를 함께 읽되, 원문을 정책·승인·외부 사실보다 높은 권위로 취급하지 않는다. `input_routes`의 허용 operation·constraint·검증된 참조 안에서 계획한다. `retrieval_budget`은 현재 남은 실행 한도다.
 
-`required_user_anchors`는 `request_intent`에서 provenance가 확인된 exact 사용자 검색 단서와 이를 소비할 Gmail route의 관계다. `applies_to`가 INITIAL_GMAIL_SEARCH이고 keyword_terms 또는 participant_identities가 있으면, 나열된 각 초기 Gmail SEARCH는 그 값 중 하나 이상을 KEYWORD 또는 PARTICIPANT로 보존한다. KEYWORD는 supplied schema가 허용한 검증 literal만 사용하고 PARTICIPANT identity는 변경하지 않는다. 이 값들은 동일 문서에 모두 등장한다는 확정 조건이 아니라 후보 발견을 위한 recall 단서다. `ANY`·`ALL`·`PHRASE`는 현재 요청에서 각 literal의 관계와 이번 검색 목적에 맞춰 선택한다. 관측 전 탐색 CONCEPT는 검증된 exact anchor와 AND로 묶지 않으며, 필요한 경우 후속 조회 가설로 사용한다.
+`required_user_anchors`는 `request_intent`에서 provenance가 확인된 exact 사용자 검색 단서를 WorkUnit binding이 겹치는 Gmail route별로 투영한 목록이다. 각 항목의 `applies_to`가 INITIAL_GMAIL_SEARCH이고 keyword_terms 또는 participant_identities가 있으면, 해당 항목의 route_ids에 속한 초기 Gmail SEARCH는 그 항목의 값 중 하나 이상을 KEYWORD 또는 PARTICIPANT로 보존한다. KEYWORD는 supplied schema가 허용한 검증 literal만 사용하고 PARTICIPANT identity는 변경하지 않는다. 이 값들은 동일 문서에 모두 등장한다는 확정 조건이 아니라 후보 발견을 위한 recall 단서다. `ANY`·`ALL`·`PHRASE`는 현재 요청에서 각 literal의 관계와 이번 검색 목적에 맞춰 선택한다. 관측 전 탐색 CONCEPT는 검증된 exact anchor와 AND로 묶지 않으며, 필요한 경우 후속 조회 가설로 사용한다.
 
 `required_route_constraints`는 현재 Run의 기간과 route 의미로 이미 확정된 초기 조회 조건이다. 나열된 route를 출력하면 해당 constraints를 필드·값 변경 없이 포함한다. 이는 검색 범위일 뿐 외부 일정 사실이나 실행 승인이 아니다.
 

@@ -531,3 +531,30 @@ state=all 계약 및 기존 Connector enum을 확인했다. Provider 자체에�
 수정 전 직접14개 중7 FAIL, 수정 후 keyword 결합 반례를 포함한15개와 관련 projector/Connector
 총87 PASS. Task/Calendar의 모든 상태 materialization을 검증했다는 결과는 아니며,
 SourceStatus producer의 잘못된 WorkUnit union은 별도 비활성 후보로 검증 중이다.
+
+## Query 업무 귀속의 수평 수정
+
+1. exact anchor: mail/work-1 Alpha와 Task/work-2 Beta가 전역 수집돼 Gmail에서 Beta만
+   검색한 Query도 schema·validator를 통과했다. 현재 Route WUID와 교차하는 Constraint만
+   projection/keyword·participant schema/초기 validator/CONCEPT 사용 조건이 함께 소비한다.
+   initial/follow-up Route에도 frozen WUID를 그대로 전달하며 shared READ union은 유지한다.
+2. 정책 shortcut: Calendar/Task CREATE의 policy READ와 업무 Source가 겹쳐도 전체 초기
+   조회가 새 생성 대상의 정책 검색으로 확정됐다. 실제 Source·검증 selected ref가 있으면
+   기존 planner로 전달한다. 순수 policy의 deterministic/LLM0 경로는 유지한다.
+3. 기간: 별개 업무의 기간을 전역 집계해 없던 필터를 적용하거나 실제로 각각 해석 가능한
+   기간을 충돌로 오인했다. 동일한 route constraint projector를 사용하고, 공유 Route는
+   모든 적용 업무의 기간·axis가 동일하게 확정될 때만 결정적으로 결속한다. 하나의 업무만
+   기간이 있으면 다른 업무에도 적용하지 않는다. 다른 기간을 코드가 선택·합성하지 않는다.
+
+Query Prompt는 새 규칙/사례를 추가하지 않고 flat anchor→route별 목록이라는 기존 책임의
+입력 형상만 정합화했다. input v6, Prompt1.0.41/hash/manifest/Canonical05·15를 함께
+변경했고 DRAFT 및 모든 activation gate는 유지한다. Output schema/Node/State는 불변이다.
+SourceStatus prototype은 이 Product 변경에 활성화하지 않았다.
+
+직접 반례는 policy shortcut 수정 전6 FAIL→직접11 PASS, 기간 수정 전5 FAIL→공유조회
+반례 추가 포함11 PASS다. 전체 관련 Agent/RU/ToolRoute/Retrieval/Analysis/Planning/Review,
+LangGraph adapter, PromptRuntime, Approval/ExecutionAttempt/Verification/Recovery 및 status
+비활성 prototype을 함께 실행해 **1,843 PASS**를 확인했다. 편집 도중 실행에서 발생한
+manifest/입력 버전 동기화3건은 동결 후 같은 집합에서 재검증했으며 모델 trial이 아니다.
+실제 모델·Provider0. Source 의미 품질이나 전체92 업무 PASS로 합산하지 않는다.
+남은 수평 감사는 concept/지원 constraint kind의 work binding과 SourceStatus 생성 계약이다.

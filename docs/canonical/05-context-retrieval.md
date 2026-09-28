@@ -213,7 +213,21 @@ Follow-up의 prior attempt projection은 semantic constraint·operation·reason�
 
 `required_user_anchors`는 `RequestIntentV3`의 명시 검색 필드 중 current-run
 `USER_REQUEST | CONFIRMATION_RESPONSE` provenance가 검증된 값과 이를 소비할 Gmail route만
-투영한다. `business_concepts`, 시스템 유래 값, 정규식·사전 추측으로 새 anchor를 만들지
+route별 목록으로 투영한다. 각 항목은 `applies_to`, 해당 `route_ids`, 원래 route의
+`work_unit_ids`, `keyword_terms`, `participant_identities`를 가진다. Constraint와 frozen
+Route의 `work_unit_ids`가 겹치는 값만 해당 Route에 적용하며, shared READ는 기존 union을
+그대로 소비한다. `input_routes`도 같은 frozen binding을 initial/follow-up 입력에 보존한다.
+초기 exact-anchor 검증, literal/participant Schema 결속, CONCEPT 제외 역시 이 동일한
+route-local 집합을 사용한다. WorkUnit binding이 없는 V3 항목에 전체 업무를 추정하지
+않는다. V3 이전의 무binding 직접 입력은 양쪽 모두 binding이 없을 때만 기존 호환
+투영을 사용하며 새 ID를 만들지 않는다.
+기간의 결정적 결속도 같은 WorkUnit ownership을 소비한다. 서로 다른 Route의 기간·시간축을
+섞지 않고, 공유 READ의 모든 적용 WorkUnit에서 동일한 기간이 확정된 경우에만 그 기간을
+Route 전체의 필수 초기 조건으로 만든다. 일부 업무만 기간이 있거나 서로 다른 기간이면
+코드가 하나를 선택·합성하지 않고 기존 planner의 typed 입력에 원래 제약을 유지한다.
+같은 WorkUnit 안의 Source 조회 시각과 Output 생성 시각을 새로 구별하는 의미 판단은 이
+projection의 책임이 아니다.
+`business_concepts`, 시스템 유래 값, 정규식·사전 추측으로 새 anchor를 만들지
 않는다. 이 projection은 새 요청 권위가 아니라 기존 typed 의미의 bounded 전달 형식이다.
 초기 Gmail KEYWORD의 `ANY | ALL | PHRASE`는 원문 의미와 후보 발견 목적에 맞춰 선택하며
 Anchor 존재만으로 `ANY`를 강제하지 않는다. 검증된 exact anchor와 관측 전 CONCEPT 가설을

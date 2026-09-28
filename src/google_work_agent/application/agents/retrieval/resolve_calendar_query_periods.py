@@ -8,6 +8,9 @@ from datetime import datetime, time
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
     TemporalRangeConstraintV1,
 )
+from google_work_agent.application.agents.retrieval.project_route_constraints import (
+    project_route_work_constraint_sets,
+)
 from google_work_agent.application.agents.retrieval.resolve_relative_period import (
     ResolvedTemporalRange,
     resolve_relative_period,
@@ -29,24 +32,28 @@ def resolve_calendar_query_periods(
     intent = prompt_input.get("request_intent")
     if not isinstance(intent, Mapping) or now_ms is None or timezone is None:
         return {}
-    temporal = resolve_relative_period(
-        intent.get("constraints"),
-        now_ms=now_ms,
-        timezone=timezone,
-        default_axis="EVENT_TIME",
-    )
-    if temporal is None or temporal["axis"] == "MESSAGE_TIME":
-        return {}
     route_types = {route["resource_type"] for route in frozen_routes}
-    if (
+    bind_explicit_window = (
         len(route_types & {"CALENDAR_EVENT", "CALENDAR_FREEBUSY"}) == 1
         and route_types <= {"CALENDAR", "CALENDAR_EVENT", "CALENDAR_FREEBUSY"}
-    ):
-        temporal = _bind_explicit_time_window(intent.get("constraints"), temporal)
-    if temporal is None:
-        return {}
+    )
     result: dict[str, TemporalRangeConstraintV1] = {}
     for route in frozen_routes:
+        if route["resource_type"] not in {"CALENDAR_EVENT", "CALENDAR_FREEBUSY"}:
+            continue
+        periods: list[ResolvedTemporalRange | None] = []
+        for constraints in project_route_work_constraint_sets(prompt_input, route):
+            period = resolve_relative_period(
+                constraints, now_ms=now_ms, timezone=timezone, default_axis="EVENT_TIME"
+            )
+            if period is not None and period["axis"] == "MESSAGE_TIME":
+                period = None
+            if period is not None and bind_explicit_window:
+                period = _bind_explicit_time_window(constraints, period)
+            periods.append(period)
+        temporal = periods[0] if periods else None
+        if temporal is None or any(period != temporal for period in periods):
+            continue
         if route["resource_type"] == "CALENDAR_EVENT":
             result[route["route_id"]] = {**temporal, "axis": "EVENT_TIME"}
         elif route["resource_type"] == "CALENDAR_FREEBUSY":
