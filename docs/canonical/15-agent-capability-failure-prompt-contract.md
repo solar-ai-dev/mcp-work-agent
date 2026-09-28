@@ -268,6 +268,7 @@ Local SLLM 기본 Profile에서는 서로 다른 semantic 판단을 한 Product 
 | 항목 | 처리·제한 |
 | --- | --- |
 | 답변 생성 | `compose_answer`는 사람·시간 조건이나 `PARTIAL`이라는 이유만으로 생략하지 않는다. Evidence 원문을 최종 답변으로 대체하지 않는다. 기존 결정적 resource/empty-result projection은 유지하되 의미 요약이 필요한 답변은 기존 Prompt slot을 사용한다. |
+| Task 답변 projection 범위 | 결정적 Task formatter는 확정된 Source `required_information` 전체를 현재 지원 필드로 표현할 수 있을 때만 적용한다. 미지원 정보가 있으면 생략하거나 재해석하지 않고 기존 Planning 작성 owner에 전달한다. title·status·date-only scheduled_date의 기존 표현, legacy missing-responsibility 경로와 승인·실행 계약은 변경하지 않는다. |
 | 개요 생성 | Work Analysis와 unresolved confirmation이 모두 없으면 원문을 단일 section으로 보존하고 현재 Evidence ref만 순서대로 전달한다. 자연어 heuristic으로 section이나 ref를 재선택하지 않는다. Work Analysis 또는 confirmation 판단이 필요하면 기존 `planning.outline_answer` Prompt slot을 유지한다. |
 | 입력 | 선택된 Evidence와 함께 Retrieval의 `coverage`, `unresolved_event_dates`, `missing_information`, `source_statuses` 중 필요한 bounded projection을 optional input으로 소비한다. 과거 checkpoint에 필드가 없으면 확정 사실을 추측하지 않는다. |
 | 사실 표현 | 검색 기간은 행사 날짜의 사실 근거가 아니다. 미확정 연도·인물을 확정 표현으로 승격하지 않는다. 부분 범위·미해결 사실·조회 실패 안내를 보존하고 원문/내부 metadata dump 대신 요청에 대한 간결한 답변을 만든다. |

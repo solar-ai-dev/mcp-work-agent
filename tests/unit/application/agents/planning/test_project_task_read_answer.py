@@ -167,7 +167,7 @@ def _structured_task(*, status: str = "needsAction") -> dict[str, str]:
 def test_task_read_answer__title_only__does_not_force_other_fields() -> None:
     result = project_task_read_answer(
         user_request="할 일 제목을 알려줘.",
-        request_intent=_field_selecting_intent(["task_identity", "title"]),
+        request_intent=_field_selecting_intent(["title"]),
         evidence=[_structured_task()],
     )
 
@@ -202,7 +202,7 @@ def test_task_read_answer__status_and_scheduled_date__preserve_both_meanings() -
     result = project_task_read_answer(
         user_request="할 일 상태와 예정일을 알려줘.",
         request_intent=_field_selecting_intent(
-            ["task_identity", "title", "notes", "due", "completion_status"]
+            ["title", "due", "completion_status"]
         ),
         evidence=[_structured_task()],
     )
@@ -215,3 +215,78 @@ def test_task_read_answer__status_and_scheduled_date__preserve_both_meanings() -
     assert "완료" not in answer.replace("미완료", "")
     assert "마감" not in answer
     assert "deadline" not in answer.casefold()
+
+
+@pytest.mark.parametrize(
+    "required_information",
+    [
+        ["notes"],
+        ["task_identity"],
+        ["task_identity", "title"],
+        ["body"],
+        ["title", "notes"],
+        ["status", "due", "notes"],
+        ["task_identity", "title", "notes", "due", "completion_status"],
+        ["future_information"],
+    ],
+)
+def test_task_read_answer__unsupported_information__retains_semantic_owner(
+    required_information: list[str],
+) -> None:
+    result = project_task_read_answer(
+        user_request="Return the requested Task information.",
+        request_intent=_field_selecting_intent(required_information),
+        evidence=[_structured_task()],
+    )
+
+    assert result is None
+
+
+@pytest.mark.parametrize(
+    ("required_information", "expected"),
+    [
+        (["title"], "Ion 신입 온보딩 체크리스트"),
+        (["status"], "상태: 미완료"),
+        (["task_status"], "상태: 미완료"),
+        (["scheduled_date"], "예정일: 2026-08-10"),
+    ],
+)
+def test_task_read_answer__existing_supported_aliases__keep_projection(
+    required_information: list[str], expected: str
+) -> None:
+    result = project_task_read_answer(
+        user_request="할 일 정보를 알려줘.",
+        request_intent=_field_selecting_intent(required_information),
+        evidence=[_structured_task()],
+    )
+
+    assert result is not None
+    assert expected in result.draft["answer"]
+
+
+def test_task_read_answer__one_of_multiple_sources_unsupported__does_not_drop_it() -> None:
+    request = _field_selecting_intent(["status"])
+    request["resource_responsibilities"] = {
+        "source_reads": [
+            {
+                "resource_type": "TASK",
+                "required_information": ["status"],
+                "work_unit_ids": ["work-1"],
+            },
+            {
+                "resource_type": "TASK",
+                "required_information": ["notes"],
+                "work_unit_ids": ["work-2"],
+            },
+        ],
+        "outputs": [],
+    }
+
+    assert (
+        project_task_read_answer(
+            user_request="Return the requested information for both tasks.",
+            request_intent=request,
+            evidence=[_structured_task()],
+        )
+        is None
+    )

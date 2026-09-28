@@ -38,6 +38,8 @@ def project_task_read_answer(
     evidence_refs = [ref for item in citation_items if (ref := _evidence_ref(item)) is not None]
     korean = any("\uac00" <= character <= "\ud7a3" for character in user_request)
     requested_fields = _requested_task_fields(request_intent)
+    if requested_fields is None:
+        return None
     if task_items:
         lead = (
             f"Google Tasks에서 확인된 현재 할 일은 {len(task_items)}개입니다."
@@ -89,7 +91,7 @@ def _evidence_ref(item: Mapping[str, object]) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _requested_task_fields(request_intent: Mapping[str, object]) -> frozenset[str]:
+def _requested_task_fields(request_intent: Mapping[str, object]) -> frozenset[str] | None:
     responsibilities = request_intent.get("resource_responsibilities")
     if not isinstance(responsibilities, Mapping):
         return frozenset({"title"})
@@ -102,12 +104,17 @@ def _requested_task_fields(request_intent: Mapping[str, object]) -> frozenset[st
         if isinstance(source, Mapping) and source.get("resource_type") == "TASK"
         for information in _strings(source.get("required_information"))
     }
-    fields = {"title"}
-    if required_information.intersection({"completion_status", "status", "task_status"}):
-        fields.add("status")
-    if required_information.intersection({"due", "scheduled_date"}):
-        fields.add("scheduled_date")
-    return frozenset(fields)
+    information_to_field = {
+        "title": "title",
+        "completion_status": "status",
+        "status": "status",
+        "task_status": "status",
+        "due": "scheduled_date",
+        "scheduled_date": "scheduled_date",
+    }
+    if not required_information.issubset(information_to_field):
+        return None
+    return frozenset({"title", *(information_to_field[item] for item in required_information)})
 
 
 def _task_line(

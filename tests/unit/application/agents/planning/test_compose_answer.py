@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from typing import Any, cast
 
 import pytest
@@ -11,6 +12,98 @@ from google_work_agent.application.agents.planning.compose_answer import (
     answer_semantic_repair_output_schema,
     compose_answer,
 )
+from google_work_agent.application.agents.planning.contracts.planning_semantics import (
+    AnswerOutlineV1,
+)
+from google_work_agent.application.agents.planning.outline_answer import outline_answer
+
+
+@pytest.mark.parametrize("information", ["status_due", "notes", "task_identity"])
+def test_task_formatter_completeness__through_outline_and_compose__preserves_owner(
+    information: str,
+) -> None:
+    requests = {
+        "status_due": "할 일 상태와 예정일을 알려줘.",
+        "notes": "할 일의 메모를 알려줘.",
+        "task_identity": "선택한 할 일의 정확한 Task ID를 알려줘.",
+    }
+    request = requests[information]
+    intent: dict[str, Any] = {
+        "requested_effect_hints": ["READ"],
+        "requested_resource_hints": ["TASK"],
+        "analysis_requirement": "NONE",
+        "resource_responsibilities": {
+            "source_reads": [
+                {
+                    "resource_type": "TASK",
+                    "required_information": (
+                        ["status", "due"] if information == "status_due" else [information]
+                    ),
+                    "work_unit_ids": ["work-1"],
+                }
+            ],
+            "outputs": [],
+        },
+    }
+    evidence = [
+        {
+            "evidence_id": "e-task",
+            "resource_handle": "task:observed-task",
+            "excerpt": (
+                "title: 준비 사항 확인\nstatus: needsAction\n"
+                "due: 2026-08-10T00:00:00.000Z\nnotes:\n장비 수령 항목을 확인할 것."
+            ),
+        }
+    ]
+    original = deepcopy((intent, evidence))
+    calls: list[str] = []
+
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        calls.append(prompt_id)
+        assert prompt_input["request_intent"] == original[0]
+        assert prompt_input["evidence"] == original[1]
+        return {
+            "schema_version": 2,
+            "answer": (
+                "선택한 Task ID는 observed-task입니다."
+                if information == "task_identity"
+                else "메모에는 장비 수령 항목을 확인하라고 적혀 있습니다."
+            ),
+            "evidence_refs": ["e-task"],
+        }
+
+    outline = outline_answer(
+        user_request=request,
+        request_intent=intent,
+        work_analysis=None,
+        evidence=evidence,
+        invoke=invoke,
+    )
+    answer = compose_answer(
+        user_request=request,
+        request_intent=intent,
+        answer_outline=cast(AnswerOutlineV1, outline),
+        work_analysis=None,
+        evidence=evidence,
+        invoke=invoke,
+    )
+
+    assert (intent, evidence) == original
+    assert answer["evidence_refs"] == ["e-task"]
+    if information != "status_due":
+        assert calls == ["planning.compose_answer"]
+        if information == "task_identity":
+            # Existing identifier sanitization is not changed by formatter handoff.
+            assert "Task ID" in answer["answer"]
+            assert "observed-task" not in answer["answer"]
+            assert "준비 사항 확인" not in answer["answer"]
+        else:
+            assert "장비 수령 항목" in answer["answer"]
+    else:
+        assert calls == []
+        assert "상태: 미완료" in answer["answer"]
+        assert "예정일: 2026-08-10" in answer["answer"]
+        assert "00:00" not in answer["answer"]
 
 
 def _validation_reason(error: ValueError) -> str:
