@@ -858,7 +858,7 @@ def test_compose_arguments_per_output_route__with_task_calendar_evidence__materi
     payload = cast(dict[str, object], result["arguments"]["payload"])
     assert calls == []
     assert payload["to"] == ["owner@example.com"]
-    assert "상태: 진행 중 (needsAction)" in str(payload["body"])
+    assert "상태: 미완료 (needsAction)" in str(payload["body"])
     assert "상태: 확정 (confirmed)" in str(payload["body"])
     assert "2026-09-13T14:00+09:00" in str(payload["body"])
     assert result["evidence_refs"] == ["e-task", "e-event", "user-message"]

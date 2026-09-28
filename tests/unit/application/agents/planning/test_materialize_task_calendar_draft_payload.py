@@ -1,9 +1,23 @@
+import pytest
+
 from google_work_agent.application.agents.planning.materialize_task_calendar_draft_payload import (
     materialize_task_calendar_draft_payload,
 )
 
 
+@pytest.mark.parametrize(
+    ("korean", "task_status", "expected_label"),
+    [
+        (True, "needsAction", "미완료"),
+        (False, "needsAction", "Incomplete"),
+        (True, "completed", "완료"),
+        (False, "completed", "Completed"),
+        (True, "unknown-provider-state", "unknown-provider-state"),
+        (False, "unknown-provider-state", "unknown-provider-state"),
+    ],
+)
 def test_materialize_task_calendar_draft_payload__with_exact_typed_evidence__returns_payload(
+    korean: bool, task_status: str, expected_label: str,
 ) -> None:
     payload = materialize_task_calendar_draft_payload(
         route={
@@ -34,7 +48,11 @@ def test_materialize_task_calendar_draft_payload__with_exact_typed_evidence__ret
                 {
                     "kind": "USER_REQUIREMENT",
                     "field": "original_search_request",
-                    "value": ["Atlas 할 일과 인쇄소 일정을 메일 초안으로 저장해줘."],
+                    "value": [
+                        "Atlas 할 일과 인쇄소 일정을 메일 초안으로 저장해줘."
+                        if korean
+                        else "Prepare a draft using the project tasks and printing schedule."
+                    ],
                 },
             ],
             "resource_responsibilities": {
@@ -52,7 +70,7 @@ def test_materialize_task_calendar_draft_payload__with_exact_typed_evidence__ret
             {
                 "resource_handle": "task:t1",
                 "excerpt": (
-                    "title: Atlas QR 문구 확정\nstatus: needsAction\n"
+                    f"title: Atlas QR 문구 확정\nstatus: {task_status}\n"
                     "due: 2026-08-16T00:00:00Z\nnotes:\n담당 지민"
                 ),
             },
@@ -68,5 +86,7 @@ def test_materialize_task_calendar_draft_payload__with_exact_typed_evidence__ret
 
     assert payload is not None
     assert payload["to"] == ["owner@example.com"]
-    assert "진행 중 (needsAction)" in str(payload["body"])
-    assert "확정 (confirmed)" in str(payload["body"])
+    assert f"{expected_label} ({task_status})" in str(payload["body"])
+    assert ("확정 (confirmed)" if korean else "Confirmed (confirmed)") in str(payload["body"])
+    assert "진행 중" not in str(payload["body"])
+    assert "In progress" not in str(payload["body"])

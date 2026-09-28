@@ -190,7 +190,7 @@ def _datetime_value(value: str) -> str:
 
 def _status_label(value: str, *, korean: bool) -> str:
     labels = {
-        "needsaction": ("진행 중", "In progress"),
+        "needsaction": ("미완료", "Incomplete"),
         "completed": ("완료", "Completed"),
         "confirmed": ("확정", "Confirmed"),
         "tentative": ("미확정", "Tentative"),
