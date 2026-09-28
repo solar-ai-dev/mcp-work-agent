@@ -170,7 +170,7 @@ def replay_case(
                 if current.get(key) != projection.get(key)
             )
             raise ValueError("compiled compose input differs: " + ", ".join(keys))
-        resolved = {}
+        resolved: dict[str, dict[str, object]] = {}
         for evidence in cast(list[dict[str, Any]], current["evidence"]):
             ref = evidence.get("evidence_ref") or evidence.get("evidence_id") or evidence.get("id")
             key = (
@@ -179,7 +179,7 @@ def replay_case(
                 evidence.get("locator", {}).get("source_version_ref"),
             )
             if key in store.resolved:
-                resolved[ref] = store.resolved[key]
+                resolved[cast(str, ref)] = store.resolved[key]
         draft = materialize_fact_selection(
             selection, prompt_input=current, source_snapshots=resolved
         )
