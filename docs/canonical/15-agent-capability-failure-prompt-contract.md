@@ -972,6 +972,12 @@ Source의 독립 판정 진단은 전체 원문·Goal·Work·Registry catalog를
 결정으로 조립하지 않는다. 이는 부분 owner 진단이며 Source 종류만큼 늘어날 호출·지연과
 전체 결정 조립을 검증하기 전에는 Production Node·State·budget 변경 근거가 아니다.
 
+독립 Source 판정의 입력 오염 대조에서는 원문·선택·시각·Work·전체 catalog를 보존한 채
+Goal의 파생 `constraints`만 빈 객체로 전달할 수 있다. 실제 입력 변경과 그 hash를
+evaluation 계약으로 결속하며, 사용자 원문 제약을 삭제하거나 정답 Source/조건으로
+교체하지 않는다. 원 Product 입력과 후보 입력을 분리하고 성공·실패·반례를 함께 비교한다.
+Product의 확정 constraint/provenance 전달이나 Confirmation/Revision 계약을 변경하지 않는다.
+
 Source의 비활성 contrastive 비교는 기존 one-call role·실제 Run input·Schema·sampling을
 유지한 채 일반적인 입력→출력 예시만 분리된 후보 artifact로 추가할 수 있다. 예시 출력도
 현재 Source owner 계약으로 검증하며, 현재 평가 Case/Gold/Fixture 정답을 예시로 복사하지
