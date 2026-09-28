@@ -7,6 +7,7 @@ records and performs only three new JSON-mode calls. Core5 rebinds inputs to the
 current Prompt and uses ten new calls, with separate strict/fence validation.
 Source mode reuses three exact-wire FIRSTs and generates three omitted candidates.
 Source concise mode reuses five FIRSTs and changes only their Source instruction.
+Source presence-zero mode uses ten fresh paired calls; history is reference-only.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from collections import Counter
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import asdict
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
@@ -56,6 +57,8 @@ SOURCE_PROMPT_ID = "request_understanding.identify_source_dependencies"
 SOURCE_CRITERIA = "evaluation/experiments/064-source-format-v40-criteria.md"
 SOURCE_CONCISE_PATH = "evaluation/prompt_candidates/ru-source-concise-v41/source.md"
 SOURCE_CONCISE_CRITERIA = "evaluation/experiments/064-source-concise-v41-criteria.md"
+SOURCE_PRESENCE_CRITERIA = "evaluation/experiments/064-source-presence-v42-criteria.md"
+SOURCE_PRESENCE_AUDIT = "evaluation/experiments/064-source-sampler-runtime-audit.md"
 SOURCES = (
     ("CASE-CORE-005", "production"),
     ("CASE-CORE-017", "work-span-codec-v35"),
@@ -77,7 +80,13 @@ SOURCE_CONCISE_SOURCES = (
     ("CASE-CORE-059", "production", "064-connected-core8-continuation-t1"),
 )
 ARMS = ("schema_constrained", "format_omitted")
-CANDIDATE_ARMS = {"omitted": "format_omitted", "json": "format_json", "concise": "source_concise"}
+CANDIDATE_ARMS = {
+    "omitted": "format_omitted",
+    "json": "format_json",
+    "concise": "source_concise",
+    "presence_zero": "source_presence_zero",
+}
+SOURCE_FIVE_MODES = {"concise", "presence_zero"}
 TIMEOUT_SECONDS = 180
 
 
@@ -195,6 +204,10 @@ def payload_for(case: dict[str, Any], arm: str) -> dict[str, Any]:
         payload, ref = concise_source_payload(payload, case["source_call"])
         if ref != case["candidate_prompt_ref"]:
             raise ValueError("Source concise PromptRef changed after registration")
+    elif arm == "source_presence_zero":
+        if case.get("candidate_runtime_override") != {"presence_penalty": 0.0}:
+            raise ValueError("Source presence override changed after registration")
+        payload = source_presence_zero_payload(payload)
     if arm != "schema_constrained" and object_hash(payload) != case["candidate_wire_sha256"]:
         raise ValueError("candidate payload differs from registered format mode/hash")
     return payload
@@ -223,6 +236,42 @@ def concise_source_payload(
     return result, ref
 
 
+def source_presence_zero_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Omission inherits the model default; only the candidate sends an explicit zero."""
+    if (
+        json.loads(payload["prompt"])["prompt_ref"]["prompt_id"] != SOURCE_PROMPT_ID
+        or "presence_penalty" in payload["options"]
+    ):
+        raise ValueError("Source presence diagnostic requires the original omitted option")
+    result = deepcopy(payload)
+    result["options"]["presence_penalty"] = 0.0
+    return result
+
+
+def inspect_diagnostic_model(candidate_mode: str) -> dict[str, Any]:
+    model = inspect_model(transport.OllamaHTTPClient())
+    if candidate_mode == "presence_zero":
+        version = transport._get_json(
+            endpoint=OLLAMA_FIXED_LOOPBACK_ENDPOINT, path="/api/version", timeout_seconds=10
+        )
+        model.update(
+            ollama_version_response=deepcopy(version), ollama_version_sha256=object_hash(version)
+        )
+    return model
+
+
+def _validate_presence_version(model: dict[str, Any]) -> None:
+    response = model.get("ollama_version_response")
+    if (
+        not isinstance(response, dict)
+        or response.get("version") != "0.34.0"
+        or model.get("ollama_version_sha256") != object_hash(response)
+    ):
+        raise ValueError(
+            "Source presence comparison requires the hash-bound Ollama 0.34.0 response"
+        )
+
+
 def make_plan(
     model: dict[str, Any],
     *,
@@ -238,9 +287,11 @@ def make_plan(
         owner not in {"output", "source"}
         or (
             owner == "source"
-            and (input_set != "historical3" or candidate_mode not in {"omitted", "concise"})
+            and (
+                input_set != "historical3" or candidate_mode not in {"omitted", *SOURCE_FIVE_MODES}
+            )
         )
-        or (owner == "output" and candidate_mode == "concise")
+        or (owner == "output" and candidate_mode in SOURCE_FIVE_MODES)
     ):
         raise ValueError("unregistered owner/input-set/candidate combination")
     prompt_id = SOURCE_PROMPT_ID if owner == "source" else PROMPT_ID
@@ -253,7 +304,7 @@ def make_plan(
         if input_set == "core5"
         else [(case_id, arm, source_root) for case_id, arm in SOURCES]
     )
-    if candidate_mode == "concise":
+    if candidate_mode in SOURCE_FIVE_MODES:
         sources = [
             (case_id, arm, core5_root / directory)
             for case_id, arm, directory in SOURCE_CONCISE_SOURCES
@@ -310,6 +361,8 @@ def make_plan(
             candidate_payload["format"] = "json"
         if candidate_mode == "concise":
             candidate_payload, candidate_ref = concise_source_payload(payload, call)
+        elif candidate_mode == "presence_zero":
+            candidate_payload = source_presence_zero_payload(payload)
         case = {
             "case_id": case_id,
             "candidate_mode": candidate_mode,
@@ -355,7 +408,7 @@ def make_plan(
                 source_call_sha256=object_hash(call),
                 fence_admission=(
                     "NONE_STRICT_ONLY"
-                    if candidate_mode == "concise"
+                    if candidate_mode in SOURCE_FIVE_MODES
                     else "EVALUATION_ONLY_SINGLE_JSON_FENCE"
                 ),
             )
@@ -368,6 +421,13 @@ def make_plan(
                     candidate_payload["system"].encode()
                 ).hexdigest(),
                 candidate_payload_changes=["system.source_prefix", "prompt.prompt_ref"],
+            )
+        elif candidate_mode == "presence_zero":
+            case.update(
+                candidate_payload_changes=["options.presence_penalty"],
+                candidate_runtime_override={"presence_penalty": 0.0},
+                baseline_presence_option_present=False,
+                historical_option_omission_is_zero=False,
             )
         cases.append(case)
     bound_files: tuple[str, ...] = (
@@ -390,13 +450,21 @@ def make_plan(
         bound_files += (CORE5_CRITERIA,)
     if owner == "source":
         bound_files += (
-            SOURCE_CONCISE_CRITERIA if candidate_mode == "concise" else SOURCE_CRITERIA,
+            (
+                SOURCE_CONCISE_CRITERIA
+                if candidate_mode == "concise"
+                else SOURCE_PRESENCE_CRITERIA
+                if candidate_mode == "presence_zero"
+                else SOURCE_CRITERIA
+            ),
             "src/google_work_agent/application/agents/request_understanding/identify_source_dependencies.py",
             "src/google_work_agent/application/agents/request_understanding/contracts/source_dependency_decision.py",
             "src/google_work_agent/application/prompt_runtime/sources/request_understanding.identify_source_dependencies.md",
         )
     if candidate_mode == "concise":
         bound_files += (SOURCE_CONCISE_PATH,)
+    elif candidate_mode == "presence_zero":
+        bound_files += (SOURCE_PRESENCE_AUDIT,)
     plan: dict[str, Any] = {
         "schema_version": 1,
         "kind": "FROZEN_OUTPUT_FIRST_FORMAT_ONLY_OWNER_DIAGNOSTIC",
@@ -456,15 +524,29 @@ def make_plan(
         plan["reused_baseline"] = load_reused_baseline(baseline_raw, plan)
     if owner == "source":
         plan.update(owner="source", kind="FROZEN_SOURCE_FIRST_FORMAT_ONLY_OWNER_DIAGNOSTIC")
-        plan["execution_order"] = [{"case_id": case["case_id"], "arm": arms[1]} for case in cases]
-        plan["policy"].update(
-            max_http_generation_calls=len(cases), reused_baseline_calls=len(cases)
-        )
-        plan["reused_source_baseline"] = load_source_baseline(cases)
-    if candidate_mode == "concise":
+        if candidate_mode == "presence_zero":
+            plan["policy"].update(
+                max_http_generation_calls=len(cases) * 2,
+                reused_baseline_calls=0,
+                historical_reference_calls=len(cases),
+            )
+            plan["historical_reference_results"] = load_source_baseline(cases)
+        else:
+            plan["execution_order"] = [
+                {"case_id": case["case_id"], "arm": arms[1]} for case in cases
+            ]
+            plan["policy"].update(
+                max_http_generation_calls=len(cases), reused_baseline_calls=len(cases)
+            )
+            plan["reused_source_baseline"] = load_source_baseline(cases)
+    if candidate_mode in SOURCE_FIVE_MODES:
         del plan["source_plan_path"], plan["source_plan_sha256"]
         plan.update(
-            kind="FROZEN_SOURCE_FIRST_INSTRUCTION_BURDEN_DIAGNOSTIC",
+            kind=(
+                "FROZEN_SOURCE_FIRST_INSTRUCTION_BURDEN_DIAGNOSTIC"
+                if candidate_mode == "concise"
+                else "FROZEN_SOURCE_FIRST_PRESENCE_PENALTY_DIAGNOSTIC"
+            ),
             source_case_set="fixed-five-source-firsts",
             source_plans=[
                 {
@@ -478,6 +560,27 @@ def make_plan(
             semantic_score_reuse=False,
         )
         plan["policy"].update(codec_admission=0)
+    if candidate_mode == "presence_zero":
+        _validate_presence_version(model)
+        parameters = model.get("show_parameters", "")
+        declared = re.findall(r"(?m)^presence_penalty[ \t]+([^\r\n]+)$", parameters)
+        if len(declared) != 1 or declared[0].strip() != "1.5":
+            raise ValueError("Source presence baseline requires the bound model default 1.5")
+        if model.get("show_parameters_sha256") != hashlib.sha256(parameters.encode()).hexdigest():
+            raise ValueError("Source presence model parameter hash changed")
+        plan["policy"]["runtime_options"] = "ONLY_EXPLICIT_PRESENCE_PENALTY_ZERO_ADDED"
+        plan["sampler_binding"] = {
+            "baseline_wire_option_present": False,
+            "option_absence_is_zero": False,
+            "baseline_model_declared_presence_penalty": 1.5,
+            "candidate_explicit_presence_penalty": 0.0,
+            "declared_parameters_sha256": model["show_parameters_sha256"],
+            "runtime_evidence_reference": SOURCE_PRESENCE_CRITERIA,
+            "runtime_audit_reference": SOURCE_PRESENCE_AUDIT,
+            "historical_backend_logs_replayed": False,
+            "product_runtime_changed": False,
+        }
+        plan["historical_reference_usage"] = "REFERENCE_ONLY_EXCLUDED_FROM_COMPARISON_AND_METRICS"
     return plan
 
 
@@ -844,6 +947,7 @@ def run_arm(
         "case_id": case["case_id"],
         "arm": arm,
         "state": "DISPATCH_STARTED",
+        "dispatch_started_at_utc": datetime.now(UTC).isoformat(timespec="milliseconds"),
         "wire_sha256": object_hash(payload),
         "wire_options": deepcopy(payload["options"]),
         "wire_think": payload["think"],
@@ -940,9 +1044,11 @@ def execute_plan(plan: dict[str, Any], output: Path, *, plan_sha256: str) -> dic
         owner not in {"output", "source"}
         or (
             owner == "source"
-            and (input_set != "historical3" or candidate_mode not in {"omitted", "concise"})
+            and (
+                input_set != "historical3" or candidate_mode not in {"omitted", *SOURCE_FIVE_MODES}
+            )
         )
-        or (owner == "output" and candidate_mode == "concise")
+        or (owner == "output" and candidate_mode in SOURCE_FIVE_MODES)
     ):
         raise ValueError("unregistered Source comparison")
     if input_set not in {"historical3", "core5"} or (
@@ -950,14 +1056,19 @@ def execute_plan(plan: dict[str, Any], output: Path, *, plan_sha256: str) -> dic
     ):
         raise ValueError("only the registered input set and format mode are allowed")
     sources: tuple[tuple[str, str], ...] = CORE5_SOURCES if input_set == "core5" else SOURCES
-    if candidate_mode == "concise":
+    if candidate_mode in SOURCE_FIVE_MODES:
         sources = tuple((case_id, arm) for case_id, arm, _ in SOURCE_CONCISE_SOURCES)
+    if candidate_mode == "presence_zero":
+        _validate_presence_version(plan["model"])
     arms = arms_for_mode(candidate_mode)
+    reuses_baseline = candidate_mode == "json" or (
+        owner == "source" and candidate_mode != "presence_zero"
+    )
     expected_order = [
         {"case_id": case_id, "arm": arm}
         for index, (case_id, _) in enumerate(sources)
         for arm in (arms if index % 2 == 0 else tuple(reversed(arms)))
-        if (owner == "source" and arm == arms[1])
+        if (owner == "source" and (candidate_mode == "presence_zero" or arm == arms[1]))
         or (owner == "output" and (candidate_mode != "json" or arm == "format_json"))
     ]
     if (
@@ -968,16 +1079,28 @@ def execute_plan(plan: dict[str, Any], output: Path, *, plan_sha256: str) -> dic
         or any(case.get("owner", "output") != owner for case in plan["cases"])
         or tuple(item["case_id"] for item in plan["cases"]) != tuple(row[0] for row in sources)
         or plan["policy"]["max_http_generation_calls"]
-        != len(sources) * (1 if candidate_mode == "json" or owner == "source" else 2)
-        or plan["policy"]["reused_baseline_calls"]
-        != (len(sources) if candidate_mode == "json" or owner == "source" else 0)
+        != len(sources) * (1 if reuses_baseline else 2)
+        or plan["policy"]["reused_baseline_calls"] != (len(sources) if reuses_baseline else 0)
     ):
         raise ValueError("only the registered inputs and mode-bound one-shot arms are allowed")
     reused = []
+    historical = []
     if owner == "source":
-        reused = load_source_baseline(plan["cases"])
-        if reused != plan["reused_source_baseline"]:
-            raise ValueError("Source baseline revalidation changed after registration")
+        source_rows = load_source_baseline(plan["cases"])
+        if candidate_mode == "presence_zero":
+            historical = source_rows
+            if (
+                historical != plan.get("historical_reference_results")
+                or plan["policy"].get("historical_reference_calls") != len(sources)
+                or "reused_source_baseline" in plan
+                or plan.get("historical_reference_usage")
+                != "REFERENCE_ONLY_EXCLUDED_FROM_COMPARISON_AND_METRICS"
+            ):
+                raise ValueError("Source historical references cannot replace the fresh baseline")
+        else:
+            reused = source_rows
+            if reused != plan["reused_source_baseline"]:
+                raise ValueError("Source baseline revalidation changed after registration")
     elif candidate_mode == "json":
         authority = plan["reused_baseline"]
         if load_reused_baseline(Path(authority["path"]), plan) != authority:
@@ -1005,6 +1128,10 @@ def execute_plan(plan: dict[str, Any], output: Path, *, plan_sha256: str) -> dic
         "reused_results": reused,
         "completed": False,
     }
+    if candidate_mode == "presence_zero":
+        raw.update(
+            historical_reference_results=historical, historical_reference_calls=len(historical)
+        )
     path = output / "raw.json"
     write_json(path, raw, exclusive=True)
     by_id = {case["case_id"]: case for case in plan["cases"]}
@@ -1060,7 +1187,7 @@ def main() -> None:
         print(json.dumps({"path": str(path), **report["summary"]}))
         return
     current = make_plan(
-        inspect_model(transport.OllamaHTTPClient()),
+        inspect_diagnostic_model(args.candidate_mode),
         candidate_mode=args.candidate_mode,
         baseline_raw=args.reuse_baseline_raw,
         input_set=args.input_set,

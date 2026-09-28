@@ -936,6 +936,12 @@ schema / JSON 문법만 제약 / 생략 중 사전 고정한 한 후보를 비�
 유지하고 양쪽 결과를 같은 기존 schema/owner validator로 검증한다. invalid JSON이나
 의미 오류를 성공으로 덮지 않으며, 이 진단은 Product runtime·Prompt activation을 바꾸지 않는다.
 
+별도의 비활성 sampling 진단에서는 실제 backend가 소비하는 옵션 하나만 사전 고정해 비교할
+수 있다. instruction·PromptRef·입력·Schema·format·나머지 runtime 설정은 유지하며,
+미전송 옵션의 모델 기본값과 명시적 override, backend 버전·실제 소비 근거를 함께 기록한다.
+Prompt/구조 후보와 섞지 않고 기존 strict 검증과 원 실패를 보존한다. 직접 FIRST 결과는
+Product runtime 기본값 변경이나 release 승격 근거를 대신하지 않는다.
+
 같은 owner 응답의 비활성 transport-admission 후보는 응답 전체가 lowercase `json`
 태그의 단일 Markdown fence인 경우에만 외곽 fence를 제거한 뒤 기존 JSON/schema/owner
 검증을 적용할 수 있다. 바깥 ASCII 공백 외 설명, no-tag/다른 언어, 다중·중첩·잘린 fence,

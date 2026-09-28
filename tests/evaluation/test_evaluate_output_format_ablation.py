@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from copy import deepcopy
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -1402,3 +1404,247 @@ def test_concise_source_is_not_an_output_owner_or_schema_mutation(
     assert (
         runner.validate_response(json.dumps(changed), case)["structural_result"] == "INVALID_SCHEMA"
     )
+
+
+@pytest.fixture
+def presence_plan(frozen_concise_source: tuple[Path, dict[str, Any]]) -> dict[str, Any]:
+    root, model = frozen_concise_source
+    parameters = "presence_penalty               1.5\ntemperature                    1\ntop_k 20"
+    model = {
+        **model,
+        "show_parameters": parameters,
+        "show_parameters_sha256": hashlib.sha256(parameters.encode()).hexdigest(),
+        "ollama_version_response": {"version": "0.34.0"},
+        "ollama_version_sha256": runner.object_hash({"version": "0.34.0"}),
+    }
+    return runner.make_plan(model, core5_root=root, owner="source", candidate_mode="presence_zero")
+
+
+def test_presence_zero_preserves_product_prompt_and_changes_only_one_option(
+    presence_plan: dict[str, Any],
+) -> None:
+    plan = presence_plan
+    assert plan["kind"] == "FROZEN_SOURCE_FIRST_PRESENCE_PENALTY_DIAGNOSTIC"
+    assert [row["case_id"] for row in plan["cases"]] == [
+        "CASE-CORE-005",
+        "CASE-CORE-009",
+        "CASE-CORE-017",
+        "CASE-CORE-049",
+        "CASE-CORE-059",
+    ]
+    assert plan["policy"]["max_http_generation_calls"] == 10
+    assert plan["policy"]["reused_baseline_calls"] == 0
+    assert plan["policy"]["historical_reference_calls"] == 5
+    assert len(plan["historical_reference_results"]) == 5
+    assert "reused_source_baseline" not in plan
+    assert plan["execution_order"] == [
+        {"case_id": case_id, "arm": arm}
+        for index, (case_id, _, _) in enumerate(runner.SOURCE_CONCISE_SOURCES)
+        for arm in (
+            ("schema_constrained", "source_presence_zero")
+            if index % 2 == 0
+            else ("source_presence_zero", "schema_constrained")
+        )
+    ]
+    assert plan["policy"]["codec_admission"] == 0
+    assert plan["sampler_binding"]["baseline_model_declared_presence_penalty"] == 1.5
+    assert plan["sampler_binding"]["option_absence_is_zero"] is False
+    assert plan["sampler_binding"]["historical_backend_logs_replayed"] is False
+    assert runner.SOURCE_PRESENCE_CRITERIA in plan["source_hashes"]
+    assert runner.SOURCE_PRESENCE_AUDIT in plan["source_hashes"]
+    assert runner.SOURCE_CONCISE_PATH not in plan["source_hashes"]
+    assert runner.SOURCE_CONCISE_CRITERIA not in plan["source_hashes"]
+    for case in plan["cases"]:
+        original = runner.payload_for(case, "schema_constrained")
+        candidate = runner.payload_for(case, "source_presence_zero")
+        assert runner.object_hash(original) == case["source_call"]["wire_sha256"]
+        assert {k: v for k, v in candidate.items() if k != "options"} == {
+            k: v for k, v in original.items() if k != "options"
+        }
+        assert "presence_penalty" not in original["options"]
+        assert candidate["options"] == {**original["options"], "presence_penalty": 0.0}
+        assert type(candidate["options"]["presence_penalty"]) is float
+        assert "candidate_prompt_ref" not in case
+        assert case["candidate_payload_changes"] == ["options.presence_penalty"]
+        assert case["candidate_runtime_override"] == {"presence_penalty": 0.0}
+        assert case["historical_option_omission_is_zero"] is False
+
+
+def test_presence_zero_ten_fresh_calls_exclude_history_keep_strict_and_original_prompt_ref(
+    presence_plan: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan = presence_plan
+    monkeypatch.setattr(runner, "RESULTS", tmp_path)
+    calls = []
+
+    def forbidden(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("presence comparison must not use concise instructions or a codec")
+
+    def post(**kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs)
+        case = plan["cases"][(len(calls) - 1) // 2]
+        assert kwargs["timeout_seconds"] == 180
+        expected_options = {"num_ctx": 16384, "temperature": 0.05, "seed": 20260923}
+        if plan["execution_order"][len(calls) - 1]["arm"] == "source_presence_zero":
+            expected_options["presence_penalty"] = 0.0
+        assert kwargs["payload"]["options"] == expected_options
+        assert kwargs["payload"]["system"] == case["payload"]["system"]
+        content = case["source_call"]["content"]
+        return {
+            "response": f"```json\n{content}\n```" if len(calls) == 1 else content,
+            "eval_count": 3,
+        }
+
+    monkeypatch.setattr(runner, "validate_fenced_response", forbidden)
+    monkeypatch.setattr(runner, "concise_source_payload", forbidden)
+    monkeypatch.setattr(runner.transport, "_post_json", post)
+    output = tmp_path / "presence-trial"
+    result = runner.execute_plan(plan, output, plan_sha256=runner.object_hash(plan))
+    assert result["actual_http_calls"] == len(calls) == 10
+    assert result["reused_http_calls"] == 0 and result["reused_results"] == []
+    assert result["historical_reference_calls"] == 5
+    assert result["historical_reference_results"] == plan["historical_reference_results"]
+    assert result["new_call_metrics"]["output_tokens"] == 30
+    assert result["reused_call_metrics"]["calls"] == 0
+    assert sum(r["output_tokens"] for r in result["historical_reference_results"]) == 100
+    assert all(
+        m["calls"] == 5 and m["output_tokens"] == 15 for m in result["metrics_by_arm"].values()
+    )
+    assert [r["validation"]["structural_result"] for r in result["results"]] == [
+        "INVALID_JSON",
+        *(["VALIDATED"] * 9),
+    ]
+    cases_by_id = {case["case_id"]: case for case in plan["cases"]}
+    for row in result["results"]:
+        case = cases_by_id[row["case_id"]]
+        assert datetime.fromisoformat(row["dispatch_started_at_utc"]).tzinfo == UTC
+        assert "dispatch_started_at_utc" not in case["payload"]
+        assert "dispatch_started_at_utc" not in json.loads(case["payload"]["prompt"])
+        assert row["prompt_ref"] == case["source_call"]["prompt_ref"]
+        assert "fence_validation" not in row
+        assert row["schema_repairs"] == row["http_retries"] == 0
+        assert row["semantic_verdict"] == "UNREVIEWED"
+    with pytest.raises(ValueError, match="prior partial/failed"):
+        runner.execute_plan(plan, output, plan_sha256=runner.object_hash(plan))
+    assert len(calls) == 10
+
+
+@pytest.mark.parametrize("drift", ["default_zero", "duplicate_default", "missing_default", "hash"])
+def test_presence_zero_requires_the_bound_model_default_not_omission_means_zero(
+    frozen_concise_source: tuple[Path, dict[str, Any]], drift: str
+) -> None:
+    root, model = frozen_concise_source
+    parameters = {
+        "default_zero": "presence_penalty 0",
+        "duplicate_default": "presence_penalty 1.5\npresence_penalty 0",
+        "missing_default": "temperature 1",
+        "hash": "presence_penalty 1.5",
+    }[drift]
+    model = {
+        **model,
+        "ollama_version_response": {"version": "0.34.0"},
+        "ollama_version_sha256": runner.object_hash({"version": "0.34.0"}),
+        "show_parameters": parameters,
+        "show_parameters_sha256": "changed"
+        if drift == "hash"
+        else hashlib.sha256(parameters.encode()).hexdigest(),
+    }
+    with pytest.raises(ValueError, match="model default|parameter hash"):
+        runner.make_plan(model, core5_root=root, owner="source", candidate_mode="presence_zero")
+
+
+@pytest.mark.parametrize(
+    "drift", ["extra_baseline", "order", "budget", "override", "payload", "history_score"]
+)
+def test_presence_zero_plan_and_explicit_option_cannot_drift_before_dispatch(
+    presence_plan: dict[str, Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch, drift: str
+) -> None:
+    plan = presence_plan
+    monkeypatch.setattr(runner, "RESULTS", tmp_path)
+    if drift == "extra_baseline":
+        plan["execution_order"].append({"case_id": "CASE-CORE-005", "arm": "schema_constrained"})
+    elif drift == "order":
+        plan["execution_order"].reverse()
+    elif drift == "budget":
+        plan["policy"]["max_http_generation_calls"] += 1
+    elif drift == "override":
+        plan["cases"][0]["candidate_runtime_override"]["presence_penalty"] = 1.5
+    elif drift == "history_score":
+        plan["reused_source_baseline"] = plan["historical_reference_results"]
+    else:
+        plan["cases"][0]["payload"]["options"]["presence_penalty"] = 0.0
+    with pytest.raises(ValueError):
+        runner.execute_plan(plan, tmp_path / "never-created", plan_sha256=runner.object_hash(plan))
+    assert not (tmp_path / "never-created").exists()
+
+
+def test_presence_zero_rejects_output_owner_and_already_explicit_baseline(
+    presence_plan: dict[str, Any], frozen: tuple[Path, dict[str, Any]]
+) -> None:
+    payload = deepcopy(presence_plan["cases"][0]["payload"])
+    payload["options"]["presence_penalty"] = 1.5
+    with pytest.raises(ValueError, match="original omitted"):
+        runner.source_presence_zero_payload(payload)
+    root, model = frozen
+    with pytest.raises(ValueError, match="combination"):
+        runner.make_plan(model, source_root=root, candidate_mode="presence_zero")
+    output = runner.make_plan(model, source_root=root)["cases"][0]["payload"]
+    with pytest.raises(ValueError, match="original omitted"):
+        runner.source_presence_zero_payload(output)
+
+
+def test_presence_version_read_is_get_only_and_other_modes_are_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = {"model_id": "fake", "model_digest": "digest"}
+    calls = []
+    monkeypatch.setattr(runner, "inspect_model", lambda _client: deepcopy(model))
+
+    def get(**kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs)
+        assert kwargs == {
+            "endpoint": runner.OLLAMA_FIXED_LOOPBACK_ENDPOINT,
+            "path": "/api/version",
+            "timeout_seconds": 10,
+        }
+        return {"version": "0.34.0"}
+
+    def no_generate(**_kwargs: Any) -> Any:
+        raise AssertionError("Version lookup must not generate")
+
+    monkeypatch.setattr(runner.transport, "_get_json", get)
+    monkeypatch.setattr(runner.transport, "_post_json", no_generate)
+    for mode in ("omitted", "json", "concise"):
+        assert runner.inspect_diagnostic_model(mode) == model
+    assert calls == []
+    actual = runner.inspect_diagnostic_model("presence_zero")
+    assert len(calls) == 1 and actual["ollama_version_response"] == {"version": "0.34.0"}
+    assert actual["ollama_version_sha256"] == runner.object_hash(actual["ollama_version_response"])
+    assert model == {"model_id": "fake", "model_digest": "digest"}
+
+
+@pytest.mark.parametrize("drift", ["missing", "version", "hash"])
+def test_presence_plan_and_dispatch_require_same_version_binding(
+    presence_plan: dict[str, Any],
+    frozen_concise_source: tuple[Path, dict[str, Any]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    drift: str,
+) -> None:
+    root, _ = frozen_concise_source
+    model = presence_plan["model"]
+    if drift == "missing":
+        del model["ollama_version_response"]
+    elif drift == "version":
+        model["ollama_version_response"] = {"version": "0.35.0"}
+        model["ollama_version_sha256"] = runner.object_hash(model["ollama_version_response"])
+    else:
+        model["ollama_version_sha256"] = "changed"
+    with pytest.raises(ValueError, match="Ollama 0.34.0"):
+        runner.make_plan(model, core5_root=root, owner="source", candidate_mode="presence_zero")
+    monkeypatch.setattr(runner, "RESULTS", tmp_path)
+    with pytest.raises(ValueError, match="Ollama 0.34.0"):
+        runner.execute_plan(
+            presence_plan, tmp_path / "never-created", plan_sha256=runner.object_hash(presence_plan)
+        )
+    assert not (tmp_path / "never-created").exists()
