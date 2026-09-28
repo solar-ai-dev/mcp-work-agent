@@ -1,8 +1,8 @@
-"""Fixed six paired v29 ambiguity owner trials, not workflow/business success.
+"""Fixed six v29/v30 ambiguity owner trials, not workflow/business success.
 
 Upstream fixtures are explicit synthetic states or frozen observed Core producers.
-Only the Prompt's global-count rules/examples differ. No semantic revision, live
-Provider, graph execution, prompt activation or historical response reuse occurs.
+v29 removes global-count rules; v30 carries one owner decision per current WorkUnit.
+No semantic revision, live Provider, graph execution or prompt activation occurs.
 """
 
 from __future__ import annotations
@@ -29,6 +29,14 @@ from scripts.ru_ambiguity_owner_candidate import (
     candidate_source_hash,
 )
 from scripts.ru_observation import metrics, object_hash, observe_local_calls
+from scripts.ru_work_bound_ambiguity_candidate import CANDIDATE_ID as WORK_CANDIDATE_ID
+from scripts.ru_work_bound_ambiguity_candidate import (
+    fold_work_ambiguities,
+    project_work_ambiguity_input,
+    work_ambiguity_instruction,
+    work_ambiguity_schema,
+    work_ambiguity_source_hash,
+)
 
 from google_work_agent.adapters.llm.ollama.transport import (
     OLLAMA_PRODUCT_CONTEXT_TOKENS,
@@ -70,6 +78,8 @@ ROOT = Path(__file__).resolve().parents[1]
 PROMPT_ID = "request_understanding.detect_ambiguity"
 MODEL_ID = "qwen3.5:9b"
 SEED = 20260923
+V29 = "product-v29"
+V30 = "product-v30"
 CORE_FIXTURE = ROOT / "evaluation/experiments/064-ambiguity-v29-frozen-inputs.json"
 SOURCE_PATH = (
     ROOT
@@ -364,13 +374,44 @@ def owner_result(
 
 
 def owner_instruction(
-    projection: dict[str, Any], ref: PromptReference, registry: PromptRegistry, arm: str
+    projection: dict[str, Any],
+    ref: PromptReference,
+    registry: PromptRegistry,
+    arm: str,
+    *,
+    representation: str = V29,
+    product_projection: dict[str, Any] | None = None,
 ) -> str:
+    if representation == V30 and arm == "candidate":
+        if product_projection is None:
+            raise ValueError("v30 requires the unmodified Product base projection")
+        product_envelope = deepcopy(projection)
+        if "base_projection" in projection:
+            candidate_base = projection["base_projection"]
+            product_envelope["base_projection"] = deepcopy(product_projection)
+        else:
+            candidate_base = projection
+            product_envelope = deepcopy(product_projection)
+        instruction = assemble_prompt(
+            ref, product_envelope, registry=registry, execution_scope=EVALUATION
+        )
+        return work_ambiguity_instruction(
+            instruction,
+            product_projection=product_projection,
+            candidate_projection=candidate_base,
+        )
     instruction = assemble_prompt(ref, projection, registry=registry, execution_scope=EVALUATION)
     return ambiguity_owner_instruction(instruction) if arm == "candidate" else instruction
 
 
-def make_plan(*, model_digest: str | None) -> dict[str, Any]:
+def make_plan(
+    *,
+    model_digest: str | None,
+    comparison: str = V29,
+    baseline_raw_path: Path | None = None,
+) -> dict[str, Any]:
+    if comparison not in (V29, V30):
+        raise ValueError("unknown registered comparison")
     registry = PromptRegistry()
     ref = registry.lookup_for_evaluation(PROMPT_ID)
     cases = fixed_cases()
@@ -381,14 +422,30 @@ def make_plan(*, model_digest: str | None) -> dict[str, Any]:
         )
         case["arms"] = {}
         for arm in ("baseline", "candidate"):
-            instruction = owner_instruction(projection, ref, registry, arm)
+            arm_projection, arm_schema = projection, schema
+            if comparison == V30 and arm == "candidate":
+                arm_projection = project_work_ambiguity_input(projection)
+                arm_schema = work_ambiguity_schema(arm_projection)
+            instruction = owner_instruction(
+                arm_projection,
+                ref,
+                registry,
+                arm,
+                representation=comparison,
+                product_projection=projection,
+            )
             case["arms"][arm] = {
-                "input": deepcopy(projection),
-                "schema": asdict(schema),
-                "input_sha256": object_hash(projection),
-                "schema_sha256": object_hash(schema.json_schema),
+                "representation": comparison,
+                "input": deepcopy(arm_projection),
+                "schema": asdict(arm_schema),
+                "input_sha256": object_hash(arm_projection),
+                "schema_sha256": object_hash(arm_schema.json_schema),
                 "assembled_instruction_sha256": hashlib.sha256(instruction.encode()).hexdigest(),
-                "prompt_source_sha256": candidate_source_hash(source)
+                "prompt_source_sha256": (
+                    work_ambiguity_source_hash(source)
+                    if comparison == V30
+                    else candidate_source_hash(source)
+                )
                 if arm == "candidate"
                 else ref.content_hash,
             }
@@ -414,8 +471,11 @@ def make_plan(*, model_digest: str | None) -> dict[str, Any]:
             "adapters/llm/runtime/structured_inference_router.py",
         )
     ]
-    return {
-        "candidate_id": CANDIDATE_ID,
+    if comparison == V30:
+        paths.append(ROOT / "scripts/ru_work_bound_ambiguity_candidate.py")
+    plan: dict[str, Any] = {
+        "candidate_id": WORK_CANDIDATE_ID if comparison == V30 else CANDIDATE_ID,
+        "comparison": comparison,
         "scope": "AMBIGUITY_OWNER_ONLY_NOT_WORKFLOW_BUSINESS_SCORE",
         "sha": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
         "source_hashes": {
@@ -438,9 +498,7 @@ def make_plan(*, model_digest: str | None) -> dict[str, Any]:
         "provider_writes": 0,
         "production_prompt_changed": False,
         "product_activation": False,
-        "gold": (
-            "owner choice filter plus manual review of missing_fields; no exact Work count"
-        ),
+        "gold": ("owner choice filter plus manual review of missing_fields; no exact Work count"),
         "limitations": [
             "Four synthetic and two observed Core producer states; not fresh upstream/Core92.",
             "CORE019 v4 wrong GMAIL_DRAFT/CALENDAR Source choices are preserved, not corrected.",
@@ -450,6 +508,133 @@ def make_plan(*, model_digest: str | None) -> dict[str, Any]:
         "dry_validation": "PASS",
         "model_evaluation": "NOT_RUN",
     }
+    if comparison == V30:
+        plan["candidate_prompt_ref"] = asdict(
+            replace(
+                ref,
+                prompt_version="v30-eval",
+                input_schema_version="evaluation-work-ambiguity-v30",
+                output_schema_version="evaluation-work-ambiguity-v30",
+                content_hash=work_ambiguity_source_hash(source),
+            )
+        )
+        plan["limitations"].append(
+            "Per-Work candidate decisions fold into unchanged unscoped Product AmbiguityV1; "
+            "this does not prove Work-local Confirmation persistence/resume."
+        )
+        if baseline_raw_path is None:
+            raise ValueError("v30 requires the frozen v29 Product baseline raw")
+        rows, compared = reusable_baseline(baseline_raw_path, plan)
+        plan["baseline_reuse"] = {
+            "raw_path": baseline_raw_path.resolve().relative_to(ROOT).as_posix(),
+            "raw_sha256": normalized_sha256(baseline_raw_path),
+            "record_sha256": {key: object_hash(value) for key, value in rows.items()},
+            "code_comparison": compared,
+        }
+        plan["max_first_calls"] = 6
+        plan["max_total_calls_with_schema_repair"] = 12
+        plan["order"] = "Product baseline6 reused, candidate fixed6 each once"
+    elif baseline_raw_path is not None:
+        raise ValueError("baseline reuse is only enabled for v30")
+    return plan
+
+
+def _relevant_contract(document: dict[str, Any], collection: str) -> dict[str, Any]:
+    return {
+        **{key: value for key, value in document.items() if key != collection},
+        collection: [item for item in document[collection] if item["prompt_slot_id"] == PROMPT_ID],
+    }
+
+
+def reusable_baseline(
+    path: Path,
+    plan: dict[str, Any],
+) -> tuple[dict[str, dict[str, Any]], list[dict[str, str]]]:
+    """Reuse only the six real Product arms, never v29 candidate outputs."""
+    path = path.resolve()
+    if not path.is_relative_to((ROOT / "evaluation/results").resolve()):
+        raise ValueError("reused raw must be in evaluation/results")
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    old = raw["binding"]
+    if not raw.get("completed") or old["candidate_id"] != CANDIDATE_ID:
+        raise ValueError("only a completed v29 baseline experiment may be reused")
+    for key in (
+        "model_id",
+        "model_digest",
+        "runtime_policy",
+        "dataset_sha256",
+        "provider_fixture_sha256",
+        "source_prompt_ref",
+        "case_ids",
+    ):
+        if old[key] != plan[key]:
+            raise ValueError(f"baseline {key} changed")
+    compared: list[dict[str, str]] = []
+    for name, previous_hash in old["source_hashes"].items():
+        if not name.startswith("src/") and name != "scripts/ru_observation.py":
+            continue
+        current_hash = plan["source_hashes"].get(name)
+        if current_hash == previous_hash:
+            continue
+        collection = (
+            "entries"
+            if name.endswith("prompt_runtime_input_contract_v1.json")
+            else "slots"
+            if name.endswith("prompt_manifest.json")
+            else None
+        )
+        if collection is None:
+            raise ValueError(f"baseline related Product/observation code changed: {name}")
+        previous_text = subprocess.check_output(
+            ["git", "show", f"{old['sha']}:{name}"], cwd=ROOT, encoding="utf-8"
+        )
+        if (
+            hashlib.sha256(previous_text.replace("\r\n", "\n").encode()).hexdigest()
+            != previous_hash
+        ):
+            raise ValueError("historical shared-contract file differs from recorded baseline hash")
+        previous = _relevant_contract(json.loads(previous_text), collection)
+        current = _relevant_contract(
+            json.loads((ROOT / name).read_text(encoding="utf-8")), collection
+        )
+        if current != previous:
+            raise ValueError("baseline ambiguity slot or shared contract authority changed")
+        compared.append(
+            {"path": name, "change": "OTHER_SLOTS_ONLY", "relevant_sha256": object_hash(current)}
+        )
+    rows = [row for row in raw["results"] if row["arm"] == "baseline"]
+    if len(rows) != len(plan["cases"]) or len({row["case_id"] for row in rows}) != len(rows):
+        raise ValueError("baseline needs exactly the six original, unique trials")
+    by_id = {row["case_id"]: row for row in rows}
+    registry = PromptRegistry()
+    ref = registry.lookup_for_evaluation(PROMPT_ID)
+    for case in plan["cases"]:
+        row = by_id[case["case_id"]]
+        frozen = case["arms"]["baseline"]
+        calls = row["transport_calls"]
+        if not row["new_call"] or not 1 <= len(calls) <= 2:
+            raise ValueError("baseline is not the original bounded trial")
+        if len(row["attempts"]) != len(calls):
+            raise ValueError("baseline attempt/call accounting differs")
+        for key in ("input_sha256", "schema_sha256", "assembled_instruction_sha256"):
+            actual_key = "instruction_sha256" if key == "assembled_instruction_sha256" else key
+            if calls[0][actual_key] != frozen[key]:
+                raise ValueError(f"baseline actual {key} changed")
+        if calls[0]["input"] != frozen["input"]:
+            raise ValueError("baseline actual input changed")
+        for call in calls:
+            if (call["temperature"], call["seed"], call["model"], call["timeout_seconds"]) != (
+                POLICY["temperature"],
+                SEED,
+                MODEL_ID,
+                POLICY["timeout_seconds"],
+            ):
+                raise ValueError("baseline observed runtime changed")
+        if "postvalidator_output" in row["final"]:
+            _, _, current_post = owner_result(case, row["attempts"][-1]["raw_output"], ref)
+            if current_post != row["final"]["postvalidator_output"]:
+                raise ValueError("baseline current Product postvalidator differs")
+    return deepcopy(by_id), compared
 
 
 def _parse(content: object, schema: OutputSchemaDefinition) -> tuple[Any, list[str]]:
@@ -477,8 +662,20 @@ def run_arm(
 ) -> dict[str, Any]:
     source_ref = registry.lookup_for_evaluation(PROMPT_ID)
     frozen = case["arms"][arm]
+    representation = frozen.get("representation", V29)
+    work_bound = representation == V30 and arm == "candidate"
     ref = (
-        replace(source_ref, prompt_version="v29-eval", content_hash=frozen["prompt_source_sha256"])
+        replace(
+            source_ref,
+            prompt_version="v30-eval" if work_bound else "v29-eval",
+            input_schema_version="evaluation-work-ambiguity-v30"
+            if work_bound
+            else source_ref.input_schema_version,
+            output_schema_version="evaluation-work-ambiguity-v30"
+            if work_bound
+            else source_ref.output_schema_version,
+            content_hash=frozen["prompt_source_sha256"],
+        )
         if arm == "candidate"
         else source_ref
     )
@@ -505,16 +702,21 @@ def run_arm(
                     prompt_input=projection,
                     output_schema=schema,
                     timeout_seconds=180,
-                    instruction_text=owner_instruction(projection, source_ref, registry, arm),
+                    instruction_text=owner_instruction(
+                        projection,
+                        source_ref,
+                        registry,
+                        arm,
+                        representation=representation,
+                        product_projection=case["arms"]["baseline"]["input"],
+                    ),
                     sampling_temperature=0.0,
                     sampling_seed=SEED,
                 )
                 raw, errors = _parse(response.content, schema)
-                event.update(
-                    raw_output=raw,
-                    schema_errors=errors,
-                    raw_owner_evaluation=grade_first(raw, case),
-                )
+                event.update(raw_output=raw, schema_errors=errors)
+                if not work_bound:
+                    event["raw_owner_evaluation"] = grade_first(raw, case)
                 if attempt == 1 and not errors:
                     paths = tuple(
                         sorted(
@@ -536,8 +738,21 @@ def run_arm(
                     if changed:
                         raise ValueError("schema repair changed unaffected fields")
                 if not errors:
-                    actual_input, _, post = owner_result(case, raw, source_ref)
-                    if actual_input != frozen["input"]:
+                    folded = fold_work_ambiguities(raw, frozen["input"]) if work_bound else raw
+                    if work_bound:
+                        event["folded_output"] = deepcopy(folded)
+                        event["raw_owner_evaluation"] = grade_first(folded, case)
+                        event["per_work_owner_evaluation"] = [
+                            {
+                                "work_unit_id": row["work_unit_id"],
+                                "actual_owner": row["missing_information_owner"],
+                                "missing_fields": row["missing_fields"],
+                                "semantic_review": "PENDING_MANUAL_WORK_BINDING_REVIEW",
+                            }
+                            for row in raw["work_ambiguities"]
+                        ]
+                    actual_input, _, post = owner_result(case, folded, source_ref)
+                    if actual_input != case["arms"]["baseline"]["input"]:
                         raise ValueError("Product postvalidator replay changed the frozen input")
                     event["postvalidator_output"] = post
                     record["final"] = {
@@ -546,6 +761,11 @@ def run_arm(
                         "postvalidator_output": post,
                         "semantic_review": "PENDING_MANUAL_REVIEW",
                     }
+                    if work_bound:
+                        record["final"]["folded_output"] = deepcopy(folded)
+                        record["final"]["per_work_owner_evaluation"] = deepcopy(
+                            event["per_work_owner_evaluation"]
+                        )
                     break
                 if attempt == 0:
                     first_raw, first_errors = deepcopy(raw), list(errors)
@@ -587,6 +807,8 @@ def main() -> None:
     parser.add_argument("--result-dir", type=Path, required=True)
     parser.add_argument("--execute-plan", type=Path)
     parser.add_argument("--expected-plan-sha256")
+    parser.add_argument("--comparison", choices=(V29, V30), default=V29)
+    parser.add_argument("--reuse-baseline-raw", type=Path)
     args = parser.parse_args()
     result_dir = args.result_dir.resolve()
     if not result_dir.is_relative_to((ROOT / "evaluation/results").resolve()):
@@ -601,7 +823,18 @@ def main() -> None:
     )
     if model is None or not model.digest:
         raise ValueError("actual installed model digest required")
-    current = make_plan(model_digest=model.digest)
+    comparison, baseline_path = args.comparison, args.reuse_baseline_raw
+    saved_plan = None
+    if args.execute_plan is not None:
+        if normalized_sha256(args.execute_plan) != args.expected_plan_sha256:
+            raise ValueError("registered plan hash mismatch")
+        saved_plan = json.loads(args.execute_plan.read_text(encoding="utf-8"))
+        comparison = saved_plan.get("comparison", V29)
+        reuse = saved_plan.get("baseline_reuse")
+        baseline_path = ROOT / reuse["raw_path"] if reuse else None
+    current = make_plan(
+        model_digest=model.digest, comparison=comparison, baseline_raw_path=baseline_path
+    )
     if args.execute_plan is None:
         path = result_dir / "preregistered-plan.json"
         _write(path, current, exclusive=True)
@@ -616,18 +849,22 @@ def main() -> None:
             )
         )
         return
-    if normalized_sha256(args.execute_plan) != args.expected_plan_sha256:
-        raise ValueError("registered plan hash mismatch")
-    plan = json.loads(args.execute_plan.read_text(encoding="utf-8"))
+    plan = saved_plan
+    assert plan is not None
     if object_hash(current) != object_hash(plan):
         raise ValueError("HEAD/code/input/schema/model/runtime changed after registration")
     raw_path = result_dir / "raw.json"
     raw: dict[str, Any] = {"binding": plan, "plan_sha256": args.expected_plan_sha256, "results": []}
     _write(raw_path, raw, exclusive=True)
     client, registry = OllamaHTTPClient(), PromptRegistry()
+    reused = reusable_baseline(baseline_path, plan)[0] if baseline_path is not None else {}
     for case in plan["cases"]:
         for arm in ("baseline", "candidate"):
-            record = run_arm(case, arm, client, registry)
+            if arm == "baseline" and reused:
+                record = deepcopy(reused[case["case_id"]])
+                record.update(new_call=False, reuse_origin=deepcopy(plan["baseline_reuse"]))
+            else:
+                record = run_arm(case, arm, client, registry)
             raw["results"].append(record)
             _write(raw_path, raw)
             print(
@@ -648,6 +885,12 @@ def main() -> None:
         )
         for arm in ("baseline", "candidate")
     }
+    raw["new_call_metrics"] = metrics(
+        [call for row in raw["results"] if row["new_call"] for call in row["transport_calls"]]
+    )
+    raw["reused_call_metrics"] = metrics(
+        [call for row in raw["results"] if not row["new_call"] for call in row["transport_calls"]]
+    )
     raw["completed"] = True
     _write(raw_path, raw)
 
