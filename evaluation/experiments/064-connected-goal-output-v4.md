@@ -59,3 +59,44 @@ actual snapshot composition → StartRun → schedule → MainGraph를 사용하
 실제 Work 호출과 joint Goal 호출의 RETURNED를 확인했다. 그 뒤 의도적 fake stop이며 업무
 성공 판정이 아니다. snapshot/runtime/runner/candidate 합계 **50 PASS**(후보18 포함).
 제품 코드·활성 Prompt·안전 gate 변경은 없다.
+
+## 연결 T2 — 의미 개선과 별도 Product 입력 계약 결함
+
+HEAD `a02be623a5e25d6e042ceb68f884001bed6771e4`, Trial
+`762a8ec2-f8b9-4fcd-93e9-6c798842aaf2`, Run
+`06dfe02c-84c7-48d5-a8c4-d80c0d89b8aa`에서 후보 1회를 실행했다.
+기존 T1 및 Production T2 실패를 덮어쓰지 않았다.
+
+- joint FIRST는 READ/ANSWER_ONLY와 Output 없음으로 요청 의미를 유지했다.
+  선택된 Task를 정확한 identity로 snapshot READ 1회 수행하고 Evidence와
+  SUFFICIENT를 거쳐 ANSWER Planning까지 도달했다. Provider WRITE/SEND/승인 0.
+- **최초 의미 손실은 독립 prohibition owner**다. 원문 생성 금지가 실제 입력에
+  있음에도 FIRST에서 CREATE를 NOT_FORBIDDEN으로 반환했다. 외부 WRITE가 없다고
+  금지 보존 PASS로 판정하지 않는다. joint 후보의 금지 owner는 변경하지 않았다.
+- **별도 Product 결함**: `compose_answer`가 기존 typed `evidence_by_work_unit`을
+  전달하지만 Prompt 입력 계약은 이를 허용하지 않았다. 모델 dispatch 전에
+  `unknown Product Prompt fields`로 거절되어 최종 답변 성공이 아니다.
+  `outline_answer`에도 같은 계약 누락이 있음을 직접 검사로 확인했다.
+- 실제 wire 7회 / repair 0, 입력 18,971·출력 658 tokens, LLM latency 34,474ms,
+  전체 37,281ms. compose의 거절을 포함한 dispatch 시도는 8회다.
+  기존 Production T2의 잘못된 WRITE/재검토 반복과 구분되지만 SHA·Goal sampler·
+  Work 출력이 동일한 paired trial은 아니므로 전체 성공률 개선으로 환산하지 않는다.
+
+안전 raw: `evaluation/results/064-core005-goal-output-main-t2/raw.json`, SHA256
+`8991d4adb49ab0d79c9f443452a84c1a38a30be99291b550ae5323112b9c793b`.
+모델 결과는 **금지 의미 잔여 실패 + Planning 계약 차단**, 후보는 비활성이다.
+
+### Product 계약 수정 및 직접 검증
+
+두 ANSWER slot의 input v3에 기존 WorkUnit/Evidence projection만 optional로 등록한다.
+Prompt 본문·content hash·출력 schema·Node·LLM 호출·activation gate는 그대로다.
+unknown/forbidden fields 거부는 유지하며 Work별 LLM/Provider 호출을 추가하지 않는다.
+기존 compiled 소비 테스트가 fake LLM 앞에서 실제 Prompt assembler를 통과하게 했다.
+수정 전 outline/compose 두 검사가 같은 unknown-field 오류로 실패(2 FAIL/14 PASS).
+레지스트리 테스트의 expected input version도 v3로 맞추며, 누락된 binding을 생성하거나
+기존 잘못된 의미를 validator로 복원하지 않는다.
+
+수정 후 관련 Product agent/Graph/Prompt/Approval/Execution/Verification/Recovery 및
+connected 소비 회귀 **1,967 PASS**. raw 모델 실행 없이 계약 결함을 직접 닫았다.
+별도 새 연결 Trial로 실제 답변 생성 여부를 확인할 예정이며 이 직접 검사 수를 모델
+의미 성공률로 사용하지 않는다.

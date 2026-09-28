@@ -41,7 +41,12 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan_schema 
 from google_work_agent.application.agents.retrieval.execute_read import execute_read
 from google_work_agent.application.agents.retrieval.finalize_retrieval import finalize_retrieval
 from google_work_agent.application.agents.retrieval.plan_query import plan_query
-from google_work_agent.application.prompt_runtime.prompt_registry import DEVELOPMENT_SMOKE
+from google_work_agent.application.prompt_runtime.assemble_prompt import assemble_prompt
+from google_work_agent.application.prompt_runtime.prompt_registry import (
+    DEVELOPMENT_SMOKE,
+    EVALUATION,
+    PromptRegistry,
+)
 from google_work_agent.application.tool_registry.load_signed_tool_registry import (
     load_development_tool_registry,
 )
@@ -298,9 +303,16 @@ def test_work_bindings_reach_read_and_compiled_planning_without_duplicate_dispat
     assert retrieval["evidence_by_work_unit"] == expected_binding
     assert retrieval["evidence_refs"] == ["e-shared"]
     planning_calls: list[Any] = []
+    prompt_registry = PromptRegistry()
 
     def invoke(prompt_id: str, prompt_input: Any) -> Any:
         projection = prompt_input
+        assemble_prompt(
+            prompt_registry.lookup_for_evaluation(prompt_id),
+            projection,
+            registry=prompt_registry,
+            execution_scope=EVALUATION,
+        )
         planning_calls.append((prompt_id, deepcopy(projection)))
         if not action:
             assert prompt_id == "planning.compose_answer"

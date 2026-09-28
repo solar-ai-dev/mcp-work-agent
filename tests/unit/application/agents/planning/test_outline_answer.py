@@ -13,6 +13,8 @@ from google_work_agent.application.agents.planning.outline_answer import (
     answer_outline_output_schema,
     outline_answer,
 )
+from google_work_agent.application.prompt_runtime.assemble_prompt import assemble_prompt
+from google_work_agent.application.prompt_runtime.prompt_registry import EVALUATION, PromptRegistry
 
 
 def test_answer_outline_schema__binds_citations__to_current_evidence() -> None:
@@ -135,8 +137,15 @@ def test_outline_rejects__evidence_outside__current_projection() -> None:
 
 def test_outline_multi_work__uses_one_call__with_work_unit_evidence_binding() -> None:
     calls: list[Mapping[str, object]] = []
+    registry = PromptRegistry()
 
-    def invoke(_prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        assemble_prompt(
+            registry.lookup_for_evaluation(prompt_id),
+            prompt_input,
+            registry=registry,
+            execution_scope=EVALUATION,
+        )
         calls.append(prompt_input)
         return {"sections": ["두 업무 답변"], "evidence_refs": ["e1", "e2"]}
 
@@ -154,7 +163,8 @@ def test_outline_multi_work__uses_one_call__with_work_unit_evidence_binding() ->
         invoke=cast(PlanningSemanticInvoker, invoke),
     )
 
-    assert result["evidence_refs"] == ["e1", "e2"]
+    assert "sections" in result
+    assert result.get("evidence_refs") == ["e1", "e2"]
     assert len(calls) == 1
     assert calls[0]["evidence_by_work_unit"] == [
         {"work_unit_id": "work-1", "evidence_refs": ["e1"]},

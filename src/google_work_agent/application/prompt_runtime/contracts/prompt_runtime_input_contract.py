@@ -89,7 +89,9 @@ class PromptRuntimeInputContractEntryV1:
             input_versions = {1, 2, 3}
         elif self.prompt_slot_id == "request_understanding.identify_source_status":
             input_versions = {1}
-        elif self.prompt_slot_id.startswith("request_understanding."):
+        elif self.prompt_slot_id.startswith("request_understanding.") or self.prompt_slot_id in {
+            "planning.outline_answer", "planning.compose_answer"
+        }:
             input_versions = {1, 2, 3}
         else:
             input_versions = {1, 2}

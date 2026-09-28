@@ -271,6 +271,7 @@ Local SLLM 기본 Profile에서는 서로 다른 semantic 판단을 한 Product 
 | Task 답변 projection 범위 | 결정적 Task formatter는 확정된 Source `required_information` 전체를 현재 지원 필드로 표현할 수 있을 때만 적용한다. 미지원 정보가 있으면 생략하거나 재해석하지 않고 기존 Planning 작성 owner에 전달한다. title·status·date-only scheduled_date의 기존 표현, legacy missing-responsibility 경로와 승인·실행 계약은 변경하지 않는다. |
 | 개요 생성 | Work Analysis와 unresolved confirmation이 모두 없으면 원문을 단일 section으로 보존하고 현재 Evidence ref만 순서대로 전달한다. 자연어 heuristic으로 section이나 ref를 재선택하지 않는다. Work Analysis 또는 confirmation 판단이 필요하면 기존 `planning.outline_answer` Prompt slot을 유지한다. |
 | 입력 | 선택된 Evidence와 함께 Retrieval의 `coverage`, `unresolved_event_dates`, `missing_information`, `source_statuses` 중 필요한 bounded projection을 optional input으로 소비한다. 과거 checkpoint에 필드가 없으면 확정 사실을 추측하지 않는다. |
+| WorkUnit Evidence 결속 | `outline_answer`와 `compose_answer`의 input v3는 기존 Retrieval projection인 `evidence_by_work_unit`을 optional field로 수용한다. 하나의 입력에서 기존 WorkUnit별 Evidence ref를 그대로 전달하며 WorkUnit별 호출·Provider 조회를 복제하거나 누락된 귀속을 추론하지 않는다. Prompt 본문·출력 Schema·승인 경계는 변경하지 않는다. |
 | 사실 표현 | 검색 기간은 행사 날짜의 사실 근거가 아니다. 미확정 연도·인물을 확정 표현으로 승격하지 않는다. 부분 범위·미해결 사실·조회 실패 안내를 보존하고 원문/내부 metadata dump 대신 요청에 대한 간결한 답변을 만든다. |
 | 실행 경로 | 기존 RunBudget와 `Planning.ANSWER_ONLY → RESPONSE_SYNTHESIS` 경로를 유지한다. 별도 Review 호출이나 새로운 상태를 추가하지 않는다. |
 | Output validation | 알려진 연도 미확정 날짜를 명시적 연도 또는 요일로 승격한 답변은 거절한다. 경고를 덧붙여 모순된 답변을 성공 처리하거나 날짜를 임의 교정하지 않는다. 기존 bounded failure 경로를 유지한다. |

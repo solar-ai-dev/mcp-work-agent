@@ -45,6 +45,26 @@ def test_load_prompt__input_contract_closes__exact_slot_set() -> None:
     assert contract.slot_ids == REQUIRED_PROMPT_SLOT_IDS
 
 
+@pytest.mark.parametrize("slot", ["planning.outline_answer", "planning.compose_answer"])
+def test_answer_input_v3__preserves_optional_work_binding__without_widening_fields(
+    slot: str,
+) -> None:
+    contract = load_prompt_input_contract()
+    entry = contract.entry(slot)
+    assert entry.input_schema_version == 3
+    assert entry.output_schema_version == 1
+    projection: dict[str, object] = {name: {} for name in entry.required_root_fields}
+    contract.validate_projection(slot, projection)
+    binding = [{"work_unit_id": "work-1", "evidence_refs": ["evidence-1"]}]
+    contract.validate_projection(slot, {**projection, "evidence_by_work_unit": binding})
+    with pytest.raises(PromptRuntimeInputContractError, match="unknown Product Prompt"):
+        contract.validate_projection(slot, {**projection, "undeclared_work_context": binding})
+    with pytest.raises(PromptRuntimeInputContractError, match="forbidden Product Prompt"):
+        contract.validate_projection(
+            slot, {**projection, "evidence_by_work_unit": [{"gold": "not product input"}]}
+        )
+
+
 def test_goal_contract__retired_output_version__fails_closed(tmp_path: Path) -> None:
     payload = _payload()
     entries = cast(list[dict[str, object]], payload["entries"])

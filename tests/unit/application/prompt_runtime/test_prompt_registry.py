@@ -127,7 +127,7 @@ def test_prompt_registry__selects_only_gate__complete_active_slot(tmp_path: Path
             node_name="compose_answer",
             node_state="INITIAL",
             purpose="compose_answer",
-            input_schema_version=2,
+            input_schema_version=3,
             output_schema_version=1,
         )
     )
