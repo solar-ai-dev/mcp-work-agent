@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
@@ -21,6 +22,182 @@ from google_work_agent.application.use_cases.run.account_provider_dispatch impor
 )
 from google_work_agent.ports.llm.structured_inference_contracts import ApprovedModelInfo
 from google_work_agent.ports.system.settings_port import SettingsPatchV1
+
+
+@pytest.fixture
+def interrupted_pair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[Path, dict[str, Any]]:
+    monkeypatch.setattr(runner.shared, "RESULTS_ROOT", tmp_path)
+    original = runner.build_plan("a" * 64, reference_time_ms=1790553600000)
+    original["head_sha"] = "historical-head"
+    script_key = Path(runner.__file__).relative_to(runner.shared.PROJECT_ROOT).as_posix()
+    original["dependency_sha256"][script_key] = "historical-runner-hash"
+    parent = tmp_path / "original"
+    runner.shared.write_json(parent / "plan.json", original)
+    runner.shared.write_json(
+        tmp_path / ".snapshot-component-trials" / f"{original['trial_id']}.json",
+        {"plan_sha256": runner.object_hash(original), "output": str(parent)},
+    )
+    for index, identity in enumerate(runner._execution_identities(original)[:10]):
+        directory = parent / identity["case_id"] / identity["arm"]
+        runner.shared.write_json(
+            directory / "raw.json",
+            {"state": "COMPONENT_RETURNED" if index < 9 else "RUNNING"},
+        )
+        runner.shared.write_json(directory / "calls.json", {"calls": [{"index": index}]})
+    return parent, original
+
+
+def test_continuation_binds_parent_evidence_and_only_six_never_started_arms(
+    interrupted_pair: tuple[Path, dict[str, Any]],
+) -> None:
+    parent, original = interrupted_pair
+    previous = {str(path): path.read_bytes() for path in parent.rglob("*") if path.is_file()}
+    plan = runner.build_continuation_plan(parent)
+    runner.validate_plan(plan)
+    continuation = plan["continuation"]
+    assert continuation["parent_plan_sha256"] == runner.object_hash(original)
+    assert continuation["parent_plan_file_sha256"] == runner.shared.file_hash(parent / "plan.json")
+    assert len(continuation["observed"]) == 10
+    assert [item["continuation_observation"] for item in continuation["observed"]].count(
+        "INTERRUPTED"
+    ) == 1
+    assert continuation["remaining"] == [
+        {"case_id": case_id, "arm": arm}
+        for case_id in ("CASE-CORE-025", "CASE-CORE-035", "CASE-CORE-059")
+        for arm in runner.ARMS
+    ]
+    assert all(item["raw_sha256"] and item["calls_sha256"] for item in continuation["observed"])
+    assert all(not item["rerun_allowed"] for item in continuation["observed"])
+    assert previous == {
+        str(path): path.read_bytes() for path in parent.rglob("*") if path.is_file()
+    }
+    assert plan["cases"] == original["cases"]
+    assert plan["bounds"] == original["bounds"]
+
+
+def test_even_empty_existing_arm_directory_is_not_reexecuted(
+    interrupted_pair: tuple[Path, dict[str, Any]],
+) -> None:
+    parent, _ = interrupted_pair
+    (parent / "CASE-CORE-025" / "production").mkdir(parents=True)
+    plan = runner.build_continuation_plan(parent)
+    assert len(plan["continuation"]["remaining"]) == 5
+    observed = plan["continuation"]["observed"][-1]
+    assert observed["continuation_observation"] == "INTERRUPTED"
+    assert observed["raw_sha256"] is None and observed["calls_sha256"] is None
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [
+        "product_tree_sha256",
+        "prompt_tree_sha256",
+        "dataset_sha256",
+        "snapshot_sha256",
+        "tool_registry_sha256",
+        "runtime",
+        "candidate",
+    ],
+)
+def test_continuation_rejects_changed_frozen_product_candidate_data_or_runtime(
+    interrupted_pair: tuple[Path, dict[str, Any]], changed: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    parent, _ = interrupted_pair
+    build = runner.build_plan
+
+    def altered(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        current = build(*args, **kwargs)
+        if changed == "runtime":
+            current["runtime"]["seed"] += 1
+        elif changed == "candidate":
+            current["dependency_sha256"]["scripts/production_goal_output_candidate.py"] = "changed"
+        else:
+            current[changed] = "changed"
+        return current
+
+    monkeypatch.setattr(runner, "build_plan", altered)
+    with pytest.raises(ValueError, match="Product/candidate/data/runtime"):
+        runner.build_continuation_plan(parent)
+
+
+def test_continuation_rejects_parent_plan_tampering_against_original_claim(
+    interrupted_pair: tuple[Path, dict[str, Any]],
+) -> None:
+    parent, original = interrupted_pair
+    original["head_sha"] = "changed-after-execution"
+    runner.shared.write_json(parent / "plan.json", original)
+    with pytest.raises(ValueError, match="original execution claim"):
+        runner.build_continuation_plan(parent)
+
+
+@pytest.mark.parametrize("filename", ["raw.json", "calls.json"])
+def test_continuation_rejects_parent_observation_changes_after_registration(
+    interrupted_pair: tuple[Path, dict[str, Any]],
+    filename: str,
+) -> None:
+    parent, _ = interrupted_pair
+    plan = runner.build_continuation_plan(parent)
+    path = parent / "CASE-CORE-023" / runner.shared.CANDIDATE / filename
+    runner.shared.write_json(path, {"state": "COMPONENT_RETURNED", "calls": []})
+    with pytest.raises(ValueError, match="binding changed"):
+        runner.validate_plan(plan)
+
+
+def test_continuation_executes_only_remaining_sequentially_and_claims_each_identity_once(
+    interrupted_pair: tuple[Path, dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    parent, _ = interrupted_pair
+    parent_bytes = {str(path): path.read_bytes() for path in parent.rglob("*") if path.is_file()}
+    plan = runner.build_continuation_plan(parent)
+    stale_second = runner.build_continuation_plan(parent)
+    plan_path = parent.parent / "continue-plan.json"
+    runner.shared.write_json(plan_path, plan)
+    events: list[tuple[str, Any]] = []
+
+    class FakeProcess:
+        exitcode = 0
+
+        def __init__(self, *, target: Any, args: Any) -> None:
+            assert target is runner.run_arm
+            self.args = args
+
+        def start(self) -> None:
+            child_plan, binding, arm, output = self.args
+            runner.validate_plan(child_plan)
+            events.append(("start", (binding["case_id"], arm)))
+            runner.shared.write_json(output / "raw.json", {"state": "COMPONENT_RETURNED"})
+
+        def join(self, timeout: int) -> None:
+            events.append(("join", timeout))
+
+        def is_alive(self) -> bool:
+            return False
+
+    def context(method: str) -> Any:
+        assert method == "spawn"
+        return SimpleNamespace(Process=FakeProcess)
+
+    monkeypatch.setattr(runner.multiprocessing, "get_context", context)
+    output = parent.parent / "continued"
+    assert runner.execute_plan(plan_path, output) == 0
+    expected = [(item["case_id"], item["arm"]) for item in plan["continuation"]["remaining"]]
+    assert [item[1] for item in events if item[0] == "start"] == expected
+    assert [item[0] for item in events] == ["start", "join"] * 6
+    assert [item[1] for item in events if item[0] == "join"] == [600] * 6
+    assert parent_bytes == {
+        str(path): path.read_bytes() for path in parent.rglob("*") if path.is_file()
+    }
+    assert (
+        json.loads((output / "continuation-observations.json").read_text(encoding="utf-8"))
+        == (plan["continuation"])
+    )
+    with pytest.raises(FileExistsError):
+        runner.execute_plan(plan_path, parent.parent / "duplicate")
+    with pytest.raises(ValueError, match="binding changed"):
+        runner.validate_plan(stale_second)
+    assert runner.build_continuation_plan(parent)["continuation"]["remaining"] == []
 
 
 def test_fixed_pair_plan_binds_original_inputs_time_and_all_dependencies() -> None:
@@ -214,7 +391,7 @@ def test_actual_composed_components_keep_run_context_budget_and_stop_before_retr
         )
         container.settings_port.update_settings(
             SettingsPatchV1(
-                1, preferred_llm_mode="LOCAL_GPU", preferred_local_model_id=model.model_id
+                1, preferred_llm_mode="LOCAL_GPU", preferred_local_model_id=runner.shared.MODEL_ID
             ),
             operation_ref=str(uuid4()),
         )

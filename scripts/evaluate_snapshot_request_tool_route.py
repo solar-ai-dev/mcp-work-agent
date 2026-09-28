@@ -18,7 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
@@ -59,6 +59,17 @@ CASE_IDS = (
     "CASE-CORE-059",  # Explicit SEND counterexample to answer-only overcorrection.
 )
 ARMS = ("production", shared.CANDIDATE)
+CONTINUATION_KIND = "PAIRED_PRODUCTION_RU_TOOL_ROUTE_CONTINUATION"
+_FINISHED_ARM_STATES = frozenset(
+    {
+        "COMPONENT_RETURNED",
+        "COMPONENT_INTERRUPT",
+        "COMPONENT_CONFIRMATION_BOUNDARY",
+        "COMPONENT_ERROR",
+        "EXPERIMENT_BOUND_REACHED",
+        "HARNESS_ERROR",
+    }
+)
 
 
 def case_binding(case: Mapping[str, Any], default_reference_ms: int) -> dict[str, Any]:
@@ -131,13 +142,147 @@ def build_plan(
 
 
 def validate_plan(plan: Mapping[str, Any]) -> None:
-    expected = build_plan(
-        plan["model"]["digest"],
-        trial_id=plan["trial_id"],
-        reference_time_ms=plan["preregistered_reference_time_ms"],
-    )
+    if plan.get("kind") == CONTINUATION_KIND:
+        expected = build_continuation_plan(
+            Path(plan["continuation"]["parent_output"]),
+            trial_id=plan["trial_id"],
+            _active_plan_sha256=object_hash(plan),
+        )
+    else:
+        expected = build_plan(
+            plan["model"]["digest"],
+            trial_id=plan["trial_id"],
+            reference_time_ms=plan["preregistered_reference_time_ms"],
+        )
     if dict(plan) != expected:
         raise ValueError("paired preregistered input/code/runtime binding changed")
+
+
+def _continuation_claim(parent_trial: str, case_id: str, arm: str) -> Path:
+    return (
+        shared.RESULTS_ROOT / ".snapshot-component-trials" / parent_trial / case_id / f"{arm}.json"
+    )
+
+
+def _parent_observations(
+    parent_output: Path, parent: Mapping[str, Any], *, active_plan_sha256: str | None
+) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    observed: list[dict[str, Any]] = []
+    remaining: list[dict[str, str]] = []
+    for binding in parent["cases"]:
+        for arm in parent["arms"]:
+            identity = {"case_id": binding["case_id"], "arm": arm}
+            directory = parent_output / binding["case_id"] / arm
+            prior_claim = _continuation_claim(parent["trial_id"], binding["case_id"], arm)
+            has_prior_claim = prior_claim.exists()
+            if has_prior_claim and active_plan_sha256 is not None:
+                claimed = json.loads(prior_claim.read_text(encoding="utf-8"))
+                has_prior_claim = claimed.get("plan_sha256") != active_plan_sha256
+            if not directory.exists() and not has_prior_claim:
+                remaining.append(identity)
+                continue
+            if directory.exists() and (not directory.is_dir() or directory.is_symlink()):
+                raise ValueError("existing Case/arm artifact must be a regular directory")
+            files = sorted(path for path in directory.rglob("*") if path.is_file())
+            if any(path.is_symlink() for path in directory.rglob("*")):
+                raise ValueError("linked artifacts are not accepted for continuation")
+            raw_path, calls_path = directory / "raw.json", directory / "calls.json"
+            raw = json.loads(raw_path.read_text(encoding="utf-8")) if raw_path.exists() else {}
+            original_state = raw.get("state")
+            observed.append(
+                {
+                    **identity,
+                    "artifact_directory_exists": directory.exists(),
+                    "artifacts": [path.relative_to(directory).as_posix() for path in files],
+                    "raw_sha256": shared.file_hash(raw_path) if raw_path.exists() else None,
+                    "calls_sha256": shared.file_hash(calls_path) if calls_path.exists() else None,
+                    "prior_continuation_claim_sha256": (
+                        shared.file_hash(prior_claim) if has_prior_claim else None
+                    ),
+                    "original_state": original_state,
+                    "continuation_observation": (
+                        "SKIPPED_EXISTING_TERMINAL"
+                        if original_state in _FINISHED_ARM_STATES
+                        else "INTERRUPTED"
+                    ),
+                    "rerun_allowed": False,
+                }
+            )
+    return observed, remaining
+
+
+def build_continuation_plan(
+    parent_output: Path,
+    *,
+    trial_id: str | None = None,
+    _active_plan_sha256: str | None = None,
+) -> dict[str, Any]:
+    """Bind only never-started identities; never alter or repair the original evidence."""
+    parent_output = parent_output.resolve()
+    root = shared.RESULTS_ROOT.resolve()
+    if parent_output == root or not parent_output.is_relative_to(root):
+        raise ValueError("parent output must be a dedicated evaluation/results directory")
+    parent_path = parent_output / "plan.json"
+    parent = json.loads(parent_path.read_text(encoding="utf-8"))
+    if parent.get("kind") != "PAIRED_PRODUCTION_RU_TOOL_ROUTE_COMPONENTS":
+        raise ValueError("continuation requires the original paired plan")
+    if parent["trial_id"] != str(UUID(parent["trial_id"])):
+        raise ValueError("invalid parent trial identity")
+    original_claim = root / ".snapshot-component-trials" / f"{parent['trial_id']}.json"
+    claimed = json.loads(original_claim.read_text(encoding="utf-8"))
+    if (
+        claimed.get("plan_sha256") != object_hash(parent)
+        or Path(claimed["output"]).resolve() != parent_output
+    ):
+        raise ValueError("parent plan differs from its original execution claim")
+    current = build_plan(
+        parent["model"]["digest"],
+        trial_id=trial_id,
+        reference_time_ms=parent["preregistered_reference_time_ms"],
+    )
+    runner_path = Path(__file__).relative_to(shared.PROJECT_ROOT).as_posix()
+    comparable_parent, comparable_current = deepcopy(parent), deepcopy(current)
+    for item in (comparable_parent, comparable_current):
+        for key in ("head_sha", "trial_id"):
+            item.pop(key)
+        item["dependency_sha256"].pop(runner_path)
+    if comparable_parent != comparable_current:
+        raise ValueError(
+            "parent Product/candidate/data/runtime bindings differ from current runtime"
+        )
+    if current["trial_id"] == parent["trial_id"]:
+        raise ValueError("continuation requires a new trial identity")
+    observed, remaining = _parent_observations(
+        parent_output, parent, active_plan_sha256=_active_plan_sha256
+    )
+    current.update(
+        kind=CONTINUATION_KIND,
+        continuation={
+            "parent_output": str(parent_output),
+            "parent_plan_file_sha256": shared.file_hash(parent_path),
+            "parent_plan_sha256": object_hash(parent),
+            "parent_execution_claim_sha256": shared.file_hash(original_claim),
+            "parent_trial_id": parent["trial_id"],
+            "parent_head_sha": parent["head_sha"],
+            "parent_runner_sha256": parent["dependency_sha256"][runner_path],
+            "allowed_binding_changes": ["head_sha", f"dependency_sha256:{runner_path}"],
+            "observed": observed,
+            "remaining": remaining,
+            "execution_order": "SEQUENTIAL_ORIGINAL_CASE_ARM_ORDER",
+            "original_artifacts_modified": False,
+        },
+    )
+    return current
+
+
+def _execution_identities(plan: Mapping[str, Any]) -> list[dict[str, str]]:
+    if plan.get("kind") == CONTINUATION_KIND:
+        return list(plan["continuation"]["remaining"])
+    return [
+        {"case_id": binding["case_id"], "arm": arm}
+        for binding in plan["cases"]
+        for arm in plan["arms"]
+    ]
 
 
 @contextmanager
@@ -287,7 +432,11 @@ def run_arm(plan: dict[str, Any], binding: dict[str, Any], arm: str, output: Pat
     }
     try:
         validate_plan(plan)
-        if arm not in ARMS or binding not in plan["cases"]:
+        if (
+            arm not in ARMS
+            or binding not in plan["cases"]
+            or {"case_id": binding["case_id"], "arm": arm} not in _execution_identities(plan)
+        ):
             raise ValueError("unregistered Case/arm")
         with (
             observation.wire_observer(),
@@ -395,11 +544,22 @@ def execute_plan(plan_path: Path, output: Path) -> int:
     with (claims / f"{plan['trial_id']}.json").open("x", encoding="utf-8") as stream:
         json.dump({"plan_sha256": object_hash(plan), "output": str(output)}, stream)
     shared.write_json(output / "plan.json", plan)
+    if plan.get("kind") == CONTINUATION_KIND:
+        shared.write_json(output / "continuation-observations.json", plan["continuation"])
     summary = []
     for binding in plan["cases"]:
         for arm in plan["arms"]:
+            if {"case_id": binding["case_id"], "arm": arm} not in _execution_identities(plan):
+                continue
             validate_plan(plan)
             arm_output = output / binding["case_id"] / arm
+            if plan.get("kind") == CONTINUATION_KIND:
+                claim = _continuation_claim(
+                    plan["continuation"]["parent_trial_id"], binding["case_id"], arm
+                )
+                claim.parent.mkdir(parents=True, exist_ok=True)
+                with claim.open("x", encoding="utf-8") as stream:
+                    json.dump({"plan_sha256": object_hash(plan), "output": str(arm_output)}, stream)
             process = multiprocessing.get_context("spawn").Process(
                 target=run_arm, args=(plan, binding, arm, arm_output)
             )
