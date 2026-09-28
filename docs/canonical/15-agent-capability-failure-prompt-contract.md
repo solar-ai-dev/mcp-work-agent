@@ -947,6 +947,14 @@ task_status`로 닫고05의 same-Run/version 검증 결과만 전달한다. 미�
 않고 상태 의미를 후처리하거나 답변을 강제하지 않는다. Production registry/Prompt activation,
 State·Graph·Approval·Execution 계약은 이 개발 후보에 의해 변경되지 않는다.
 
+별도 Task 상태 표현 진단은05가 허용한 검증된 합성 metadata view에서 enum 표기만
+기존 canonical 완료 여부로 대체할 수 있다. 원본 compose 입력은 기존 계약으로 검증하고,
+파생 view는 별도 evaluation input version과 원본→view 등가 검사로 검증한다. 원문·Intent·
+조회 범위·인용 identity·다른 필드·출력 Schema·Prompt 지시는 보존하며, wire의 중복 입력
+위치에는 같은 view를 전달한다. 직접 wire 진단의 과거 PromptRef는 출처 정보일 뿐 새 view가
+Product Registry에서 resolve됐다는 뜻이 아니다. 답변 의미를 validator로 수정하거나,
+부분조회 정보를 보충하거나, Product Evidence/Prompt 활성화 계약을 바꾸지 않는다.
+
 확정 사실의 재서술 오류를 분리하는 비활성 lookup 출력 후보에서는 별도 evaluation
 PromptRef로 기존 compose 입력을 유지하고 응답만 `items[{evidence_ref, field}]`로 닫는다.
 허용 pair는 현재 approved Evidence와 검증된 snapshot에서 결정적으로 생성하며, field의

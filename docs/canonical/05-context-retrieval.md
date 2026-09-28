@@ -611,6 +611,14 @@ exact Resource/version에 결속하고, `needsAction`은 미완료, `completed`�
 hash 불일치는 fact를 생성하지 않으며 excerpt나 검색 status 조건에서 보충하지 않는다.
 Product의 기존 snapshot 비노출 계약은 유지하고 후보 input/활성화 경계는15를 따른다.
 
+비활성 입력 표현 비교에서는 검증된 Task snapshot의 상태 enum만 canonical 완료 여부로
+표현한 별도 LLM view를 시험할 수 있다. 현재 Run·approved Evidence·exact handle/version/hash
+결속과 합성 metadata 직렬화의 전체 일치를 먼저 요구하며, 본문 문자열을 파싱하거나
+치환하여 상태를 추론하지 않는다. 제목·메모·다른 필드는 보존한다. 원 Evidence, snapshot,
+normalized text, segment/hash 및 저장 State는 변경하지 않고 파생 view임을 별도로 표시한다.
+이는 Product의 Evidence 불변 계약을 변경하거나 새 view를 원본 excerpt라고 주장하는
+권한이 아니다. Production 도입은 정규화·Prompt 입력·버전 호환성 검증을 별도로 요구한다.
+
 단일 Task의 직접 사실 조회에 한정한 비활성 평가에서는 검증된 snapshot의 필드 존재를
 `(approved evidence_ref, field)` 선택지로만 표현할 수 있다. snapshot 값·원본 전체를
 새 Prompt 필드로 전송하지 않는다. 선택 후 값은 기존 same-Run/exact-version resolver와
