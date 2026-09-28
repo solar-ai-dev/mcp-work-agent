@@ -9,8 +9,23 @@ from tests.support.fakes.llm import FakeStructuredInferencePort
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestIntentV3,
 )
+from google_work_agent.application.agents.request_understanding.finalize_intent import (
+    finalize_intent,
+)
+from google_work_agent.application.agents.request_understanding.identify_goal import (
+    _apply_selected_resource_authority,
+)
+from google_work_agent.application.agents.request_understanding.validate_intent import (
+    validate_intent,
+)
+from google_work_agent.application.agents.tool_routing.bind_registry_candidates import (
+    bind_registry_candidates,
+)
 from google_work_agent.application.agents.tool_routing.determine_io_resources import (
     determine_io_resources,
+)
+from google_work_agent.application.agents.tool_routing.validate_route import (
+    ToolRouteValidationError,
 )
 from google_work_agent.application.tool_registry.load_signed_tool_registry import (
     load_signed_tool_registry,
@@ -927,6 +942,7 @@ def test_selected_analysis_read__stays_answer_only__without_llm() -> None:
     assert candidate.input_resource_types == ("GMAIL_THREAD",)
     assert candidate.input_reason_codes == (("GMAIL_THREAD", "RESOURCE_SELECTED"),)
     assert candidate.analysis_requirement == "REQUIRED"
+    assert candidate.input_work_unit_bindings == (("GMAIL_THREAD", ("work-1",)),)
     assert runtime.calls == []
 
 
@@ -973,6 +989,222 @@ def test_selected_simple_read__materializes_exact_route__without_llm() -> None:
     assert candidate.output_mode == "ANSWER"
     assert candidate.input_resource_types == ("GMAIL_THREAD",)
     assert candidate.input_reason_codes == (("GMAIL_THREAD", "RESOURCE_SELECTED"),)
+    assert candidate.input_work_unit_bindings == (("GMAIL_THREAD", ("work-1",)),)
+
+
+def _selected_bound_read(
+    source_bindings: tuple[tuple[str, tuple[str, ...]], ...],
+    selected_types: tuple[str, ...],
+    request_text: str = "선택한 메일을 요약해줘. 2+2도 답해줘.",
+) -> tuple[RequestIntentV3, WorkflowStartRequest]:
+    split = request_text.index(".") + 1
+    source_types = list(dict.fromkeys(resource for resource, _ in source_bindings))
+    intent = validate_intent(
+        {
+            "schema_version": 3,
+            "meta": {"artifact_id": "intent", "revision": 1, "based_on": []},
+            "goal": request_text,
+            "completion_conditions": ["두 사용자 결과를 제공한다"],
+            "constraints": [],
+            "requested_effect_hints": ["READ"],
+            "requested_resource_hints": source_types,
+            "resource_responsibilities": {
+                "source_reads": [
+                    {
+                        "resource_type": resource,
+                        "required_information": [],
+                        "target_scope": "SINGULAR",
+                        "work_unit_ids": list(unit_ids),
+                    }
+                    for resource, unit_ids in source_bindings
+                ],
+                "outputs": [],
+            },
+            "requested_work": {
+                "work_units": [
+                    {
+                        "unit_id": unit_id,
+                        "request_provenance": [{
+                            "source": "USER_REQUEST",
+                            "start_offset": start,
+                            "end_offset": end,
+                            "source_text": request_text[start:end],
+                        }],
+                    }
+                    for unit_id, start, end in (
+                        ("work-1", 0, split),
+                        ("work-2", split + 1, len(request_text)),
+                    )
+                ],
+                "work_relations": [],
+            },
+            "effect_prohibitions": [],
+            "analysis_requirement": "NONE",
+            "ambiguity": {
+                "requires_confirmation": False,
+                "reason_codes": [],
+                "missing_fields": [],
+            },
+        },
+        require_meta=True,
+        provenance_sources={"USER_REQUEST": request_text},
+    )
+    request = WorkflowStartRequest(
+        run_id="run", conversation_id="conversation", workflow_key="workflow",
+        entry_mode="RESOURCE_SELECTED", requested_mode="LOCAL_GPU",
+        request_text=request_text,
+        selected_resource_ids=tuple(f"id-{resource}" for resource in selected_types),
+        selected_resources=tuple(
+            SelectedResourceRef(
+                f"ref-{resource}", "google_workspace", resource.lower(), f"id-{resource}"
+            )
+            for resource in selected_types
+        ),
+        run_budget=dict(build_default_run_budget()),
+        correlation=WorkflowCorrelationContext("request", "command", "v1"),
+    )
+    return intent, request
+
+
+@pytest.mark.parametrize(
+    "source_bindings,selected_types,expected_bindings,request_text",
+    [
+        (
+            (("GMAIL_THREAD", ("work-1",)),),
+            ("GMAIL_THREAD",),
+            (("GMAIL_THREAD", ("work-1",)),),
+            "선택한 메일을 요약해줘. 2+2도 답해줘.",
+        ),
+        (
+            (("GMAIL_THREAD", ("work-2",)), ("GMAIL_THREAD", ("work-1",))),
+            ("GMAIL_THREAD",),
+            (("GMAIL_THREAD", ("work-2", "work-1")),),
+            "선택한 메일을 요약해줘. 같은 메일의 기한도 알려줘.",
+        ),
+        (
+            (("GMAIL_THREAD", ("work-1",)), ("TASK", ("work-2",))),
+            ("GMAIL_THREAD", "TASK"),
+            (("GMAIL_THREAD", ("work-1",)), ("TASK", ("work-2",))),
+            "선택한 메일을 요약해줘. 선택한 작업의 상태도 알려줘.",
+        ),
+        (
+            (("GMAIL_THREAD", ("work-1",)), ("GMAIL_MESSAGE", ("work-2",))),
+            ("GMAIL_THREAD",),
+            (("GMAIL_THREAD", ("work-1", "work-2")),),
+            "선택한 대화를 요약해줘. 그 안의 메일에서 기한도 알려줘.",
+        ),
+        (
+            (("GMAIL_MESSAGE", ("work-1",)),),
+            ("GMAIL_THREAD",),
+            (("GMAIL_THREAD", ("work-1",)),),
+            "선택한 대화의 메일을 요약해줘. 2+2도 답해줘.",
+        ),
+        (
+            (("GMAIL_THREAD", ("work-1",)), ("GMAIL_MESSAGE", ("work-2",))),
+            ("GMAIL_THREAD", "GMAIL_MESSAGE"),
+            (("GMAIL_THREAD", ("work-1",)), ("GMAIL_MESSAGE", ("work-2",))),
+            "선택한 대화를 요약해줘. 별도로 선택한 메일의 기한도 알려줘.",
+        ),
+    ],
+    ids=[
+        "independent-answer", "shared-source-union", "separate-selected-sources",
+        "selected-thread-message-union", "selected-thread-message-source",
+        "distinct-selected-thread-and-message",
+    ],
+)
+def test_selected_read__preserves_source_work_binding__through_registry(
+    source_bindings: tuple[tuple[str, tuple[str, ...]], ...],
+    selected_types: tuple[str, ...],
+    expected_bindings: tuple[tuple[str, tuple[str, ...]], ...],
+    request_text: str,
+) -> None:
+    intent, request = _selected_bound_read(source_bindings, selected_types, request_text)
+    goal_candidate = {
+        key: value for key, value in intent.items()
+        if key not in {"schema_version", "meta", "ambiguity"}
+    }
+    normalized = _apply_selected_resource_authority(goal_candidate, request=request)
+    intent = finalize_intent(
+        normalized, intent["ambiguity"], artifact_id="selected-intent",
+        user_request=request.request_text,
+    )
+    assert {
+        resource_id: tuple(constraint["work_unit_ids"])
+        for constraint in intent["constraints"]
+        if constraint["field"] == "selected_resource_id"
+        for resource_id in constraint["value"]
+    } == {f"id-{resource}": unit_ids for resource, unit_ids in expected_bindings}
+    runtime = FakeStructuredInferencePort(outputs=[])
+    catalog = load_signed_tool_registry()
+    candidate, _ = determine_io_resources(
+        llm_runtime=runtime, tool_catalog=catalog, request_intent=intent,
+        request=request, retry_budget=build_default_run_budget(),
+    )
+    bound = bind_registry_candidates(
+        candidate=candidate, tool_catalog=catalog, id_factory=lambda: "route",
+    )
+
+    assert candidate.input_resource_types == selected_types
+    assert candidate.input_work_unit_bindings == expected_bindings
+    assert candidate.output_pairs == ()
+    assert candidate.output_mode == "ANSWER"
+    assert len(bound.input_routes) == len(selected_types)
+    assert {
+        route["resource_type"]: tuple(route["work_unit_ids"])
+        for route in bound.input_routes
+    } == dict(expected_bindings)
+    assert all(route["reason_codes"] == ["RESOURCE_SELECTED"] for route in bound.input_routes)
+    assert runtime.calls == []
+
+
+def test_selected_read__with_missing_typed_source_binding__does_not_invent_work_scope() -> None:
+    intent, request = _selected_bound_read(
+        (("TASK", ("work-2",)),), ("GMAIL_THREAD",),
+    )
+    runtime = FakeStructuredInferencePort(outputs=[])
+    with pytest.raises(ToolRouteValidationError, match="no Source WorkUnit binding"):
+        determine_io_resources(
+            llm_runtime=runtime, tool_catalog=load_signed_tool_registry(),
+            request_intent=intent, request=request, retry_budget=build_default_run_budget(),
+        )
+    assert runtime.calls == []
+
+
+@pytest.mark.parametrize(
+    "effect,expected_units",
+    [
+        ("CREATE", ["work-1"]),
+        ("UPDATE", ["work-1", "work-2"]),
+        ("DELETE", ["work-1", "work-2"]),
+    ],
+)
+def test_selected_identity__distinguishes_new_output_from_existing_target_binding(
+    effect: str, expected_units: list[str],
+) -> None:
+    intent, request = _selected_bound_read(
+        (("TASK", ("work-1",)),), ("TASK",),
+        "선택한 작업 상태를 알려줘. 지정한 Task 작업도 준비해줘.",
+    )
+    goal_candidate = {
+        key: value for key, value in intent.items()
+        if key not in {"schema_version", "meta", "ambiguity"}
+    }
+    goal_candidate["resource_responsibilities"] = {
+        "source_reads": intent["resource_responsibilities"]["source_reads"],
+        "outputs": [{"resource_type": "TASK", "effect": effect, "work_unit_ids": ["work-2"]}],
+    }
+    goal_candidate["requested_effect_hints"] = ["READ", effect]
+    normalized = _apply_selected_resource_authority(goal_candidate, request=request)
+    finalized = finalize_intent(
+        normalized, intent["ambiguity"], artifact_id="selected-output-intent",
+        user_request=request.request_text,
+    )
+    assert [
+        constraint["work_unit_ids"]
+        for constraint in finalized["constraints"]
+        if constraint["field"] == "selected_resource_id"
+    ] == [expected_units]
+    assert finalized["resource_responsibilities"] == goal_candidate["resource_responsibilities"]
 
 
 def test_answer_only__materializes_no_tool_route__without_llm() -> None:

@@ -933,6 +933,8 @@ class OutputToolRouteV1:
 - Input Route는 동일 READ capability를 하나로 유지하면서 관련 Source responsibility의 `work_unit_ids` union을 보존한다. dependency-only Route도 이를 필요로 한 direct Route의 union을 상속한다.
 - Output Route는 해당 Output responsibility와 일대일이다. 같은 Resource/effect의 Tool 선택 결과는 재사용할 수 있지만 서로 다른 `work_unit_ids`의 사용자 결과를 한 Route로 합치지 않는다.
 - `RESOURCE_SELECTED`의 exact resource type은 semantic candidate보다 우선하는 current-Run scope다. 후보가 다른 resource family를 제안하면 bounded semantic revision 또는 fail-closed하며 선택 identity를 새 값으로 교체하지 않는다.
+- `RESOURCE_SELECTED`의 READ fast-path도 확정된 Source responsibility의 WorkUnit binding을 소비한다. 선택 identity가 존재한다는 이유로 해당 READ를 모든 WorkUnit에 적용하지 않으며, 동일 선택 Resource의 명시적 Source binding만 union한다.
+- 선택 Resource의 최신 READ 필요성과 업무 귀속은 별개다. 복수 WorkUnit에서 해당 Source 또는 기존 대상 Output binding이 없으면 전체 업무로 주입하지 않고 기존 bounded Source semantic revision으로 반환한다. 단일 WorkUnit은 유일한 binding을 유지하며 revision 재실패·예산 소진 시 추정으로 귀속하지 않는다.
 - `input_routes`는 Retrieval이 사용할 허용 Read Tool 범위를 보존한다. Retrieval LLM이 다시 Tool 종류를 고르지 않는다.
 - `output_routes`의 실제 Action Tool은 여기서 확정한다. Planning은 Tool을 다시 선택하지 않고 Arguments·내용만 작성한다.
 - 후보 수를 임의 shortlisting하여 필요한 Tool을 제거하지 않는다. Main State에는 확정된 Route와 Registry binding을 온전히 보존한다.

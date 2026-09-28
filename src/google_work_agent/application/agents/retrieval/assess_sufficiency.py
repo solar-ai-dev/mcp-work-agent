@@ -57,6 +57,7 @@ from google_work_agent.application.agents.task_calendar_draft_source import (
 from google_work_agent.application.agents.tool_routing.bind_registry_candidates import (
     business_required_source_routes,
     coarse_resource_category,
+    is_retrieval_dependency_route,
     normalize_resource_type,
 )
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
@@ -211,6 +212,7 @@ def deterministic_sufficiency(
                 }
             ],
         },
+        request_intent=request_intent,
         tool_route_plan=tool_route_plan,
         acquisition_result=acquisition_result,
         evidence_drafts=evidence_drafts,
@@ -239,6 +241,7 @@ def _deterministic_source_sufficiency(
     if not evidence_drafts and _has_bounded_read_stop(acquisition_result):
         guarded = _fail_closed_on_empty_required_acquisition(
             {"schema_version": 2, "status": "PARTIAL", "issues": []},
+            request_intent=request_intent,
             tool_route_plan=tool_route_plan,
             acquisition_result=acquisition_result,
             evidence_drafts=evidence_drafts,
@@ -262,6 +265,7 @@ def _deterministic_source_sufficiency(
     ):
         empty_result = _fail_closed_on_empty_required_acquisition(
             {"schema_version": 2, "status": "NEEDS_MORE_DATA", "issues": []},
+            request_intent=request_intent,
             tool_route_plan=tool_route_plan,
             acquisition_result=acquisition_result,
             evidence_drafts=evidence_drafts,
@@ -281,6 +285,7 @@ def _deterministic_source_sufficiency(
     if terminal_read_failure:
         guarded = _fail_closed_on_empty_required_acquisition(
             {"schema_version": 2, "status": "PARTIAL", "issues": []},
+            request_intent=request_intent,
             tool_route_plan=tool_route_plan,
             acquisition_result=acquisition_result,
             evidence_drafts=evidence_drafts,
@@ -314,11 +319,18 @@ def _deterministic_source_sufficiency(
         confirmation_response=confirmation_response,
     ):
         return {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
-    if is_complete_create_policy_read(
-        request_intent=request_intent,
-        tool_route_plan=tool_route_plan,
-        acquisition_result=acquisition_result,
-        confirmation_response=confirmation_response,
+    if (
+        is_complete_create_policy_read(
+            request_intent=request_intent,
+            tool_route_plan=tool_route_plan,
+            acquisition_result=acquisition_result,
+            confirmation_response=confirmation_response,
+        )
+        and tool_route_plan is not None
+        and all(
+            _is_policy_only_acquisition_route(route, request_intent=request_intent)
+            for route in tool_route_plan["input_plan"]["input_routes"]
+        )
     ):
         return {"schema_version": 2, "status": "SUFFICIENT", "issues": []}
     if _is_complete_selected_resource_action(
@@ -598,6 +610,7 @@ def assess_sufficiency(
     validated = validate_sufficiency_result_v2(result.structured_output)
     validated = _fail_closed_on_empty_required_acquisition(
         validated,
+        request_intent=request_intent,
         tool_route_plan=tool_route_plan,
         acquisition_result=acquisition_result,
         evidence_drafts=evidence_drafts,
@@ -741,9 +754,44 @@ def _guard_event_year(
     return result
 
 
+_POLICY_ACQUISITION_REASONS = frozenset(
+    {"POLICY_TASK_DUPLICATE_CHECK", "POLICY_CALENDAR_CONFLICT_CHECK"}
+)
+
+
+def _is_policy_only_acquisition_route(
+    route: InputToolRouteV1,
+    *,
+    request_intent: RequestIntentV3,
+) -> bool:
+    """Separate completed policy checks from user-required business Evidence."""
+    reasons = route["reason_codes"]
+    if not _POLICY_ACQUISITION_REASONS.intersection(reasons):
+        return False
+    remaining = [code for code in reasons if code not in _POLICY_ACQUISITION_REASONS]
+    if remaining and not is_retrieval_dependency_route({**route, "reason_codes": remaining}):
+        return False
+    responsibilities = request_intent.get("resource_responsibilities")
+    if not isinstance(responsibilities, Mapping):
+        # Preserve the old pure-policy contract; mixed legacy reasons cannot prove ownership.
+        return not remaining
+    source_reads = responsibilities.get("source_reads")
+    if not isinstance(source_reads, list):
+        return False
+    route_unit_ids = set(route.get("work_unit_ids", []))
+    for source in source_reads:
+        if source["resource_type"] != route["resource_type"]:
+            continue
+        source_unit_ids = set(source.get("work_unit_ids", []))
+        if not route_unit_ids or not source_unit_ids or route_unit_ids & source_unit_ids:
+            return False
+    return True
+
+
 def _fail_closed_on_empty_required_acquisition(
     result: SufficiencyResultV2,
     *,
+    request_intent: RequestIntentV3,
     tool_route_plan: ToolRoutePlanV2 | None,
     acquisition_result: AcquisitionResultV1,
     evidence_drafts: list[EvidenceDraftV1],
@@ -757,10 +805,7 @@ def _fail_closed_on_empty_required_acquisition(
     for route in business_required_source_routes(routes):
         summaries = _route_summaries(route, routes, acquisition_result)
         status = _worst_source_status(summaries)[0] if summaries else "NOT_ATTEMPTED"
-        is_policy = bool(route["reason_codes"]) and all(
-            code in {"POLICY_TASK_DUPLICATE_CHECK", "POLICY_CALENDAR_CONFLICT_CHECK"}
-            for code in route["reason_codes"]
-        )
+        is_policy = _is_policy_only_acquisition_route(route, request_intent=request_intent)
         if is_policy and status == "COMPLETE":
             continue
         route_handles = {

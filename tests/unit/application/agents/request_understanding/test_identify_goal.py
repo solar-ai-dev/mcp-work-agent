@@ -44,7 +44,11 @@ from google_work_agent.application.agents.tool_routing.determine_io_resources im
 from google_work_agent.application.tool_registry.load_signed_tool_registry import (
     load_signed_tool_registry,
 )
-from google_work_agent.application.use_cases.run.guard_run_budget import build_default_run_budget
+from google_work_agent.application.use_cases.run.guard_run_budget import (
+    approve_semantic_revision,
+    build_default_run_budget,
+    build_semantic_failure_signature_v1,
+)
 from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
 from google_work_agent.ports.llm.structured_inference_contracts import (
     OutputSchemaDefinition,
@@ -2365,6 +2369,148 @@ def test_identify_goal__selected_resource__preserves_trusted_read_identity() -> 
             "work_unit_ids": ["work-1"],
         }
     ]
+    assert candidate["resource_responsibilities"]["source_reads"] == [
+        {
+            "resource_type": "GMAIL_THREAD",
+            "required_information": [],
+            "target_scope": "SINGULAR",
+            "work_unit_ids": ["work-1"],
+        }
+    ]
+    assert sum(
+        call["prompt_ref"].prompt_id == "request_understanding.identify_source_dependencies"
+        for call in runtime.calls
+    ) == 1
+
+
+@pytest.mark.parametrize("revision_valid", [True, False])
+def test_selected_multiwork__missing_source_binding__uses_only_bounded_source_revision(
+    revision_valid: bool,
+) -> None:
+    request_text = "선택한 메일을 요약해줘. 2+2도 답해줘."
+    request = replace(
+        _request(request_text),
+        entry_mode="RESOURCE_SELECTED",
+        selected_resource_ids=("thread-42",),
+        selected_resources=(
+            SelectedResourceRef("ref-thread", "google_workspace", "gmail_thread", "thread-42"),
+        ),
+    )
+    goal = {
+        "goal": request_text,
+        "completion_conditions": ["선택한 메일 요약", "계산 답변"],
+        "constraints": _goal_constraints(),
+        "resource_responsibilities": _resource_responsibilities(),
+        "analysis_requirement": "NONE",
+    }
+    revised_source = _source_dependency_decisions(
+        source_types={"GMAIL_THREAD": (["message_history"], "SINGULAR")}
+        if revision_valid else {},
+    )
+    runtime = FakeStructuredInferencePort(outputs=[
+        {
+            "schema_version": 1,
+            "work_units": [
+                {"request_spans": ["선택한 메일을 요약해줘."]},
+                {"request_spans": ["2+2도 답해줘."]},
+            ],
+        },
+        deepcopy(goal), revised_source,
+    ])
+    if revision_valid:
+        candidate, budget = identify_goal_with_budget(
+            llm_runtime=runtime, request=request,
+            prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+            retry_budget=build_default_run_budget(),
+        )
+        intent = finalize_intent(
+            candidate,
+            {"requires_confirmation": False, "reason_codes": [], "missing_fields": []},
+            artifact_id="selected-work-intent", user_request=request_text,
+        )
+        assert intent["goal"] == goal["goal"]
+        assert intent["completion_conditions"] == goal["completion_conditions"]
+        assert intent["resource_responsibilities"]["outputs"] == []
+        assert intent["resource_responsibilities"]["source_reads"][0]["work_unit_ids"] == [
+            "work-1"
+        ]
+        assert next(
+            item["work_unit_ids"] for item in intent["constraints"]
+            if item["field"] == "selected_resource_id"
+        ) == ["work-1"]
+        assert budget["semantic_revisions_used_by_failure"] == {
+            "request.identify_goal\x1fREQUEST_EXISTING_RESOURCE_SOURCE_REQUIRED": 1
+        }
+    else:
+        with pytest.raises(goal_schema.RequestGoalSemanticValidationError) as caught:
+            identify_goal_with_budget(
+                llm_runtime=runtime, request=request,
+                prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+                retry_budget=build_default_run_budget(),
+            )
+        assert caught.value.reason_code == "REQUEST_EXISTING_RESOURCE_SOURCE_REQUIRED"
+    prompt_ids = [call["prompt_ref"].prompt_id for call in runtime.calls]
+    assert prompt_ids.count("request_understanding.identify_source_dependencies") == 2
+    assert prompt_ids.count("request_understanding.identify_goal") == 1
+    assert prompt_ids.count("request_understanding.identify_output_responsibilities") == 1
+    source_revision = next(
+        call for call in runtime.calls
+        if call["prompt_ref"].prompt_id == "request_understanding.identify_source_dependencies"
+        and "base_projection" in call["prompt_input"]
+    )
+    projection = source_revision["prompt_input"]
+    assert projection["failure_record"]["failure_reason_code"] == (
+        "REQUEST_EXISTING_RESOURCE_SOURCE_REQUIRED"
+    )
+    assert projection["base_projection"]["user_request"] == request_text
+    assert projection["base_projection"]["selected_resource_refs"][0]["resource_id"] == (
+        "thread-42"
+    )
+
+
+def test_selected_multiwork__used_source_revision_budget__does_not_call_source_again() -> None:
+    request_text = "선택한 메일을 요약해줘. 2+2도 답해줘."
+    request = replace(
+        _request(request_text), entry_mode="RESOURCE_SELECTED",
+        selected_resource_ids=("thread-42",),
+        selected_resources=(
+            SelectedResourceRef("ref-thread", "google_workspace", "gmail_thread", "thread-42"),
+        ),
+    )
+    runtime = FakeStructuredInferencePort(outputs=[
+        {
+            "schema_version": 1,
+            "work_units": [
+                {"request_spans": ["선택한 메일을 요약해줘."]},
+                {"request_spans": ["2+2도 답해줘."]},
+            ],
+        },
+        {
+            "goal": request_text,
+            "completion_conditions": ["요약과 계산 답변"],
+            "constraints": _goal_constraints(),
+            "resource_responsibilities": _resource_responsibilities(),
+            "analysis_requirement": "NONE",
+        },
+    ])
+    budget = approve_semantic_revision(
+        build_default_run_budget(),
+        signature=build_semantic_failure_signature_v1(
+            node_id="request.identify_goal",
+            failure_reason_codes=["REQUEST_EXISTING_RESOURCE_SOURCE_REQUIRED"],
+        ),
+    )["run_budget"]
+    with pytest.raises(goal_schema.RequestGoalSemanticValidationError) as caught:
+        identify_goal_with_budget(
+            llm_runtime=runtime, request=request,
+            prompt_ref=_prompt_ref("request_understanding.identify_goal", "identify_goal"),
+            retry_budget=budget,
+        )
+    assert caught.value.reason_code == "REQUEST_EXISTING_RESOURCE_SOURCE_REQUIRED"
+    assert sum(
+        call["prompt_ref"].prompt_id == "request_understanding.identify_source_dependencies"
+        for call in runtime.calls
+    ) == 1
 
 
 def test_normalized_goal__existing_resource_update_without_source__rejects_contract() -> None:

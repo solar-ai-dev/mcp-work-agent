@@ -485,3 +485,34 @@ Draft/Attachment가 업무 필수 READ인데 해당 fixture inventory가 비어 
 BLOCKED 판정은 아니다. 직접10 + 기존 connected2 PASS, 모델/Provider I/O0.
 raw: `evaluation/results/064-source-frozen-connected-component-gate/diagnostic-final.json`
 SHA256: `c188c4792bbb11d3d9dd224d7d388d38f2c017d56eda4563a38208676f2a4863`.
+
+## 확정된 selected/confirmation binding 손실 수정
+
+선택 Resource READ fast-path와 RU의 selected identity 보강이 기존 Source binding을
+무시하고 전체 WorkUnit으로 넓혔다. 이제 같은 Resource의 확정 Source 또는 기존 대상
+UPDATE/DELETE Output binding을 소비하며, Thread가 Message READ를 공유하는 기존 의미도
+동일 helper로 보존한다. 복수 업무인데 귀속이 없으면 전체 업무에 주입하지 않고 기존
+`REQUEST_EXISTING_RESOURCE_SOURCE_REQUIRED` Source revision을 사용한다. Goal/Output은
+재생성하지 않으며 기존 1회 예산 소진·재실패 시 추정 binding을 만들지 않는다.
+단일 업무의 유일한 binding과 selected exact identity authority는 유지한다.
+
+confirmation 재개 때도 `required_information`을 전체 Source WorkUnit에 교차 적용하던
+문제가 있었다. 정상 RU와 같은 binding별 canonical derivation을 재사용한다.
+직접·관련 RU/ToolRoute/budget366 PASS. 후속 Sufficiency 수정과 함께 root 재검증한
+RU/ToolRoute/assessor 직접 집합477 PASS. 모델/Provider0이며 업무 성공률 측정이 아니다.
+
+## 실제 Policy→Registry→Sufficiency handoff 수정
+
+순수 Task/Event CREATE의 policy READ에 Registry dependency reason이 추가되면,
+정상 COMPLETE empty 조회도 business Evidence 부족으로 차단됐다. 반대로 명시적 business
+Source와 policy READ가 합쳐져 reason이 POLICY로 바뀌면 empty 결과가 fast-path에서 잘못
+SUFFICIENT가 됐다. 실제 Policy/Registry producer와 합성 acquisition/LLM을 연결해 수정 전
+4 FAIL을 재현했다.
+
+Sufficiency owner는 기존 `source_reads`와 route WorkUnit의 교집합을 먼저 확인하고
+policy reason + 기존 dependency reason만 있는 조회를 구별한다. 명시적 business Source는
+빈 근거로 통과시키지 않으며, COMPLETE가 아닌 policy 조회·미시도·unknown reason·불명확한
+mixed legacy 입력은 계속 fail-closed한다. 모델의 SUFFICIENT 판단을 강제로 생성하지 않는다.
+직접15 + 관련 assessor/Query(q19/EXHAUSTIVE)/Registry/Policy 합계202 PASS.
+두 수정 모두 Product Prompt/State/Schema/Node·승인/실행 경계 변경0, 실제 모델/Provider0.
+이 연결 결함 수정은 Source producer의 잔여 의미 오판을 해결했다는 주장이 아니다.

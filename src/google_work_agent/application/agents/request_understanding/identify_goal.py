@@ -57,11 +57,15 @@ from .contracts.output_responsibility_decision import (
 from .contracts.request_goal_candidate_schema import (
     RequestGoalSemanticValidationError,
     derive_requested_resource_fields,
+    derive_source_information_constraints,
     identify_goal_output_schema,
     validate_normalized_request_goal_candidate,
     validate_request_goal_candidate,
 )
-from .contracts.source_dependency_decision import SourceDependencyCandidateV1
+from .contracts.source_dependency_decision import (
+    SourceDependencyCandidateV1,
+    selected_source_work_bindings,
+)
 from .identify_effect_prohibitions import (
     build_effect_prohibition_candidates,
     identify_effect_prohibitions,
@@ -787,7 +791,7 @@ def _with_derived_resource_responsibilities(
     *,
     responsibilities: ResourceResponsibilitiesV1,
 ) -> RequestGoalCandidateV1:
-    effects, resource_hints, source_information = derive_requested_resource_fields(
+    effects, resource_hints, _ = derive_requested_resource_fields(
         responsibilities
     )
     constraints = [
@@ -795,22 +799,7 @@ def _with_derived_resource_responsibilities(
         for constraint in candidate["constraints"]
         if constraint["field"] != "required_information"
     ]
-    if source_information:
-        source_unit_ids = list(
-            dict.fromkeys(
-                unit_id
-                for source in responsibilities["source_reads"]
-                for unit_id in source["work_unit_ids"]
-            )
-        )
-        constraints.append(
-            {
-                "kind": "USER_REQUIREMENT",
-                "field": "required_information",
-                "value": source_information,
-                "work_unit_ids": source_unit_ids,
-            }
-        )
+    constraints.extend(derive_source_information_constraints(responsibilities))
     return {
         **candidate,
         "constraints": constraints,
@@ -994,8 +983,40 @@ def _apply_selected_resource_authority(
     if request.entry_mode != "RESOURCE_SELECTED" or not request.selected_resources:
         return candidate
 
-    resource_ids = list(dict.fromkeys(ref.resource_id for ref in request.selected_resources))
     unit_ids = [unit["unit_id"] for unit in candidate["requested_work"]["work_units"]]
+    responsibilities = candidate["resource_responsibilities"]
+    selected_types = tuple(_selected_resource_hints(request))
+    source_bindings = selected_source_work_bindings(
+        tuple(
+            (source["resource_type"], tuple(source["work_unit_ids"]))
+            for source in responsibilities["source_reads"]
+        ),
+        selected_types,
+    )
+    bindings_by_type: dict[str, list[str]] = {}
+    for resource_type in selected_types:
+        refs = [
+            unit_id
+            for source_type, source_unit_ids in source_bindings
+            if source_type == resource_type
+            for unit_id in source_unit_ids
+        ]
+        refs.extend(
+            unit_id
+            for output in responsibilities["outputs"]
+            if output["resource_type"] == resource_type
+            and output["effect"] in {"UPDATE", "DELETE"}
+            for unit_id in output["work_unit_ids"]
+        )
+        resolved_unit_ids = list(dict.fromkeys(refs))
+        if not resolved_unit_ids and len(unit_ids) > 1:
+            raise RequestGoalSemanticValidationError(
+                "selected existing Resource has no owner WorkUnit binding: "
+                f"{resource_type}",
+                reason_code="REQUEST_EXISTING_RESOURCE_SOURCE_REQUIRED",
+                affected_field_paths=("$.resource_responsibilities.source_reads",),
+            )
+        bindings_by_type[resource_type] = resolved_unit_ids or unit_ids
     constraints = list(candidate["constraints"])
     selected_repositories = {
         ref.parent_resource_id
@@ -1023,30 +1044,35 @@ def _apply_selected_resource_authority(
             constraint["value"] if isinstance(constraint["value"], list) else [constraint["value"]]
         )
     }
-    missing_resource_ids = [
-        resource_id for resource_id in resource_ids if resource_id not in constrained_resource_ids
-    ]
-    if missing_resource_ids:
+    missing_ids_by_binding: dict[tuple[str, ...], list[str]] = {}
+    for ref in request.selected_resources:
+        if ref.resource_id in constrained_resource_ids:
+            continue
+        hint = _SELECTED_RESOURCE_HINTS.get((ref.connector_id, ref.resource_type.upper()))
+        bound_ids = tuple(bindings_by_type[hint] if hint is not None else unit_ids)
+        missing_ids = missing_ids_by_binding.setdefault(bound_ids, [])
+        if ref.resource_id not in missing_ids:
+            missing_ids.append(ref.resource_id)
+    for bound_ids, missing_resource_ids in missing_ids_by_binding.items():
         constraints.append(
             {
                 "kind": "RESOURCE",
                 "field": "selected_resource_id",
                 "value": missing_resource_ids,
-                "work_unit_ids": unit_ids,
+                "work_unit_ids": list(bound_ids),
             }
         )
 
-    responsibilities = candidate["resource_responsibilities"]
     source_reads = list(responsibilities["source_reads"])
     source_resource_types = {source["resource_type"] for source in source_reads}
-    for hint in _selected_resource_hints(request):
+    for hint in selected_types:
         if hint not in source_resource_types:
             source_reads.append(
                 {
                     "resource_type": hint,
                     "required_information": [],
                     "target_scope": "SINGULAR",
-                    "work_unit_ids": unit_ids,
+                    "work_unit_ids": list(bindings_by_type[hint]),
                 }
             )
     responsibilities = ResourceResponsibilitiesV1(

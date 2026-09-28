@@ -515,26 +515,9 @@ def validate_request_goal_candidate(
                 "work_unit_ids": list(cast(Sequence[str], coverage["work_unit_ids"])),
             }
         )
-    information_by_binding: dict[tuple[str, ...], list[str]] = {}
-    for source in normalized_responsibilities["source_reads"]:
-        if not source["required_information"]:
-            continue
-        source_unit_ids = tuple(source["work_unit_ids"])
-        bound_information = information_by_binding.setdefault(source_unit_ids, [])
-        bound_information.extend(
-            information
-            for information in source["required_information"]
-            if information not in bound_information
-        )
-    for source_unit_ids, source_information in information_by_binding.items():
-        normalized_constraints.append(
-            {
-                "kind": "USER_REQUIREMENT",
-                "field": "required_information",
-                "value": source_information,
-                "work_unit_ids": list(source_unit_ids),
-            }
-        )
+    normalized_constraints.extend(
+        derive_source_information_constraints(normalized_responsibilities)
+    )
     normalized_constraints.extend(
         normalize_source_status_constraints(
             {"statuses": []} if source_statuses is None else source_statuses,
@@ -598,6 +581,32 @@ def _normalize_model_constraints(slots: Mapping[str, object]) -> list[Constraint
             for (field, unit_ids), values in grouped.items()
         ],
     )
+
+
+def derive_source_information_constraints(
+    responsibilities: ResourceResponsibilitiesV1,
+) -> list[ConstraintV1]:
+    """Project confirmed Source facts without widening their WorkUnit bindings."""
+    information_by_binding: dict[tuple[str, ...], list[str]] = {}
+    for source in responsibilities["source_reads"]:
+        if not source["required_information"]:
+            continue
+        source_unit_ids = tuple(source["work_unit_ids"])
+        bound_information = information_by_binding.setdefault(source_unit_ids, [])
+        bound_information.extend(
+            information
+            for information in source["required_information"]
+            if information not in bound_information
+        )
+    return [
+        {
+            "kind": "USER_REQUIREMENT",
+            "field": "required_information",
+            "value": information,
+            "work_unit_ids": list(unit_ids),
+        }
+        for unit_ids, information in information_by_binding.items()
+    ]
 
 
 def _validate_resource_responsibilities_shape(

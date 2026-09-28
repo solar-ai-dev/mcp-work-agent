@@ -5,6 +5,9 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Literal, cast
 
+from google_work_agent.application.agents.request_understanding.contracts import (
+    source_dependency_decision as source_contract,
+)
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     RequestIntentV3,
     RequestUnderstandingValidationError,
@@ -272,7 +275,7 @@ def _exact_intent_candidate(
             ),
         )
     if set(effect_values) == {"READ"}:
-        resource_types = _collapse_gmail_search_inputs(resource_types)
+        resource_types = source_contract.collapse_gmail_source_types(resource_types)
     if len(resource_types) != 1:
         return None
     resource_type = resource_types[0]
@@ -339,7 +342,7 @@ def _resource_responsibility_candidate(
     responsibilities = request_intent.get("resource_responsibilities")
     if not responsibilities:
         return None
-    input_bindings = _collapse_gmail_search_bindings(tuple(
+    input_bindings = source_contract.collapse_gmail_source_work_bindings(tuple(
         (item["resource_type"], tuple(item["work_unit_ids"]))
         for item in responsibilities["source_reads"]
     ))
@@ -369,35 +372,6 @@ def _resource_responsibility_candidate(
     )
 
 
-def _collapse_gmail_search_inputs(resource_types: tuple[str, ...]) -> tuple[str, ...]:
-    """Use the searchable Thread route when Message and Thread describe one Gmail READ."""
-
-    unique = tuple(dict.fromkeys(resource_types))
-    if {"GMAIL_THREAD", "GMAIL_MESSAGE"}.issubset(unique):
-        return tuple(item for item in unique if item != "GMAIL_MESSAGE")
-    return unique
-
-
-def _collapse_gmail_search_bindings(
-    bindings: tuple[tuple[str, tuple[str, ...]], ...],
-) -> tuple[tuple[str, tuple[str, ...]], ...]:
-    ordered_resources = _collapse_gmail_search_inputs(tuple(item[0] for item in bindings))
-    by_resource: dict[str, list[str]] = {}
-    for resource_type, unit_ids in bindings:
-        effective_resource = (
-            "GMAIL_THREAD"
-            if resource_type in {"GMAIL_THREAD", "GMAIL_MESSAGE"}
-            and "GMAIL_THREAD" in ordered_resources
-            else resource_type
-        )
-        refs = by_resource.setdefault(effective_resource, [])
-        refs.extend(unit_id for unit_id in unit_ids if unit_id not in refs)
-    return tuple(
-        (resource_type, tuple(by_resource[resource_type]))
-        for resource_type in ordered_resources
-    )
-
-
 def _selected_read_candidate(
     *,
     request_intent: RequestIntentV3,
@@ -406,6 +380,33 @@ def _selected_read_candidate(
     selected_input_resources = _selected_input_resource_types(request)
     if not selected_input_resources or set(request_intent["requested_effect_hints"]) != {"READ"}:
         return None
+    responsibilities = request_intent.get("resource_responsibilities")
+    source_bindings = () if responsibilities is None else tuple(
+        (source["resource_type"], tuple(source["work_unit_ids"]))
+        for source in responsibilities["source_reads"]
+    )
+    source_bindings = source_contract.selected_source_work_bindings(
+        source_bindings, selected_input_resources
+    )
+    input_bindings: list[tuple[str, tuple[str, ...]]] = []
+    for resource_type in selected_input_resources:
+        if responsibilities is None:
+            unit_ids = _all_work_unit_ids(request_intent)
+        else:
+            unit_ids = tuple(
+                dict.fromkeys(
+                    unit_id
+                    for source_type, source_unit_ids in source_bindings
+                    if source_type == resource_type
+                    for unit_id in source_unit_ids
+                )
+            )
+            if not unit_ids:
+                raise ToolRouteValidationError(
+                    "selected input route has no Source WorkUnit binding: "
+                    f"{resource_type}"
+                )
+        input_bindings.append((resource_type, unit_ids))
     return SemanticRouteCandidate(
         input_resource_types=selected_input_resources,
         output_pairs=(),
@@ -414,10 +415,7 @@ def _selected_read_candidate(
         input_reason_codes=tuple(
             (resource_type, "RESOURCE_SELECTED") for resource_type in selected_input_resources
         ),
-        input_work_unit_bindings=tuple(
-            (resource_type, _all_work_unit_ids(request_intent))
-            for resource_type in selected_input_resources
-        ),
+        input_work_unit_bindings=tuple(input_bindings),
     )
 
 
