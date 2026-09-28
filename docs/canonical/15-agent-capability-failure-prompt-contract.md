@@ -983,6 +983,10 @@ Product의 확정 constraint/provenance 전달이나 Confirmation/Revision 계�
 근거로 사용하거나 저장하지 않는다. 미리 정한 구조 실패 중단은 원 실패·사용량과 후속
 미실행을 모두 남기고, 구조 유효한 의미 실패를 선택적으로 제외하지 않는다. Product
 추론 옵션이나 Source별 호출 수를 활성화하는 근거와 부분 호환성 결과는 구분한다.
+final 부재의 원인 분리를 위한 후속 비활성 대조에서는 같은 추론 wire의 top-level
+`format`만 생략하고 본문 Schema는 유지할 수 있다. 실제 wire와 검증 사본을 구분하며
+현재 Source JSON/Schema/closed-ID/owner 검증은 동일하게 적용한다. 응답 fence 제거,
+부분 JSON 추출 또는 숨겨진 추론으로 final을 복원하지 않는다.
 
 Source의 비활성 contrastive 비교는 기존 one-call role·실제 Run input·Schema·sampling을
 유지한 채 일반적인 입력→출력 예시만 분리된 후보 artifact로 추가할 수 있다. 예시 출력도
