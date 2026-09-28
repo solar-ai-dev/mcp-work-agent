@@ -1250,6 +1250,11 @@ Request는 run_input을 projection하고, Back-edge 재진입에서는 해당 No
 
 각 LLM 호출은 자기 책임만 수행한다. 시간축 operation은 새로운 identity resolver나 Main Agent owner가 아니다. 표는 책임 구분이며 미래 Node 개수나 물리 배치를 고정하지 않는다.
 
+개발 비교에서는 Source owner가 필요한 업무 정보를 먼저 표현하고 Registry의 닫힌
+Source ref에 결속하는 후보를 분리해 시험할 수 있다. 확정된 ref→Resource projection은
+의미 재판정이 아니며 Product exact-set 계약으로 연결해 검증한다. 이는 evaluation-only
+후보의 범위로, Product authority·manifest·승인/실행 경계를 변경하지 않는다.
+
 현재 문서의 Local State 참조:
 
 ```python

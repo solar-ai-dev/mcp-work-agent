@@ -33,6 +33,13 @@ from evaluation.request_semantic_authority_candidate import (
 from langgraph.graph import END, START, StateGraph
 from scripts.evaluate_ru_output_input_projection import _request
 from scripts.evaluate_ru_source_status_prompt import _RecordingInferencePort
+from scripts.ru_observation import metrics, observe_local_calls, source_format_only_envelope
+from scripts.ru_source_demand_candidate import (
+    JointRoleAuthorityCandidate,
+    KeyedSourceCandidate,
+    SourceDemandBindingCandidate,
+    SourceNeedsThenBindingCandidate,
+)
 
 from google_work_agent.adapters.langgraph.main.routing.route_after_supervisor import (
     RESUME_CONTRACT_VERSION,
@@ -46,9 +53,13 @@ from google_work_agent.adapters.langgraph.subgraphs.tool_routing.graph import To
 from google_work_agent.adapters.llm.ollama.transport import OllamaHTTPClient
 from google_work_agent.adapters.llm.runtime.llm_credential_router import SessionMemorySecretStore
 from google_work_agent.api.composition import ProductionRuntimeConfig, build_production_runtime
+from google_work_agent.application.agents.request_understanding import (
+    identify_source_dependencies as source_ops,
+)
 from google_work_agent.application.prompt_runtime.prompt_registry import (
     DEVELOPMENT_SMOKE,
     default_prompt_manifest_path,
+    load_prompt_reference,
 )
 from google_work_agent.application.tool_registry.load_signed_tool_registry import (
     load_development_tool_registry,
@@ -57,6 +68,7 @@ from google_work_agent.application.use_cases.run.account_provider_dispatch impor
     provider_dispatch_execution_scope,
 )
 from google_work_agent.application.use_cases.setting.update_settings import UpdateSettingsCommand
+from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
 from google_work_agent.ports.system.settings_port import SettingsPatchV1
 
 MODEL_ID: Final[Literal["qwen3.5:9b"]] = "qwen3.5:9b"
@@ -91,22 +103,26 @@ class _AtomicRecordingInferencePort(_RecordingInferencePort):
         self.atomic: list[dict[str, object]] = []
 
     def infer(self, *args: Any, **kwargs: Any) -> Any:
-        result = super().infer(*args, **kwargs)
         prompt_ref = args[1]
         inference_input = args[2]
-        self.atomic.append(
-            {
-                "sequence": len(self.atomic) + 1,
-                "prompt_id": prompt_ref.prompt_id,
-                "attempt": (
-                    "REVISION"
-                    if isinstance(inference_input, Mapping) and "failure_record" in inference_input
-                    else "FIRST"
-                ),
-                "input": deepcopy(inference_input),
-                "structured_output": deepcopy(result.structured_output),
-            }
-        )
+        event = {
+            "sequence": len(self.atomic) + 1,
+            "prompt_id": prompt_ref.prompt_id,
+            "attempt": (
+                "REVISION"
+                if isinstance(inference_input, Mapping) and "failure_record" in inference_input
+                else "FIRST"
+            ),
+            "input": deepcopy(inference_input),
+            "status": "IN_FLIGHT",
+        }
+        self.atomic.append(event)
+        try:
+            result = super().infer(*args, **kwargs)
+        except Exception as error:
+            event.update(status="ERROR", error_type=type(error).__name__, error=str(error)[:500])
+            raise
+        event.update(status="RETURNED", structured_output=deepcopy(result.structured_output))
         return result
 
 
@@ -218,6 +234,9 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=20260923)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--record-atomic", action="store_true")
+    parser.add_argument("--source-replay-from", type=Path)
+    parser.add_argument("--reference-inputs-from", type=Path)
+    parser.add_argument("--source-format-only-envelope", action="store_true")
     parser.add_argument(
         "--semantic-candidate",
         choices=(
@@ -226,6 +245,10 @@ def main() -> None:
             "goal-output-authority-v3",
             "goal-output-modality-authority-v4",
             "result-mode-first-v5",
+            "source-demand-binding-v6",
+            "source-needs-then-binding-v7",
+            "joint-roles-v8",
+            "keyed-source-v9",
         ),
         default="none",
     )
@@ -234,7 +257,35 @@ def main() -> None:
         raise ValueError("result path already exists; preserve every prior trial")
     case_ids = _selected_case_ids(all_canonical=args.all_canonical, requested=args.case)
     cases = load_cases()
-    requests = {case_id: _request(case_id, cases[case_id].raw) for case_id in case_ids}
+    reference_records = {}
+    if args.reference_inputs_from:
+        reference_records = {
+            item["case_id"]: item
+            for item in json.loads(args.reference_inputs_from.read_text(encoding="utf-8"))["cases"]
+        }
+    requests = {}
+    for case_id in case_ids:
+        raw = deepcopy(cases[case_id].raw)
+        if reference_records:
+            prior = reference_records[case_id]
+            goal_input = next(
+                item["input"]
+                for item in prior["atomic"]
+                if item["prompt_id"] == "request_understanding.identify_goal"
+            )
+            reference = goal_input.get("base_projection", goal_input)["run_reference_time"]
+            raw.setdefault("evaluation_context", {})["run_reference_time"] = reference[
+                "reference_time"
+            ]
+        requests[case_id] = _request(case_id, raw)
+    replay_records = (
+        {}
+        if not args.source_replay_from
+        else {
+            item["case_id"]: item
+            for item in json.loads(args.source_replay_from.read_text(encoding="utf-8"))["cases"]
+        }
+    )
     model = next(
         (item for item in OllamaHTTPClient().list_installed_models() if item.model_id == MODEL_ID),
         None,
@@ -242,6 +293,10 @@ def main() -> None:
     if model is None or model.digest is None:
         raise ValueError("selected local model/digest is unavailable")
     with ExitStack() as close_stack:
+        transport_calls: list[dict[str, Any]] = []
+        close_stack.enter_context(observe_local_calls(transport_calls))
+        if args.source_format_only_envelope:
+            close_stack.enter_context(source_format_only_envelope(transport_calls))
         manifest = default_prompt_manifest_path()
         config = ProductionRuntimeConfig.development(
             runtime_root=args.result_path.parent / "_runtime",
@@ -279,6 +334,10 @@ def main() -> None:
             "goal-output-authority-v3": GoalOutputAuthorityCandidate,
             "goal-output-modality-authority-v4": (GoalOutputModalityAuthorityCandidate),
             "result-mode-first-v5": GoalResultModeFirstCandidate,
+            "source-demand-binding-v6": SourceDemandBindingCandidate,
+            "source-needs-then-binding-v7": SourceNeedsThenBindingCandidate,
+            "joint-roles-v8": JointRoleAuthorityCandidate,
+            "keyed-source-v9": KeyedSourceCandidate,
         }.get(args.semantic_candidate)
         semantic_candidate = (
             candidate_class(
@@ -359,7 +418,16 @@ def main() -> None:
                 "trials_per_case": 1,
                 "provider_reads": 0,
                 "provider_writes": 0,
-                "scope": "COMPILED_RU_TO_TOOL_ROUTE_ONLY",
+                "scope": "SOURCE_INPUT_REPLAY"
+                if replay_records
+                else "COMPILED_RU_TO_TOOL_ROUTE_ONLY",
+                "source_replay_from": str(args.source_replay_from) if replay_records else None,
+                "reference_inputs_from": str(args.reference_inputs_from)
+                if reference_records
+                else None,
+                "think": False,
+                "num_ctx": 16384,
+                "source_format_only_envelope": args.source_format_only_envelope,
                 "semantic_candidate": (
                     None if semantic_candidate is None else semantic_candidate.binding
                 ),
@@ -377,6 +445,7 @@ def main() -> None:
             request = requests[case_id]
             recorder.calls.clear()
             recorder.atomic.clear()
+            transport_calls.clear()
             if semantic_candidate is not None:
                 semantic_candidate.reset_case()
             started = time.perf_counter()
@@ -406,9 +475,55 @@ def main() -> None:
                 "reference_time": cases[case_id]
                 .raw.get("evaluation_context", {})
                 .get("run_reference_time"),
+                "actual_reference_time_ms": reference_ms,
                 "fault_profile": cases[case_id].gold.get("fault_profile"),
             }
             try:
+                if replay_records:
+                    prior_source = next(
+                        item
+                        for item in replay_records[case_id]["atomic"]
+                        if item["prompt_id"] == "request_understanding.identify_source_dependencies"
+                    )
+                    projection = prior_source["input"]
+                    base = projection.get("base_projection", projection)
+                    schema = source_ops.build_source_dependency_output_schema(
+                        source_ops.build_source_dependency_candidates(catalog),
+                        work_unit_ids=[
+                            item["unit_id"] for item in base["requested_work"]["work_units"]
+                        ],
+                    )
+                    response = recorder.infer(
+                        "LOCAL_GPU",
+                        load_prompt_reference(
+                            "request_understanding.identify_source_dependencies",
+                            manifest,
+                            execution_scope=DEVELOPMENT_SMOKE,
+                        ),
+                        projection,
+                        schema,
+                    )
+                    schema_errors = list(
+                        validate_output_schema(response.structured_output, schema.json_schema)
+                    )
+                    record.update(
+                        status="SOURCE_SCHEMA_INVALID" if schema_errors else "SOURCE_RETURNED",
+                        source_output=response.structured_output,
+                        source_schema_errors=schema_errors,
+                    )
+                    record["llm"] = metrics(transport_calls)
+                    record["transport_calls"] = deepcopy(transport_calls)
+                    record["atomic"] = deepcopy(recorder.atomic)
+                    record["wall_latency_ms"] = int((time.perf_counter() - started) * 1000)
+                    records.append(record)
+                    _write(args.result_path, result)
+                    print(
+                        json.dumps(
+                            {"case_id": case_id, "status": record["status"], "llm": record["llm"]}
+                        ),
+                        flush=True,
+                    )
+                    continue
                 with provider_dispatch_execution_scope(
                     run_id=request.run_id,
                     now_ms=current_time_ms,
@@ -433,13 +548,14 @@ def main() -> None:
                     if route is not None
                     else "WAITING_CONFIRMATION"
                     if state.get("user_interrupt") is not None
+                    or state.get("workflow_phase") == "WAITING_CONFIRMATION"
                     else "NO_ROUTE"
                 )
             except Exception as error:
                 record["status"] = "ERROR"
                 record["error_type"] = type(error).__name__
                 record["error"] = str(error)[:500]
-            record["llm"] = {
+            record["logical_llm"] = {
                 "calls": len(recorder.calls)
                 - (0 if semantic_candidate is None else semantic_candidate.cached_response_count)
                 + (
@@ -455,6 +571,8 @@ def main() -> None:
                 ),
                 "prompts": [call["prompt_id"] for call in recorder.calls],
             }
+            record["llm"] = metrics(transport_calls)
+            record["transport_calls"] = deepcopy(transport_calls)
             if semantic_candidate is not None:
                 record["semantic_candidate_events"] = deepcopy(semantic_candidate.events)
             if args.record_atomic:

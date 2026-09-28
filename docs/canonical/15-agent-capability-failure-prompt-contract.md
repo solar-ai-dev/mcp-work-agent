@@ -841,6 +841,12 @@ Prompt 실행 Scope는 다음 closed vocabulary만 사용한다.
 
 Offline candidate evaluation 전용이다. Product user runtime과 분리하고 Gold·Grader·expected output·evaluation identity를 Product Prompt input에 넣지 않는다.
 
+Source 판단의 개발 구조 비교는 기존 요청 원문·선택 identity·WorkUnit binding을 보존한
+채 출력 표현, Source/Output 역할 조립, provider 입력 envelope를 분리 비교할 수 있다.
+확정 의미의 결정적 handoff와 실제 consumer 계약 검증을 포함하며, 출력 형식 통과를
+의미 통과로 취급하지 않는다. 비활성 후보의 직접 모델 호출은 Production budget,
+Prompt activation 또는 release evidence를 대체하지 않는다.
+
 #### Activation evidence
 
 `RUNTIME_ACTIVE`/`RETIRED` entry는 다음 metadata를 포함한다.

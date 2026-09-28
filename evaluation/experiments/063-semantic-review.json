@@ -1,0 +1,32 @@
+{
+  "scope": "RU_TO_TOOL_ROUTE_PREFIX_NOT_BUSINESS_COMPLETION",
+  "authority": "Canonical v8 request + required/forbidden semantics; 061 corrected ambiguity policy",
+  "review_kind": "manual_semantic_review_not_count_or_resource_pair_grader",
+  "rules": [
+    "WorkUnit count and decomposition shape are not Gold.",
+    "Relevant READ before confirmation is permitted; final confirmation is unverified here.",
+    "Required Source fields and actual Route coverage are reviewed separately.",
+    "Extra READ is not automatically failure unless scope is forbidden or it replaces required evidence.",
+    "PARTIAL denotes preserved safe route with incomplete typed semantics; never a business PASS."
+  ],
+  "connected_core9": [
+    {"case_id":"CASE-CORE-001","production":"PASS","v4":"PASS","v8":"PASS","reason":"선택 Thread identity와 답변 목적 유지. v8의 Message 후보는 실제 selected Thread route로 결속. 조회·답변은 아직 실행 안 함."},
+    {"case_id":"CASE-CORE-009","production":"FAIL","v4":"FAIL","v8":"FAIL","reason":"현재 진행 상황 READ를 새 Task와 SEND 또는 Draft CREATE로 변경. v8 최초 Goal/Output 공동 출력부터 발생."},
+    {"case_id":"CASE-CORE-013","production":"FAIL","v4":"FAIL","v8":"FAIL","reason":"Production은 SEND 추가, v4는 Source 없음. v8 route는 Task/Event까지 보강되지만 completion에 '발송 완료'를 포함해 명시적 Draft-only 의미 훼손."},
+    {"case_id":"CASE-CORE-019","production":"FAIL","v4":"PASS","v8":"PASS","reason":"Production completion은 발송을 요구. v4/v8은 시간 선호와 두 작성안을 유지하고 관련 READ로 진입; 아직 confirmation이 없다는 이유로 FAIL 처리하지 않음. 후속 duration 확인은 미검증."},
+    {"case_id":"CASE-CORE-023","production":"FAIL","v4":"PASS","v8":"FAIL","reason":"Production은 exact span 계약 오류. v4는 메일/Task, 8월 8일 10시/30분과 Event CREATE 보존. v8은 Task Source와 Route 누락."},
+    {"case_id":"CASE-CORE-025","production":"PASS","v4":"PARTIAL","v8":"FAIL","reason":"v4는 TaskList/Calendar에 정보가 좁아지지만 실제 Route에 Task/Event/FreeBusy 보강, Calendar route 누락 판정은 잘못. typed fact owner 손실은 남음. v8은 모든 Source를 선택하고 불필요 확인으로 멈춤."},
+    {"case_id":"CASE-CORE-027","production":"PARTIAL","v4":"PARTIAL","v8":"PARTIAL","reason":"세 계열의 조회와 ANSWER route는 존재. v4의 busy_time_ranges는 Calendar에 잘못 결속됐지만 Event route가 보강됨. 모두 CREATE prohibition이 typed 결과에 없음; v8 MESSAGE_TIME 선택도 후속 검증 필요."},
+    {"case_id":"CASE-CORE-045","production":"PASS","v4":"FAIL","v8":"PASS","reason":"v4는 Source를 전부 비워 계약 차단. v8은 메일/Task/Calendar Route와 답변 의미 복구. 요청되지 않은 WRITE 없음. 실제 완료 가능성 판단은 아직 실행하지 않음."},
+    {"case_id":"CASE-CORE-049","production":"FAIL","v4":"FAIL","v8":"FAIL","reason":"Production/v4는 메일 Source/Route 없음. v8은 기존 메일을 Draft Source로 바꾸고 Task 생성과 완료를 completion에서 혼합. 세 output pair 일치만으로 PASS 아님."}
+  ],
+  "source_only_notes": {
+    "v6": "001 유지, 025 mail+Task는 선택하나 일부 Task 정보를 Mail에 중복 결속. 013 TaskList/Message 오결속, 019 ref 중복, 023/027/045 Task 누락, 049 Draft로 대체. 반복 중단.",
+    "v7": "001/049 source null, 027 서로 다른 scope merge 불가. 반환된 나머지 5건은 기존 Source schema를 통과하지만 의미 통과는 아님. 023/025 정보 필요 해석부터 Task 손실. 045 메일 마감→발송 예정일 의미 변경.",
+    "v9": "019 관련 Calendar 조회는 가능. 001은 정보가 subject/participants로 축소, 013 Draft 선택, 023/025/027 Task 또는 Mail 누락, 045 본문 없이 subject/timestamp만 요구, 049 Mail/Task 대신 Calendar/GitHub.",
+    "v10": "023/027/045 필요 Source 계열 회수 가능하나 013의 명시적 Source 한정에 Draft/GitHub 과잉, 025 Mail 누락, 049 기존 Mail→Draft 변경. 001은 selected Thread→criteria Message로 달라져 final identity projection 확인 없이 회귀 해결로 세지 않음."
+  },
+  "decision":"REJECT_V6_V7_V8_V9_V10_KEEP_PRODUCTION_V4_REMAINS_UNPROMOTED",
+  "whole92_rescore_complete":false,
+  "new_whole92_runs":0
+}

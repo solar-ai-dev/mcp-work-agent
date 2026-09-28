@@ -4,6 +4,15 @@ Issues: #287 / #288
 
 ## 결론
 
+> 063의 raw 재감사 주의: 아래 `53/1/38`은 당시 기록이며 수정 평가의 확정 총점으로
+> 재사용하지 않는다. Core-019는 관련 READ 후 확인이 허용되고, Core-023은 실제
+> Source/시간/Output이 보존됐다. Core-025/027의 실제 Route에는 Task/Event 보강도
+> 있으므로 Source 목록만으로 연결 누락을 판정한 설명을 수정한다. 전체 92 재채점은
+> 아직 완료하지 않았다. Source 입력의 Goal은 이미 원문으로 치환되므로 '생성 Goal이
+> Source를 직접 축소했다'는 인과 설명도 확정 근거가 아니다. 기존 비용은 실패한
+> candidate 호출이 누락될 수 있는 recorder 값이며 정확한 provider dispatch 총량으로
+> 사용하지 않는다. 원래 raw·수치는 삭제하지 않고 063의 범위별 재검토와 구분한다.
+
 061의 수정 판정 `32 PASS / 3 PARTIAL / 57 FAIL`을 기준선으로 삼아, 실제
 `qwen3.5:9b`와 compiled Request Understanding → Tool Route에서 evaluation-only
 후보를 비교했다. 가장 나은 후보는 WorkUnit의 원문 결속을 token range로 선택하고,
