@@ -1,0 +1,115 @@
+{
+  "review_kind": "MANUAL_CANONICAL_SEMANTIC_COMPARISON",
+  "scope": "GOAL_OUTPUT_OWNER_REPLAY_ONLY",
+  "authority": "Canonical v8 user request and required/forbidden semantics; 06 Request Understanding ownership",
+  "candidate": "ru-goal-output-ordered-authority-v11",
+  "baseline": "ru-goal-output-modality-authority-v4",
+  "candidate_raw": "evaluation/results/064-ordered-goal-v11-t1/raw.json",
+  "candidate_raw_sha256": "6d668dece516f0193e256265bda90fe1d2bc3a2c21af05796d2b3bd2a945cdfd",
+  "baseline_raw": "evaluation/results/ru-goal-output-modality-v4-canonical92-trial1-20260924/raw.json",
+  "baseline_raw_sha256": "c5dac5ee0c1e6ebea6b4b71c7a3ca5a670d8004b40603e49f800708c5770ef5f",
+  "comparison_checks": {
+    "cases": 9,
+    "reused_actual_goal_input_fields_equal": 9,
+    "actual_model_reference_times_equal": 9,
+    "actual_completion_modality_first": 9,
+    "candidate_provider_calls": 9,
+    "candidate_repair_calls": 0,
+    "source_route_or_downstream_executed": false,
+    "new_model_calls_for_this_review": 0
+  },
+  "interpretation_rules": [
+    "Goal text alone is not the full semantic projection: inspect constraints, completion conditions and unchanged request provenance before asserting loss.",
+    "A future completion condition saying created or sent is not a claim that execution already occurred or that Approval was bypassed.",
+    "Missing confirmation at this replay-only boundary is not failure; the ambiguity owner and related READ were not run.",
+    "WorkUnit count and relation shape are frozen upstream inputs in this comparison, not new candidate decisions.",
+    "Source owner was not run. Goal/projection omissions are risks or owner-local losses, not observed retrieval failure.",
+    "Generated titles may be reasonable composition, but turning an input-evidence requirement into a mandatory title condition changes its role."
+  ],
+  "cases": [
+    {
+      "case_id": "CASE-CORE-009",
+      "comparison": "UNREQUESTED_WRITE_REMOVED",
+      "baseline_first_divergence": "Goal/Output first response changed using mail and Task as evidence into producing mail and Task outputs; GMAIL_DRAFT CREATE and TASK CREATE were added.",
+      "candidate_first_change": "requested_result_mode=ANSWER_ONLY and requested_outputs=[]; goal again describes providing status based on mail and Task.",
+      "preserved": ["status answer", "mail and Task evidence role in goal", "no WRITE output"],
+      "remaining_risks": ["coverage_requirement changed LIMITED_ITEMS to ALL_ITEMS without explicit exhaustive wording; this is not by itself a business failure, but retrieval work and scope must be checked."],
+      "downstream_status": "UNVERIFIED"
+    },
+    {
+      "case_id": "CASE-CORE-012",
+      "comparison": "OUTPUT_PRESERVED_TEMPORAL_REPRESENTATION_SHIFT",
+      "candidate_first_change": "period became empty, but today's schedule remains in goal, completion_conditions and business_concepts; this is not complete loss of the time condition.",
+      "preserved": ["GMAIL_DRAFT CREATE only", "exact requested recipient", "legal Task and today's schedule meaning"],
+      "remaining_risks": ["The Echo source anchor is absent from both v4 and v11 generated Goal/constraint projections, although original request provenance remains unchanged.", "Consumers needing a typed period must be checked before declaring equivalent handoff."],
+      "downstream_status": "UNVERIFIED"
+    },
+    {
+      "case_id": "CASE-CORE-013",
+      "comparison": "OUTPUT_AND_CONTENT_SCOPE_PRESERVED_AT_OWNER_BOUNDARY",
+      "candidate_first_change": "Completion adds a QR preparation subject/body description; no SEND output is added.",
+      "preserved": ["GMAIL_DRAFT CREATE", "requested recipient", "QR Task and printer-slot content anchors"],
+      "remaining_risks": ["The explicit only restriction remains in original request provenance; neither replay establishes Source selection or exclusion behavior.", "A source-retrieval PASS must not be inferred from this result."],
+      "downstream_status": "UNVERIFIED"
+    },
+    {
+      "case_id": "CASE-CORE-019",
+      "comparison": "REQUESTED_OUTPUTS_AND_UNRESOLVED_TIME_PRESERVED",
+      "candidate_first_change": "Goal says prepare the schedule then its notice Draft; CALENDAR_EVENT CREATE and GMAIL_DRAFT CREATE remain requested intents.",
+      "preserved": ["next Tuesday afternoon", "workshop purpose", "both requested outputs", "no invented exact start or duration"],
+      "remaining_risks": ["Whether subsequent owners confirm missing duration and use only a planned specification before Approval is unverified."],
+      "not_a_failure": "Future creation completion conditions are not actual-effect claims. Do not mark this replay failed merely because confirmation has not run.",
+      "downstream_status": "UNVERIFIED"
+    },
+    {
+      "case_id": "CASE-CORE-023",
+      "comparison": "OUTPUT_TIME_PRESERVED_SOURCE_ROLE_DEGRADED",
+      "candidate_first_change": "Goal omits the source clause, but additional description still names the Kestrel mail and alternative-schedule Task. The description changes seeing those sources into having reported them.",
+      "preserved": ["CALENDAR_EVENT CREATE", "2026-08-08 10:00", "30 minute duration", "source names in additional description"],
+      "remaining_risks": ["period becomes an ISO datetime/duration instead of the request period expression, contrary to the owner contract to preserve the original period; the actual datetime itself is not incorrect.", "The status-check title comes from the request and is not a fabricated business fact.", "Source absence from Goal alone does not establish downstream source loss."],
+      "downstream_status": "UNVERIFIED"
+    },
+    {
+      "case_id": "CASE-CORE-025",
+      "comparison": "NEW_SOURCE_ROLE_TO_TITLE_REQUIREMENT_DISTORTION",
+      "baseline_first_divergence": "v4 goal retained that the review Event is based on mail and Task information; its later Source selection was independently incomplete.",
+      "candidate_first_change": "Goal changes the evidence basis to an Event about the mail/Task phrase; completion makes including that phrase in the title mandatory. The evidence relationship is no longer stated in the generated owner projection.",
+      "preserved": ["CALENDAR_EVENT CREATE", "today 16:00", "60 minutes", "source phrase as business concept"],
+      "remaining_risks": ["This is role distortion, not mere disappearance of the source names.", "No missing-repository confirmation or Source over-selection was observed here because those owners were not run.", "The relative time is preserved, so a wrong absolute date must not be asserted."],
+      "downstream_status": "UNVERIFIED"
+    },
+    {
+      "case_id": "CASE-CORE-027",
+      "comparison": "NEW_MAIL_TIMESTAMP_SUBSTITUTION_ON_EXISTING_INTERVAL_AMBIGUITY",
+      "baseline_first_divergence": "v4 already described the interval between two time criteria, rather than unambiguously available time before the relevant deadlines.",
+      "candidate_first_change": "completion_conditions[0] explicitly requires the mail send timestamp. The request concerns the deadline contained in the mail, not when the mail was sent.",
+      "preserved": ["ANSWER_ONLY", "no requested output", "today", "one hour"],
+      "remaining_risks": ["The explicit no-calendar-creation phrase disappears from generated Goal/constraints, but the separate prohibition owner was not run; do not claim its final typed prohibition was lost from this replay.", "Changing the time axis can mislead retrieval/analysis even when the output mode remains safe."],
+      "downstream_status": "UNVERIFIED"
+    },
+    {
+      "case_id": "CASE-CORE-049",
+      "comparison": "THREE_OUTPUTS_PRESERVED_TEMPORAL_DUPLICATE_REMOVED_EXISTING_SOURCE_GAP_REMAINS",
+      "candidate_first_change": "v11 keeps one scheduled_date at 13:00 and removes v4's extra scheduled_date at 14:00. Due and Event start remain separate constraints; completion explicitly describes the Task deadline.",
+      "preserved": ["TASK CREATE", "CALENDAR_EVENT CREATE", "GMAIL_DRAFT CREATE", "Task due 13:00", "Event starts 13:00 for one hour", "requested recipient"],
+      "remaining_risks": ["Both v4 and v11 omit Atlas and the mail/Task/Calendar evidence clause from generated Goal/constraints. The unchanged original request is still available, so actual Source loss is not proven by this owner replay.", "All outputs remain attached to the frozen single WorkUnit; this experiment did not decide the decomposition."],
+      "downstream_status": "UNVERIFIED"
+    },
+    {
+      "case_id": "CASE-CORE-059",
+      "comparison": "SEND_REPLY_INTENT_PRESERVED",
+      "candidate_first_change": "v11 removes v4's generated description sentence but retains confirmation content and immediate reply-send intent in goal/completion.",
+      "preserved": ["GMAIL_MESSAGE SEND", "reply intent", "Quartz delivery confirmation meaning"],
+      "remaining_risks": ["Exact existing Thread, reply target, approval Preview and no-send-before-Approval remain unverified downstream."],
+      "not_a_failure": "A requested SEND effect or a future sent completion condition does not mean a Provider send occurred.",
+      "downstream_status": "UNVERIFIED"
+    }
+  ],
+  "decision": {
+    "promote_to_production": false,
+    "reason": "Output ordering removes the clear CORE009 unrequested WRITE but is not a general semantic-preservation fix: CORE025 evidence-role distortion and CORE027 mail-time substitution remain, with period/source handoff risks. Preserve the result as an isolated mechanism; do not relabel nine schema-valid replay responses as nine business successes.",
+    "whole92_score": null,
+    "connected_score": null,
+    "source_retrieval_planning_success": "NOT_MEASURED"
+  }
+}

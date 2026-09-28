@@ -7,6 +7,7 @@ Provider is constructed for the graph, and no Retrieval/Planning node runs.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import subprocess
 import time
@@ -33,13 +34,22 @@ from evaluation.request_semantic_authority_candidate import (
 from langgraph.graph import END, START, StateGraph
 from scripts.evaluate_ru_output_input_projection import _request
 from scripts.evaluate_ru_source_status_prompt import _RecordingInferencePort
-from scripts.ru_observation import metrics, observe_local_calls, source_format_only_envelope
+from scripts.ru_observation import (
+    metrics,
+    object_hash,
+    observe_local_calls,
+    source_chat_envelope,
+    source_format_only_envelope,
+    thinking_envelope,
+)
+from scripts.ru_ordered_authority_candidate import OrderedGoalOutputAuthorityCandidate
 from scripts.ru_source_demand_candidate import (
     JointRoleAuthorityCandidate,
     KeyedSourceCandidate,
     SourceDemandBindingCandidate,
     SourceNeedsThenBindingCandidate,
 )
+from scripts.ru_source_scope_candidate import source_scope_candidate
 
 from google_work_agent.adapters.langgraph.main.routing.route_after_supervisor import (
     RESUME_CONTRACT_VERSION,
@@ -55,6 +65,9 @@ from google_work_agent.adapters.llm.runtime.llm_credential_router import Session
 from google_work_agent.api.composition import ProductionRuntimeConfig, build_production_runtime
 from google_work_agent.application.agents.request_understanding import (
     identify_source_dependencies as source_ops,
+)
+from google_work_agent.application.agents.request_understanding.contracts import (
+    request_goal_candidate_schema as goal_schema_ops,
 )
 from google_work_agent.application.prompt_runtime.prompt_registry import (
     DEVELOPMENT_SMOKE,
@@ -235,8 +248,12 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--record-atomic", action="store_true")
     parser.add_argument("--source-replay-from", type=Path)
+    parser.add_argument("--goal-replay-from", type=Path)
     parser.add_argument("--reference-inputs-from", type=Path)
     parser.add_argument("--source-format-only-envelope", action="store_true")
+    parser.add_argument("--source-thinking", action="store_true")
+    parser.add_argument("--source-chat", action="store_true")
+    parser.add_argument("--source-scope-expression", action="store_true")
     parser.add_argument(
         "--semantic-candidate",
         choices=(
@@ -249,10 +266,15 @@ def main() -> None:
             "source-needs-then-binding-v7",
             "joint-roles-v8",
             "keyed-source-v9",
+            "ordered-goal-output-v11",
         ),
         default="none",
     )
     args = parser.parse_args()
+    if args.source_replay_from and args.goal_replay_from:
+        raise ValueError("choose exactly one owner replay boundary")
+    if args.source_thinking and args.source_format_only_envelope:
+        raise ValueError("compare one transport axis at a time")
     if args.result_path.exists():
         raise ValueError("result path already exists; preserve every prior trial")
     case_ids = _selected_case_ids(all_canonical=args.all_canonical, requested=args.case)
@@ -278,12 +300,13 @@ def main() -> None:
                 "reference_time"
             ]
         requests[case_id] = _request(case_id, raw)
+    replay_path = args.source_replay_from or args.goal_replay_from
     replay_records = (
         {}
-        if not args.source_replay_from
+        if not replay_path
         else {
             item["case_id"]: item
-            for item in json.loads(args.source_replay_from.read_text(encoding="utf-8"))["cases"]
+            for item in json.loads(replay_path.read_text(encoding="utf-8"))["cases"]
         }
     )
     model = next(
@@ -293,10 +316,21 @@ def main() -> None:
     if model is None or model.digest is None:
         raise ValueError("selected local model/digest is unavailable")
     with ExitStack() as close_stack:
+        if args.source_scope_expression:
+            close_stack.enter_context(source_scope_candidate())
         transport_calls: list[dict[str, Any]] = []
         close_stack.enter_context(observe_local_calls(transport_calls))
         if args.source_format_only_envelope:
             close_stack.enter_context(source_format_only_envelope(transport_calls))
+        if args.source_chat:
+            close_stack.enter_context(source_chat_envelope(transport_calls, args.source_thinking))
+        elif args.source_thinking:
+            close_stack.enter_context(
+                thinking_envelope(
+                    transport_calls,
+                    prompt_ids={"request_understanding.identify_source_dependencies"},
+                )
+            )
         manifest = default_prompt_manifest_path()
         config = ProductionRuntimeConfig.development(
             runtime_root=args.result_path.parent / "_runtime",
@@ -338,6 +372,7 @@ def main() -> None:
             "source-needs-then-binding-v7": SourceNeedsThenBindingCandidate,
             "joint-roles-v8": JointRoleAuthorityCandidate,
             "keyed-source-v9": KeyedSourceCandidate,
+            "ordered-goal-output-v11": OrderedGoalOutputAuthorityCandidate,
         }.get(args.semantic_candidate)
         semantic_candidate = (
             candidate_class(
@@ -407,6 +442,10 @@ def main() -> None:
                 "product_sha": subprocess.check_output(
                     ["git", "rev-parse", "HEAD"], text=True
                 ).strip(),
+                "product_diff_sha256": hashlib.sha256(
+                    subprocess.check_output(["git", "diff", "HEAD", "--", "src"])
+                ).hexdigest(),
+                "runner_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                 "dataset_sha256": normalized_sha256(DEFAULT_DATASET_PATH),
                 "fixture_sha256": normalized_sha256(DEFAULT_PROVIDER_FIXTURE_PATH),
                 "prompt_manifest_sha256": normalized_sha256(manifest),
@@ -418,16 +457,23 @@ def main() -> None:
                 "trials_per_case": 1,
                 "provider_reads": 0,
                 "provider_writes": 0,
-                "scope": "SOURCE_INPUT_REPLAY"
+                "scope": ("GOAL_INPUT_REPLAY" if args.goal_replay_from else "SOURCE_INPUT_REPLAY")
                 if replay_records
                 else "COMPILED_RU_TO_TOOL_ROUTE_ONLY",
                 "source_replay_from": str(args.source_replay_from) if replay_records else None,
+                "goal_replay_from": str(args.goal_replay_from) if args.goal_replay_from else None,
+                "owner_replay_sha256": (
+                    hashlib.sha256(replay_path.read_bytes()).hexdigest() if replay_path else None
+                ),
                 "reference_inputs_from": str(args.reference_inputs_from)
                 if reference_records
                 else None,
                 "think": False,
                 "num_ctx": 16384,
                 "source_format_only_envelope": args.source_format_only_envelope,
+                "source_thinking": args.source_thinking,
+                "source_endpoint": "chat" if args.source_chat else "generate",
+                "source_scope_expression": args.source_scope_expression,
                 "semantic_candidate": (
                     None if semantic_candidate is None else semantic_candidate.binding
                 ),
@@ -480,23 +526,33 @@ def main() -> None:
             }
             try:
                 if replay_records:
+                    replay_prompt_id = (
+                        "request_understanding.identify_goal"
+                        if args.goal_replay_from
+                        else "request_understanding.identify_source_dependencies"
+                    )
                     prior_source = next(
                         item
                         for item in replay_records[case_id]["atomic"]
-                        if item["prompt_id"] == "request_understanding.identify_source_dependencies"
+                        if item["prompt_id"] == replay_prompt_id
                     )
                     projection = prior_source["input"]
                     base = projection.get("base_projection", projection)
-                    schema = source_ops.build_source_dependency_output_schema(
-                        source_ops.build_source_dependency_candidates(catalog),
-                        work_unit_ids=[
-                            item["unit_id"] for item in base["requested_work"]["work_units"]
-                        ],
+                    record["owner_input_sha256"] = object_hash(projection)
+                    record["actual_owner_reference_time"] = base.get("run_reference_time")
+                    work_ids = [item["unit_id"] for item in base["requested_work"]["work_units"]]
+                    schema = (
+                        goal_schema_ops.identify_goal_output_schema(work_ids)
+                        if args.goal_replay_from
+                        else source_ops.build_source_dependency_output_schema(
+                            source_ops.build_source_dependency_candidates(catalog),
+                            work_unit_ids=work_ids,
+                        )
                     )
                     response = recorder.infer(
                         "LOCAL_GPU",
                         load_prompt_reference(
-                            "request_understanding.identify_source_dependencies",
+                            replay_prompt_id,
                             manifest,
                             execution_scope=DEVELOPMENT_SMOKE,
                         ),
@@ -507,13 +563,19 @@ def main() -> None:
                         validate_output_schema(response.structured_output, schema.json_schema)
                     )
                     record.update(
-                        status="SOURCE_SCHEMA_INVALID" if schema_errors else "SOURCE_RETURNED",
+                        status=("GOAL_" if args.goal_replay_from else "SOURCE_")
+                        + ("SCHEMA_INVALID" if schema_errors else "RETURNED"),
                         source_output=response.structured_output,
                         source_schema_errors=schema_errors,
                     )
+                    if args.goal_replay_from:
+                        record["goal_output"] = record.pop("source_output")
+                        record["goal_schema_errors"] = record.pop("source_schema_errors")
                     record["llm"] = metrics(transport_calls)
                     record["transport_calls"] = deepcopy(transport_calls)
                     record["atomic"] = deepcopy(recorder.atomic)
+                    if semantic_candidate is not None:
+                        record["semantic_candidate_events"] = deepcopy(semantic_candidate.events)
                     record["wall_latency_ms"] = int((time.perf_counter() - started) * 1000)
                     records.append(record)
                     _write(args.result_path, result)

@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from contextlib import contextmanager
 from copy import deepcopy
 from typing import Any
@@ -91,6 +91,100 @@ def source_format_only_envelope(records: list[dict[str, Any]]) -> Iterator[None]
                     records[-1]["wire_prompt_sha256"] = object_hash(prompt)
                     records[-1]["envelope"] = "SOURCE_SCHEMA_IN_FORMAT_ONLY"
         return original(**kwargs)
+
+    with patch.object(ollama_transport, "_post_json", dispatch):
+        yield
+
+
+@contextmanager
+def thinking_envelope(records: list[dict[str, Any]], prompt_ids: Collection[str]) -> Iterator[None]:
+    """Enable provider thinking only for selected evaluation structured calls.
+
+    Thinking text stays in the transport response and is never added to records.
+    The normal observer retains final output and provider usage/latency counters.
+    """
+    selected_ids = frozenset(prompt_ids)
+    original = ollama_transport._post_json
+
+    def dispatch(**kwargs: Any) -> Any:
+        payload = kwargs["payload"]
+        if kwargs["path"] != "/api/generate":
+            return original(**kwargs)
+        prompt_text = payload.get("prompt")
+        if not isinstance(prompt_text, str):
+            return original(**kwargs)
+        try:
+            prompt = json.loads(prompt_text)
+        except json.JSONDecodeError:
+            return original(**kwargs)
+        prompt_ref = prompt.get("prompt_ref") if isinstance(prompt, dict) else None
+        prompt_id = prompt_ref.get("prompt_id") if isinstance(prompt_ref, dict) else None
+        if not isinstance(prompt_id, str) or prompt_id not in selected_ids:
+            return original(**kwargs)
+        event = records[-1] if records and records[-1].get("prompt_id") == prompt_id else None
+        kwargs["payload"] = {**payload, "think": True}
+        if event is not None:
+            event["think_requested"] = True
+        response = original(**kwargs)
+        thinking = response.get("thinking")
+        if event is not None:
+            event["thinking_present"] = isinstance(thinking, str) and bool(thinking)
+            event["thinking_char_count"] = len(thinking) if isinstance(thinking, str) else 0
+        return response
+
+    with patch.object(ollama_transport, "_post_json", dispatch):
+        yield
+
+
+@contextmanager
+def source_chat_envelope(records: list[dict[str, Any]], thinking: bool) -> Iterator[None]:
+    """Probe Source structured-output compatibility using the chat transport only."""
+    original = ollama_transport._post_json
+    source_prompt_id = "request_understanding.identify_source_dependencies"
+
+    def dispatch(**kwargs: Any) -> Any:
+        payload = kwargs["payload"]
+        if kwargs["path"] != "/api/generate":
+            return original(**kwargs)
+        prompt_text = payload.get("prompt")
+        if not isinstance(prompt_text, str):
+            return original(**kwargs)
+        try:
+            prompt = json.loads(prompt_text)
+        except json.JSONDecodeError:
+            return original(**kwargs)
+        prompt_ref = prompt.get("prompt_ref") if isinstance(prompt, dict) else None
+        if not isinstance(prompt_ref, dict) or prompt_ref.get("prompt_id") != source_prompt_id:
+            return original(**kwargs)
+        event = (
+            records[-1] if records and records[-1].get("prompt_id") == source_prompt_id else None
+        )
+        kwargs["path"] = "/api/chat"
+        kwargs["payload"] = {
+            **{key: value for key, value in payload.items() if key not in {"system", "prompt"}},
+            "messages": [
+                {"role": "system", "content": payload["system"]},
+                {"role": "user", "content": prompt_text},
+            ],
+            "think": thinking,
+        }
+        if event is not None:
+            event.update(envelope="SOURCE_CHAT", think_requested=thinking)
+        response = original(**kwargs)
+        message = response.get("message")
+        if not isinstance(message, dict):
+            raise ValueError("Source chat response requires message object")
+        content = message.get("content")
+        if not isinstance(content, str):
+            raise ValueError("Source chat response requires string content")
+        reasoning = message.get("thinking")
+        if event is not None:
+            event["thinking_present"] = isinstance(reasoning, str) and bool(reasoning)
+            event["thinking_char_count"] = len(reasoning) if isinstance(reasoning, str) else 0
+        return {
+            **{key: value for key, value in response.items() if key not in {"message", "thinking"}},
+            "response": content,
+        }
 
     with patch.object(ollama_transport, "_post_json", dispatch):
         yield
