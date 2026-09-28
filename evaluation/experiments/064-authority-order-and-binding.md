@@ -349,3 +349,43 @@ Planning의 route-local Intent는 두 endpoint가 같은 Route 안에 없으면 
 `planning_work_relation_context_candidate.py`는 들어오는 관계와 양끝 provenance만
 별도로 전달하고 타 업무의 Output/조건을 현재 Route로 되살리지 않는다. 직접10 PASS지만
 이는 관계 metadata 전달이며 실제 내부 WorkProduct/계획명세 소비 성공은 아니다.
+
+## v23 Source item-local schema repair — 실행 전 계획
+
+first에서 고유 closed Resource ID이며 개별 schema가 유효한 항목은 그대로 보존한다.
+서로 모순된 중복 항목은 어느 쪽도 코드가 선택/union하지 않고 해당 Resource만 수정 대상으로
+둔다. 누락 Resource의 판정도 모델이 하며 NOT_REQUIRED를 자동 생성하지 않는다.
+원문/WorkUnit/기존 Source owner/실효 Runtime/repair1회 한도는 유지한다.
+parse 실패·unknown identity·분해할 수 없는 cross-item 제약은 기존 full repair로 위임한다.
+최종 full schema와 기존 범위 guard를 통과해야 하며 guard를 우회하지 않는다.
+
+먼저 새 첫 호출 없이 fresh Product baseline의 CORE023 정상 first(새 모델0회),
+CORE013 실패 first(새 repair 최대1회)를 재사용한다. 원본 파일/input/schema/모델/실효
+sampling을 검증하고, 과거 first와 새 repair의 비용·원시 출력을 분리한다.
+v20 CORE001은 다른 evaluation 입력에서 생성돼 같은 Production 조건으로 혼합하지 않고
+구조적 직접 테스트 참고로만 사용한다. synthetic 반례는 모델 품질 점수로 세지 않는다.
+본질적으로 틀렸지만 구조적으로 유효한 Draft 결정도 freeze한다. 따라서 보존에 성공해도
+business PASS나 첫 Source 의미 개선으로 표현하지 않는다.
+
+### v23 결과와 generic repair guard 수정
+
+정상023 first는 그대로 반환해 신규 모델0회다. 013은 신규 repair1회,
+input3,533/output58tokens, reported9,619ms/wall9,679ms를 사용했다.
+고유·개별 schema-valid 항목6개는 모두 정확히 보존됐고 full schema 및 기존 outer guard를
+통과했다. Event REQUIRED는 보존됐지만 mutable Task/TaskList는 모델이 NOT_REQUIRED로
+판단했다. 구조상 유효하지만 의미상 잘못된 Draft REQUIRED도 그대로 남는다.
+따라서 **repair handoff 보존 확인 / 업무 의미 실패 유지 / Production adapter 채택 보류**다.
+새 첫 응답이나 성공 Trial 대체는 없다. Source owner 뒤 Retrieval/Planning은 실행하지 않았다.
+
+raw: `evaluation/results/064-source-item-repair-v23-t1/raw.json`
+SHA256: `3e0407b72e0366acebe89b6629b1c404e53854d5c696fd0e656ca07ffe81dec8`.
+
+별도의 확정 Product 결함은 `67ce1c16`에서 수정했다. generic repair guard가 모순된 중복
+또는 malformed/missing identity를 만나 전체 배열의 stable 비교를 포기하던 문제다.
+이제 식별 가능한 peer를 별도로 검사하고 미식별 부분에는 기존 positional 제한을 유지한다.
+모순된 duplicate의 어느 의미가 맞는지 코드가 선택하지 않으며 기존 repair budget/최종
+schema/closed identity 제한을 완화하지 않는다. Source뿐 아니라 route_id 배열 반례도 포함한다.
+guard/router/v23 직접62 PASS와 관련 adapter/Query/Review/RU231 PASS, 총293개 관련 검사
+PASS. 실제013의 잘못된 full repair는 거절하고 v20의 정당한001 repair는 허용한다.
+Product Prompt/Schema/Node 변경0, 외부 Provider I/O0이다. 이 guard 수정은 모델 의미
+실패를 자동 복구하지 않으며 미승인 후보를 Product에 활성화한 것도 아니다.

@@ -55,6 +55,7 @@ from scripts.ru_source_demand_candidate import (
 )
 from scripts.ru_source_family_bound_candidate import BoundSourceFamilyCandidate
 from scripts.ru_source_family_candidate import SourceFamilyCandidate
+from scripts.ru_source_item_repair_candidate import source_item_repair_candidate
 from scripts.ru_source_scope_candidate import source_scope_candidate
 
 from google_work_agent.adapters.langgraph.main.routing.route_after_supervisor import (
@@ -68,6 +69,9 @@ from google_work_agent.adapters.langgraph.subgraphs.request_understanding.graph 
 from google_work_agent.adapters.langgraph.subgraphs.tool_routing.graph import ToolRoutingSubgraph
 from google_work_agent.adapters.llm.ollama.transport import OllamaHTTPClient
 from google_work_agent.adapters.llm.runtime.llm_credential_router import SessionMemorySecretStore
+from google_work_agent.adapters.llm.runtime.structured_inference_router import (
+    _runtime_policy_for_prompt,
+)
 from google_work_agent.api.composition import ProductionRuntimeConfig, build_production_runtime
 from google_work_agent.application.agents.request_understanding import (
     identify_source_dependencies as source_ops,
@@ -88,6 +92,7 @@ from google_work_agent.application.use_cases.run.account_provider_dispatch impor
 )
 from google_work_agent.application.use_cases.setting.update_settings import UpdateSettingsCommand
 from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
+from google_work_agent.ports.system.contracts.observability import ObservabilityContext
 from google_work_agent.ports.system.settings_port import SettingsPatchV1
 
 MODEL_ID: Final[Literal["qwen3.5:9b"]] = "qwen3.5:9b"
@@ -260,6 +265,8 @@ def main() -> None:
     parser.add_argument("--reference-inputs-from", type=Path)
     parser.add_argument("--source-format-only-envelope", action="store_true")
     parser.add_argument("--source-input-once-envelope", action="store_true")
+    parser.add_argument("--source-item-repair", action="store_true")
+    parser.add_argument("--replay-first-source-payload", action="store_true")
     parser.add_argument("--source-thinking", action="store_true")
     parser.add_argument("--source-chat", action="store_true")
     parser.add_argument("--source-scope-expression", action="store_true")
@@ -310,6 +317,15 @@ def main() -> None:
         or args.source_format_only_envelope
     ):
         raise ValueError("Source input-once comparison changes only the Product input envelope")
+    if args.replay_first_source_payload and (
+        not args.source_replay_from or args.semantic_candidate != "none"
+    ):
+        raise ValueError("first-payload repair replay requires a Product Source owner record")
+    if args.source_item_repair and (
+        args.semantic_candidate != "none" or args.source_input_once_envelope
+        or args.source_thinking or args.source_chat or args.source_format_only_envelope
+    ):
+        raise ValueError("item repair comparison preserves the Product first-call contract")
     if args.result_path.exists():
         raise ValueError("result path already exists; preserve every prior trial")
     case_ids = _selected_case_ids(all_canonical=args.all_canonical, requested=args.case)
@@ -390,6 +406,9 @@ def main() -> None:
         if runtime is None or container.update_settings_handler is None:
             raise RuntimeError("local structured-inference runtime is unavailable")
         runtime.run_context_provider = lambda: None
+        repair_events: list[dict[str, Any]] = []
+        if args.source_item_repair:
+            close_stack.enter_context(source_item_repair_candidate(runtime, repair_events))
         container.update_settings_handler(
             UpdateSettingsCommand(
                 str(uuid4()),
@@ -529,6 +548,13 @@ def main() -> None:
                 "num_ctx": 16384,
                 "source_format_only_envelope": args.source_format_only_envelope,
                 "source_input_once_envelope": args.source_input_once_envelope,
+                "source_item_repair": args.source_item_repair,
+                "source_item_repair_adapter_sha256": (
+                    hashlib.sha256(
+                        Path(__file__).with_name("ru_source_item_repair_candidate.py").read_bytes()
+                    ).hexdigest() if args.source_item_repair else None
+                ),
+                "replay_first_source_payload": args.replay_first_source_payload,
                 "source_thinking": args.source_thinking,
                 "source_endpoint": "chat" if args.source_chat else "generate",
                 "source_scope_expression": (
@@ -584,6 +610,7 @@ def main() -> None:
                 "actual_reference_time_ms": reference_ms,
                 "fault_profile": cases[case_id].gold.get("fault_profile"),
             }
+            repair_events.clear()
             try:
                 if replay_records:
                     replay_prompt_id = (
@@ -609,23 +636,55 @@ def main() -> None:
                             work_unit_ids=work_ids,
                         )
                     )
-                    response = recorder.infer(
-                        "LOCAL_GPU",
-                        load_prompt_reference(
-                            replay_prompt_id,
-                            manifest,
-                            execution_scope=DEVELOPMENT_SMOKE,
-                        ),
-                        projection,
-                        schema,
+                    prompt_ref = load_prompt_reference(
+                        replay_prompt_id, manifest, execution_scope=DEVELOPMENT_SMOKE
                     )
+                    if args.replay_first_source_payload:
+                        first = next(
+                            item for item in replay_records[case_id]["transport_calls"]
+                            if item["prompt_id"] == replay_prompt_id
+                        )
+                        policy = _runtime_policy_for_prompt(runtime.runtime_policy, prompt_ref)
+                        if (
+                            first["input"] != projection
+                            or first["schema_sha256"] != object_hash(schema.json_schema)
+                            or first["model"] != MODEL_ID
+                            or first["temperature"] != policy.sampling_temperature
+                            or first["seed"] != args.seed
+                        ):
+                            raise ValueError(
+                                "frozen first payload has different input/schema/runtime"
+                            )
+                        approved = runtime.get_approved_model(MODEL_ID)
+                        if approved is None or approved.digest != model.digest:
+                            raise ValueError(
+                                "repair replay requires the current approved model digest"
+                            )
+                        record["reused_first_dispatch"] = deepcopy(first)
+                        record["reused_first_is_new_model_call"] = False
+                        structured_output, attempts, _ = runtime._validate_or_repair(
+                            provider=runtime.ollama_provider_factory(approved),
+                            prompt_ref=prompt_ref,
+                            prompt_input=projection,
+                            payload=first["content"],
+                            output_schema=schema,
+                            api_key=None,
+                            trace_context=ObservabilityContext(run_id=None),
+                            semantic_validate=None,
+                            external_transfer_scope=None,
+                            runtime_policy=policy,
+                        )
+                        record["logical_attempts_including_reused_first"] = attempts
+                    else:
+                        response = recorder.infer("LOCAL_GPU", prompt_ref, projection, schema)
+                        structured_output = response.structured_output
                     schema_errors = list(
-                        validate_output_schema(response.structured_output, schema.json_schema)
+                        validate_output_schema(structured_output, schema.json_schema)
                     )
                     record.update(
                         status=("GOAL_" if args.goal_replay_from else "SOURCE_")
                         + ("SCHEMA_INVALID" if schema_errors else "RETURNED"),
-                        source_output=response.structured_output,
+                        source_output=structured_output,
                         source_schema_errors=schema_errors,
                     )
                     if args.goal_replay_from:
@@ -634,6 +693,7 @@ def main() -> None:
                     record["llm"] = metrics(transport_calls)
                     record["transport_calls"] = deepcopy(transport_calls)
                     record["atomic"] = deepcopy(recorder.atomic)
+                    record["source_item_repair_events"] = deepcopy(repair_events)
                     if semantic_candidate is not None:
                         record["semantic_candidate_events"] = deepcopy(semantic_candidate.events)
                     record["wall_latency_ms"] = int((time.perf_counter() - started) * 1000)
@@ -695,6 +755,7 @@ def main() -> None:
             }
             record["llm"] = metrics(transport_calls)
             record["transport_calls"] = deepcopy(transport_calls)
+            record["source_item_repair_events"] = deepcopy(repair_events)
             if semantic_candidate is not None:
                 record["semantic_candidate_events"] = deepcopy(semantic_candidate.events)
             if args.record_atomic:
