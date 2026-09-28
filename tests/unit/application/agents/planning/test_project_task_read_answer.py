@@ -103,7 +103,9 @@ def test_task_read_answer__observed_missing_title__never_uses_parent_or_note_tit
 
 def test_task_read_answer__different_resources__remain_separate_with_task_list_excluded() -> None:
     evidence, snapshots = _observed_task()
-    second = {"evidence_id": "e-second", "resource_handle": "task:43", "excerpt": "untrusted"}
+    second: dict[str, object] = {
+        "evidence_id": "e-second", "resource_handle": "task:43", "excerpt": "untrusted"
+    }
     snapshots.update(bind_task_calendar_snapshots([second], {"e-second": {"title": None}}))
     evidence.extend(
         [
@@ -129,6 +131,14 @@ def test_task_read_answer__no_task_items__reports_zero_result() -> None:
         user_request="현재 할 일을 알려줘.",
         request_intent=_intent(),
         evidence=[],
+        retrieval_result={
+            "coverage": "SUFFICIENT",
+            "source_statuses": [{
+                "resource_type": "task", "status": "COMPLETE", "failure_kind": None,
+                "checked_read_count": 1, "observed_resource_count": 0,
+                "scope_complete": True, "continuation_status": "EXHAUSTED",
+            }],
+        },
     )
     assert result is not None
     assert result.draft["answer"] == "Google Tasks에서 현재 표시할 할 일을 찾지 못했습니다."

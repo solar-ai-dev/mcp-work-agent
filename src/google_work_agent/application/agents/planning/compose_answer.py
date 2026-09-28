@@ -278,6 +278,7 @@ def compose_answer(
         request_intent=request_intent,
         evidence=evidence,
         source_snapshots=source_snapshots,
+        retrieval_result=retrieval_result,
     )
     if task_projection is not None:
         if not set(task_projection.draft["evidence_refs"]).issubset(approved_refs):
@@ -551,14 +552,24 @@ def _with_partial_scope(
     notices: list[str] = []
     raw_source_statuses = cast(list[object], retrieval_result.get("source_statuses", []))
     source_statuses = [item for item in raw_source_statuses if isinstance(item, Mapping)]
+    successful_sources = [
+        item for item in source_statuses
+        if item.get("status") in {"COMPLETE", "PARTIAL"}
+        and item.get("failure_kind") is None
+        and isinstance(item.get("checked_read_count"), int)
+        and item["checked_read_count"] > 0
+        and isinstance(item.get("observed_resource_count"), int)
+        and item["observed_resource_count"] >= 0
+    ]
     checked_read_count = sum(
-        int(item.get("checked_read_count", 0)) for item in source_statuses
+        int(item["checked_read_count"]) for item in successful_sources
     )
     observed_resource_count = sum(
         int(item.get("observed_resource_count", 0)) for item in source_statuses
     )
-    scope_complete = bool(source_statuses) and all(
-        item.get("scope_complete") is True for item in source_statuses
+    scope_complete = len(successful_sources) == len(source_statuses) and all(
+        item.get("status") == "COMPLETE" and item.get("scope_complete") is True
+        for item in source_statuses
     )
     has_scope_notice = False
     if checked_read_count > 0 and observed_resource_count == 0:

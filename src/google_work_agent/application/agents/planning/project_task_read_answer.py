@@ -26,6 +26,7 @@ def project_task_read_answer(
     request_intent: Mapping[str, object],
     evidence: Sequence[Mapping[str, object]],
     source_snapshots: Mapping[str, Mapping[str, object]] | None = None,
+    retrieval_result: Mapping[str, object] | None = None,
 ) -> TaskReadAnswerProjection | None:
     """Return one grounded projection only for non-analytical Tasks READs."""
     if (
@@ -66,6 +67,8 @@ def project_task_read_answer(
         )
         section = "현재 Google Tasks 할 일" if korean else "Current Google Tasks items"
     else:
+        if not _has_complete_empty_task_read(retrieval_result):
+            return None
         answer = (
             "Google Tasks에서 현재 표시할 할 일을 찾지 못했습니다."
             if korean
@@ -76,6 +79,28 @@ def project_task_read_answer(
     return TaskReadAnswerProjection(
         outline={"sections": [section], "evidence_refs": unique_refs},
         draft={"schema_version": 2, "answer": answer, "evidence_refs": unique_refs},
+    )
+
+
+def _has_complete_empty_task_read(retrieval_result: Mapping[str, object] | None) -> bool:
+    if retrieval_result is None or retrieval_result.get("coverage") != "SUFFICIENT":
+        return False
+    statuses = retrieval_result.get("source_statuses")
+    if not isinstance(statuses, list) or not statuses or not all(
+        isinstance(item, Mapping)
+        and item.get("status") == "COMPLETE"
+        and item.get("failure_kind") is None
+        for item in statuses
+    ):
+        return False
+    task_statuses = [item for item in statuses if item.get("resource_type") == "task"]
+    return bool(task_statuses) and all(
+        isinstance(item.get("checked_read_count"), int)
+        and item["checked_read_count"] > 0
+        and item.get("observed_resource_count") == 0
+        and item.get("scope_complete") is True
+        and item.get("continuation_status") == "EXHAUSTED"
+        for item in task_statuses
     )
 
 

@@ -160,6 +160,7 @@ def outline_answer(
         request_intent=request_intent,
         evidence=evidence,
         source_snapshots=source_snapshots,
+        retrieval_result=retrieval_result,
     )
     if task_projection is not None:
         return task_projection.outline
