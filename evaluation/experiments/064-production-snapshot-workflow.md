@@ -54,3 +54,24 @@ T1 wire에는 Work 분해 / effect prohibition / source status의 temperature op
 평가 runner plan v2에는 실제 Case의 계정, 선택 Task parent 한 개, Task/parent snapshot hash를 결속한다. 기존 SettingsPatch로 그 범위만 준비하고 실제 Product account/selection guard 및 저장된 signed selection의 container resolver를 Graph schedule 전에 검증한다. 환경 검사용 capability는 Graph 입력이나 의미 정답으로 주입하지 않는다. 환경 불일치는 모델 호출 전에 거절한다. 관련 30 직접 검사 및 Ruff/mypy PASS.
 
 T2는 이 준비 수정과 별도로 이미 채택한 Task formatter completeness 수정 `ac648105`가 포함된 현재 HEAD에서 **CORE-005 1회**만 실행한다. sampler/모델/seed/Prompt/20회·600초 외부 상한은 T1과 같다. T1과 같은 SHA의 반복이나 성공 Trial 대체가 아니다. 환경 준비 변경과 Product formatter 변경을 구분하여, 결과 차이를 어느 하나의 모델 품질 개선으로 단정하지 않는다. 새 Trial/실행 HEAD/hash는 별도 plan에 고정한다.
+
+## T2 실제 연결 결과
+
+- HEAD `7f8fb2c5fc5c5f451a1447e4ed8dc6a8fe6357d7`, Trial `21520b68-13c0-4d71-8c13-af042b99c02f`. 실행 전후 HEAD/Product hash 동일.
+- 환경 preflight READY, Snapshot Task READ 2회, Provider WRITE/SEND·승인·resume 0회.
+- 실제 LLM 20회, input 72,006 / output 2,966 tokens, provider latency 합계 146,805ms, 전체 wall 153,422ms. usage 누락/repair 0.
+- **EXPERIMENT_BOUND_REACHED**: 사전등록 dispatch cap20에 도달했다. cap 관측 snapshot은 PLANNING/terminal NONE이고, worker drain 후 DB는 그 cap 예외로 `PROFILE_LLM_LIMIT_EXHAUSTED`/BLOCKED가 됐다. Product budget은 dispatch 전에 증가해 21, 실제 wire는20이다. 이를 자연적인 Product 한도 실패나 업무 완료로 부르지 않는다.
+
+| 경계 | 관측과 판정 |
+| --- | --- |
+| Goal / prohibition | 선택 Task 상태·기한 READ 의미, CREATE 금지 보존. T1의 금지 누락이 코드 수정으로 해결됐다는 뜻은 아니다. sampler 그대로이며 Goal/UUID 등의 실제 입력 차이가 있다. |
+| Output FIRST (call5) | 올바른 원문·Goal에도 TASK UPDATE + GMAIL_MESSAGE SEND 생성. **이번 Trial의 최초 확정 의미 divergence**. repair 없이 Intent와 downstream에 전달. |
+| Tool Route / Query | 잘못된 WRITE hints 때문에 READ-only selected shortcut이 탈락하고 TASK `REQUESTED_INPUT` + TASK_LIST discovery로 전개. exact selected ID는 Query 입력에도 보존됐으나 SEARCH를 선택했다. REQUIRED_TARGET_LOOKUP merge가 원인은 아니다. |
+| READ / Evidence | 실제 snapshot의 Task 상태·due·notes 회수. 같은 허용 목록의 `tasks_list_tasks` 2회. |
+| Planning | 잘못된 Output을 ACTION으로 작성. SEND 수신자/Draft ID/요일의 근거 없는 생성도 발생. 실제 dispatch하지 않음. |
+| Review / revision | 조회와 UPDATE/SEND의 충돌을 발견하여 ROUTE_RECONSIDERATION. 하지만 같은 Intent로 Route 재생성 후 동일 Query input hash/SEARCH가 반복되고 ACTION에 재진입. |
+| Task formatter 수정 | ANSWER branch에 진입하지 않았으므로 실제 모델 검증 **미도달**. 직접 테스트 통과와 구분. |
+
+첫 Output 의미 변경과 후속 revision-owner 반복 경계를 다음 후보 대상으로 삼는다. 한도를 늘리거나 같은 Trial을 재실행하지 않는다. 기존 v4의 Goal/Output 단일 의미 authority를 실제 compiled Graph에 연결할 수 있는지 검토하며, sampler 비교는 별도 owner 진단으로 분리한다.
+
+raw `evaluation/results/064-core005-main-graph-t2/raw.json` SHA256 `e369f9e52489089c7ae8e27be49016a9b3f94b5443f8ec8517666c248d8642f9`, calls SHA256 `3de5802516e87fcb89393b705b56edf496f356bde1d22b875d250c5e194714f1`. 이 단발 연결 결과를 Canonical92 전체 점수로 승계하지 않는다.
