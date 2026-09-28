@@ -49,6 +49,7 @@ from scripts.ru_source_demand_candidate import (
     SourceDemandBindingCandidate,
     SourceNeedsThenBindingCandidate,
 )
+from scripts.ru_source_family_candidate import SourceFamilyCandidate
 from scripts.ru_source_scope_candidate import source_scope_candidate
 
 from google_work_agent.adapters.langgraph.main.routing.route_after_supervisor import (
@@ -267,6 +268,7 @@ def main() -> None:
             "joint-roles-v8",
             "keyed-source-v9",
             "ordered-goal-output-v11",
+            "source-family-v15",
         ),
         default="none",
     )
@@ -373,6 +375,7 @@ def main() -> None:
             "joint-roles-v8": JointRoleAuthorityCandidate,
             "keyed-source-v9": KeyedSourceCandidate,
             "ordered-goal-output-v11": OrderedGoalOutputAuthorityCandidate,
+            "source-family-v15": SourceFamilyCandidate,
         }.get(args.semantic_candidate)
         semantic_candidate = (
             candidate_class(
