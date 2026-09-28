@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "purpose": "v43 exact membership/details boundary controls; not Dataset or Gold edits",
+  "input_construction": "Hand-authored Source owner input. Goal is verbatim request, constraints empty, Work provenance exact. No actual upstream LLM was run. Runner adds the same registered Source catalog as Core and excludes review/fixture_binding/case_id from model input.",
+  "controls": [
+    {
+      "case_id": "SYNTHETIC-DRAFT-UPDATE",
+      "kind": "SYNTHETIC_SOURCE_OWNER_CONTROL_NOT_CANONICAL_CASE",
+      "input": {
+        "user_request": "선택한 메일 초안의 본문 끝에 '확인 후 회신 부탁드립니다.'를 덧붙이고, 나머지 내용과 받는 사람은 그대로 유지해줘.",
+        "selected_resource_refs": [
+          {
+            "resource_ref_id": "00000000-0000-4000-8000-000000000043",
+            "connector_id": "google_workspace",
+            "resource_type": "gmail_draft",
+            "resource_id": "evaluation-only-draft-v43",
+            "parent_resource_id": null
+          }
+        ],
+        "requested_work": {
+          "work_units": [
+            {
+              "unit_id": "work-1",
+              "request_provenance": [
+                {
+                  "source": "USER_REQUEST",
+                  "start_offset": 0,
+                  "end_offset": 66,
+                  "source_text": "선택한 메일 초안의 본문 끝에 '확인 후 회신 부탁드립니다.'를 덧붙이고, 나머지 내용과 받는 사람은 그대로 유지해줘."
+                }
+              ]
+            }
+          ],
+          "work_relations": []
+        },
+        "run_reference_time": {
+          "reference_time": "2026-09-28T20:00:00+09:00",
+          "timezone": "Asia/Seoul"
+        },
+        "goal_candidate": {
+          "goal": "선택한 메일 초안의 본문 끝에 '확인 후 회신 부탁드립니다.'를 덧붙이고, 나머지 내용과 받는 사람은 그대로 유지해줘.",
+          "completion_conditions": [],
+          "constraints": {},
+          "analysis_requirement": "NONE"
+        }
+      },
+      "fixture_binding": {
+        "provider": "SYNTHETIC_NO_IO",
+        "reference_time_kind": "FIXED_SYNTHETIC_CONTROL_NOT_LIVE_CLOCK",
+        "fault_profile": null
+      },
+      "review": {
+        "required_semantics": [
+          "선택한 기존 Draft의 현재 본문과 보존할 값에 대한 조회 필요를 표현한다.",
+          "현재 단일 선택 identity의 SINGULAR 및 work-1 결속을 유지한다."
+        ],
+        "forbidden_semantics": [
+          "새 Draft 생성 요청으로 바꾸거나 Task/Calendar 등 무관한 업무 근거를 필수로 삼지 않는다."
+        ],
+        "not_evaluated": [
+          "편집 payload",
+          "승인",
+          "WRITE",
+          "실제 Provider 조회"
+        ]
+      }
+    },
+    {
+      "case_id": "SYNTHETIC-DRAFT-CREATE",
+      "kind": "SYNTHETIC_SOURCE_OWNER_CONTROL_NOT_CANONICAL_CASE",
+      "input": {
+        "user_request": "받는 사람 recipient@example.test, 제목 '자료 수신 확인', 본문 '자료를 잘 받았습니다.'로 새 메일 초안을 만들어줘. 기존 메일이나 다른 자료는 조회하지 마.",
+        "selected_resource_refs": [],
+        "requested_work": {
+          "work_units": [
+            {
+              "unit_id": "work-1",
+              "request_provenance": [
+                {
+                  "source": "USER_REQUEST",
+                  "start_offset": 0,
+                  "end_offset": 101,
+                  "source_text": "받는 사람 recipient@example.test, 제목 '자료 수신 확인', 본문 '자료를 잘 받았습니다.'로 새 메일 초안을 만들어줘. 기존 메일이나 다른 자료는 조회하지 마."
+                }
+              ]
+            }
+          ],
+          "work_relations": []
+        },
+        "run_reference_time": {
+          "reference_time": "2026-09-28T20:00:00+09:00",
+          "timezone": "Asia/Seoul"
+        },
+        "goal_candidate": {
+          "goal": "받는 사람 recipient@example.test, 제목 '자료 수신 확인', 본문 '자료를 잘 받았습니다.'로 새 메일 초안을 만들어줘. 기존 메일이나 다른 자료는 조회하지 마.",
+          "completion_conditions": [],
+          "constraints": {},
+          "analysis_requirement": "NONE"
+        }
+      },
+      "fixture_binding": {
+        "provider": "SYNTHETIC_NO_IO",
+        "reference_time_kind": "FIXED_SYNTHETIC_CONTROL_NOT_LIVE_CLOCK",
+        "fault_profile": null
+      },
+      "review": {
+        "required_semantics": [
+          "제공된 받는 사람·제목·본문으로 새 Draft를 준비할 수 있고 기존 업무 자료 조회는 요청하지 않았다.",
+          "Source 필요성은 업무 사실 의존성이다. Approval/권한/정책 검사를 건너뛰는 의미가 아니다."
+        ],
+        "forbidden_semantics": [
+          "새 Draft라는 이유로 기존 Draft를 필수 Source로 삼지 않는다.",
+          "명시적으로 제외한 기존 메일·다른 자료에서 업무 사실을 가져오지 않는다."
+        ],
+        "not_evaluated": [
+          "Draft CREATE payload",
+          "승인",
+          "WRITE",
+          "정책 실행"
+        ]
+      }
+    }
+  ]
+}

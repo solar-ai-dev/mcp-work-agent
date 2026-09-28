@@ -925,6 +925,15 @@ Source 판단의 개발 구조 비교는 기존 요청 원문·선택 identity·
 의미 통과로 취급하지 않는다. 비활성 후보의 직접 모델 호출은 Production budget,
 Prompt activation 또는 release evidence를 대체하지 않는다.
 
+Source의 개별 Resource membership과 세부 조회 요구를 나누는 비활성 구조 후보에서는
+첫 호출이 모든 기존 후보의 REQUIRED/NOT_REQUIRED를 명시하고, 둘째 호출은 확정된
+REQUIRED Resource의 필요 사실·대상 범위·Work binding만 작성할 수 있다. 둘째 호출이
+membership을 다시 고르거나 코드가 누락된 판정을 추측하지 않는다. 선택이 없으면
+둘째 호출 없이 명시 NOT_REQUIRED 결과를 투영한다. 전체 결과는 기존 Source validator로
+검증하며 첫 membership 오류도 보존한다. 이는 Source owner 내부의 EVALUATION 계약이고
+Product State/Graph·호출 예산·활성 Prompt를 변경하지 않는다. 합성 경계 control은
+Canonical Case/실제 upstream/업무 성공 점수와 분리한다.
+
 Source 지시량 비교는 기존 책임·원문/선택/Work binding·입력·출력 Schema·sampling·format을
 유지한 채 중첩 설명만 축소할 수 있다. candidate source와 PromptRef/hash를 별도로 결속하고
 기존 strict schema/owner validation을 그대로 적용한다. 다른 Source 표현 변경과 섞거나
