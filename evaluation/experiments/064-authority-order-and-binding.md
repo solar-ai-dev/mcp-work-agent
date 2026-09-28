@@ -626,3 +626,25 @@ RU→Route 연결, Retrieval/Planning 이후의 업무 성공률로 승계하지
 명시적으로 선택하는 계약 표현만 비교한다. 빈 출력에 NO_FILTER를 기본 주입하지 않으며
 기존 원문·Goal·Source·Output 입력과6건/1회 예산을 유지한다. 새 규칙·few-shot·Node는
 추가하지 않고 v26 raw를 비교 기준으로 재사용한다.
+
+## v28 Source requirement group 표현 — 비활성 connected component
+
+Source owner 출력은 Resource당 SOURCE_REQUIRED 한 항목만 허용하고, 그 항목에 하나의
+required_information/target_scope와 여러 WorkUnit을 둔다. 같은 메일 Resource라도 업무1은
+단일 본문, 업무2는 여러 제목이 필요한 경우 서로 다른 요구를 표현할 수 없었다. 한 항목으로
+합치면 정보×업무의 교차 적용이 발생하고 merge도 Resource-key 하나만 남겼다.
+
+후보는 Resource exact-set/NOT_REQUIRED를 유지하고 SOURCE_REQUIRED의 기존 세 필드만
+requirements[]로 묶는다. 각 group은 기존 Source validator와 responsibility normalizer를
+거쳐 기존 V3 Source item으로 flat-map된다. 의미 추정이나 새 필수 Source 선택은 없다.
+Main State/Route/Planning public schema, Node/Edge, Source·Output owner와 실행 권한은 불변이다.
+
+직접19 PASS, 기존 Source/merge/GoalBinding/connected 포함69 PASS. 실제 compiled ToolRoute의
+합성 ANSWER/ACTION 두 경로에서 Source2항목→공유 InputRoute1/WorkUnit union을 유지했고,
+독립 Draft Output2개와 Planning의 자기 업무 정보/scope를 보존했다. fake LLM0/Provider0이다.
+단순 요청은 baseline merge와 동등하며 NOT_REQUIRED, 중복/unknown ID, 빈 facts와 같은
+WorkUnit 내 scope 충돌은 기존 계약대로 거절한다. 실제 Query/LLM 의미 성공으로 세지 않는다.
+
+Product 채택에는 owner-local 타입/Schema/validator, merge, Prompt의 출력 형상 설명과
+버전/hash, Canonical06·15, raw/fake adapter/repair 호환을 함께 닫아야 한다. 현재는 미활성
+prototype이며 9B 생성 정확도·tokens/latency·local revision 호환을 검증하지 않았다.
