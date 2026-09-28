@@ -186,6 +186,28 @@ Local Node Contract Stability의 기본 Gate는 적용 Case N=50에서 `final_co
 
 Product Prompt와 Runtime failure/retry contract는 평가 Harness의 Gold·Grader·Simulator·Candidate metadata를 입력 authority로 사용하지 않는다. 구체적인 Evaluation artifact와 Simulator/feedback isolation 규칙은 `13 Evaluation`이 소유하고, 본 문서 §12는 Runtime이 허용하는 소비 경계만 정의한다.
 
+**비활성 개발 후보 — 기존 Goal Source 범위 제약의 connected handoff**
+
+기존 Goal Constraint owner가 `SCOPE.required_sources / forbidden_sources`를 현재
+요청·확인 응답의 정확한 `source_text` 및 `work_unit_ids`에 결속하는 후보를 평가할 수
+있다. 범주 값과 원문 표현이 다른 normalized provenance는 Source 호출 전에 검증하고,
+같은 제약을 Source projection과 최종 Intent에 보존한다. 배타적 허용 범위는 필수 READ
+목록이 아니며, 일반 자료 언급이나 selected identity 제한을 범주 전체 금지로 변환하지
+않는다. Source owner는 기존대로 실제 필요한 Resource와 조회 정보를 판단한다.
+Route는 기존 WorkUnit-local Scope Expansion 검사를 소비하며 OAuth·Provider 권한·선택
+Resource·WRITE 승인 authority를 새로 만들거나 확대하지 않는다. 후보는 새 LLM owner나
+추가 호출을 만들지 않으며 Product Prompt/Schema/manifest 활성화가 아니다. 원문 span
+검증만으로 모델의 범주 선택이 의미적으로 옳다고 판정하지 않는다. 과거 Run의 누락된
+provenance를 추측해 채우지 않고, 채택 전에는 producer 의미 정확도와 기존 checkpoint
+호환성을 별도로 검증한다.
+
+동일 후보의 범주 제약 Schema는 조건부 `allOf/if/then`과 명시적 `oneOf` 분기를
+별도 표현 축으로 비교할 수 있다. 이는 일반 제약과 provenance가 필요한 범주 제약의
+동일한 유효 출력 언어를 직렬화하는 차이이며, 입력·State 모양·의미 owner·필수 제약
+생성 여부를 바꾸지 않는다. closed WorkUnit binding을 적용한 뒤 변환하고 FIRST와
+bounded repair에 같은 Schema를 사용한다. 유효/무효 언어 동등성 검증과 실제 모델의
+필드 누락 감소 검증을 구분하며, 의미 선택 개선으로 간주하지 않는다.
+
 ### 1.6 Runtime fixed values
 
 ```yaml

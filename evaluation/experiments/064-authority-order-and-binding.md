@@ -389,3 +389,54 @@ guard/router/v23 직접62 PASS와 관련 adapter/Query/Review/RU231 PASS, 총293
 PASS. 실제013의 잘못된 full repair는 거절하고 v20의 정당한001 repair는 허용한다.
 Product Prompt/Schema/Node 변경0, 외부 Provider I/O0이다. 이 guard 수정은 모델 의미
 실패를 자동 복구하지 않으며 미승인 후보를 Product에 활성화한 것도 아니다.
+
+## v24 기존 Source 범위 제약의 연결 계약 — 실행 전 계획
+
+v14/v16은 Goal에 기존 SCOPE field를 열었지만 normalized category와 원문 span의
+provenance, Source projection, 최종 Intent validator까지 연결되지 않았다. 기존
+Goal Constraint owner는 유지하고 required_sources/forbidden_sources의 선택값과 정확한
+원문 proof를 같은 item에 담아 기존 WorkUnit별 ScopeExpansionResolver까지 전달한다.
+Source subtype 선택·필수 조회·Provider permission·선택 identity는 이 제약과 별개다.
+category allowlist를 필요한 Source 목록으로 해석하거나 선택 Resource를 family 제약으로
+낮추지 않는다. 원문의 특정 단어를 해석하는 코드나 새 semantic owner/call은 없다.
+
+먼저 model-free connected invariants를 검증한다. 이어 v16과 같은 frozen Goal
+Core002/001/004/009/013을 각1회(기존 repair최대1회) 비교한다. 실제 Goal 기본0/seed 및
+입력은 같고 바뀐 schema/provenance/선언한 handoff 계약은 별도 hash로 남긴다.
+Goal의 scope 누락을 projection이나 validator가 보충하지 않는다. producer 누락이 지속되면
+contract closure만으로 개선됐다고 하지 않고 추가 Source/전수 실행으로 확대하지 않는다.
+이 경계가 유력할 때만 실제 compiled RU→Route에서 성공·반례와 함께 연결성을 확인한다.
+
+새 total Resource-key map은 이번에 실행하지 않는다. v9의 key map8/8은 이미 구조가
+유효해도 Source 오판을 해결하지 못했고 fresh Product first8 중 exact-set 실패는1건이다.
+v23은 그 repair 손실을 별도로 다룬다. 따라서 다시 형식만 바꾸는 모델 실험의 우선순위를
+낮추고 typed Source 범위가 실제 소비자에 도달할 수 없는 계약 공백을 먼저 닫는다.
+
+### v24 결과
+
+연결 계약 직접·관련72 PASS이며 실제 Goal5회 비교는 first schema3/5,
+repair 후4/5다. 002는 EMAIL allowlist를 생성했지만 원문 proof를 첫 응답·repair 모두
+누락해 거절됐다. 001은 scope0으로 선택 identity를 category 금지로 낮추지 않았고,
+004는 CALENDAR 허용 + EMAIL/TASK/ISSUE 제외를 생성했다. 원문은 다른 Calendar 검색
+제외이므로 이 범주 제약은 정밀한 선택 identity 제한을 대신하지 못하고 과잉 제약 위험이 있다.
+009는 앞선 Goal에서 이미 READ를 메일/Task 생성으로 바꿨고 repair가 잘못된 Message CREATE를
+SEND로 수정했다. 최초 업무 의미 변경은 첫 Goal이며 schema 통과가 올바른 WRITE를 뜻하지 않는다.
+013은 여전히 scope0이다. 다만 '작업·슬롯만'이라는 업무 개념을 특정 Provider category로
+강제 생성해야 한다는 새 정답은 만들지 않는다. 실제 근거 획득 책임과 원문 한정 보존을
+후속 연결에서 확인해야 한다.
+
+신규7calls, input23,342/output2,451tokens, reported100,051ms/wall100,295ms.
+raw SHA256: `37bd8c0d9ea87849eeec10648c4a331457190196f7ce63d9a6d2c74b08e6171a`.
+경로: `evaluation/results/064-scope-handoff-v24-t1/raw.json`.
+**연결 계약만으로 의미 안정화되지 않음 / Production 비활성 유지**.
+새 Source 호출이나 Canonical92 실행으로 확대하지 않는다.
+
+### Source-only 판정 범위 재검토
+
+`064-source-semantic-boundary-review.json`은 Gold나 새 정답셋이 아니라 위 실제 raw9 Case의
+관측 범위 재검토다. TaskList→Task, Calendar→Event dependency와 Thread/Message 공유 경로를
+고려하면 Source Resource 이름만으로 업무 실패를 단정할 수 없다. 추가 READ도 자동 금지
+위반이 아니다. 필요한 사실의 Source 책임 누락, route 접근 가능, 과잉 acquisition 위험,
+실제 Evidence 확보·업무 성공을 분리한다. 기존 raw/점수는 수정하지 않는다.
+v20의 기존 REJECT는 Product 미채택 기록으로 유지하되 전체 business 실패의 증명으로 쓰지
+않는다. 013/023/025/027의 사실 접근 가능성 회복과049 메일 책임 누락을 함께 기록한다.

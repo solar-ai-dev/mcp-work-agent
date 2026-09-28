@@ -1,0 +1,346 @@
+{
+  "review_id": "064-source-semantic-boundary-review",
+  "schema_version": 1,
+  "artifact_role": "OBSERVED_RESULT_REVIEW_NOT_DATASET_OR_GOLD",
+  "language": "ko-KR",
+  "reviewed_on": "2026-09-28",
+  "code_reference_head": "c08a8864720946bd11fbe9a84d4c7d63414b5328",
+  "scope": {
+    "purpose": "Source-only schema 결과, producer 의미, 후속 Route 접근 가능성, 실제 업무 결과를 분리한다.",
+    "new_gold": false,
+    "score_recomputed": false,
+    "existing_raw_or_hash_modified": false,
+    "model_calls": 0,
+    "provider_reads": 0,
+    "provider_writes": 0,
+    "product_changes": 0,
+    "limitations": [
+      "이 리뷰의 Route 연결은 코드 정적 검토이며, 아래 raw에서 compiled ToolRoute/Retrieval/Planning을 실행했다는 뜻이 아니다.",
+      "Source-only SOURCE_RETURNED는 runtime schema 반환 상태다. Product의 모든 semantic guard 또는 업무 성공을 의미하지 않는다.",
+      "후보별 입력, 코드 diff, 사용 Case, first/repair 호출이 다르다. 공통 조건의 전체 business 점수로 합산하지 않는다.",
+      "기존 판정과 원시 결과는 보존한다. 해석 범위 정정은 새로운 PASS 판정 또는 Production 채택이 아니다."
+    ]
+  },
+  "authorities": {
+    "dataset": {
+      "path": "evaluation/datasets/e2e/canonical_cases_v8.jsonl",
+      "sha256": "f92603216a7f0a214bc72ce1f0301b64299e1ed2dbc59c6d20359ee053daa9d8",
+      "fields": ["canonical_user_prompt", "selected_resource_bindings", "evaluation_gold.required_semantics", "evaluation_gold.forbidden_semantics", "evaluation_gold.expected_checkpoint"]
+    },
+    "fixture": {
+      "path": "evaluation/datasets/e2e/fixtures/google_workspace/provider-snapshot-v8.json",
+      "sha256": "59438f4fdd10d1037907f99d3445aac585857320774f89843b578b47c78fb37f",
+      "role": "업무 사실이 실제 어느 Resource에 있는지 확인하는 평가 근거이며, Source LLM에 해당 Gold 사실을 제공했다는 뜻이 아니다."
+    },
+    "canonical": [
+      "docs/canonical/06-agent-workflow.md#sourceoutput-resolution-responsibility",
+      "docs/canonical/06-agent-workflow.md#source-검증"
+    ]
+  },
+  "raw_evidence": {
+    "v22_paired_baseline": {
+      "path": "evaluation/results/064-source-paired-baseline-v22-t1/raw.json",
+      "sha256": "3f8ae5d4cfe28f0ba306558e0a7ac4aa152114d4593bf66947acb070c33c6ef5",
+      "product_sha": "7a60e505face0e5374d479d959f515de46d11eb7",
+      "product_diff_sha256": "08d3c254329b02c03afedad23328b853c941640d9ddd3786f15b14523b44efe1",
+      "scope": "SOURCE_INPUT_REPLAY",
+      "case_count": 8
+    },
+    "v20": {
+      "path": "evaluation/results/064-output-source-v20-t1/raw.json",
+      "sha256": "87d476d2badd5323c075a7851a165246d6d9e521cf42897f752f2da90b3755d1",
+      "product_sha": "7a60e505face0e5374d479d959f515de46d11eb7",
+      "product_diff_sha256": "9920c308fa3046354d714c94ee421d12b80c3e94444274deb9736e2f1f3879d4",
+      "scope": "SOURCE_INPUT_REPLAY",
+      "case_count": 8,
+      "authority_location": "cases[].transport_calls[0].input.confirmed_output_authority"
+    },
+    "v23": {
+      "path": "evaluation/results/064-source-item-repair-v23-t1/raw.json",
+      "sha256": "3e0407b72e0366acebe89b6629b1c404e53854d5c696fd0e656ca07ffe81dec8",
+      "product_sha": "50d5f1a763f5c07c55592919b5c611aca8fd4d1b",
+      "product_diff_sha256": "3ba69ca64d6998c4283e09603f4731dbcf2d6e2d0c1be5f1d84b330e6a9fde1d",
+      "scope": "SOURCE_INPUT_REPLAY",
+      "case_count": 2,
+      "first_payload_replayed_from": "v22_paired_baseline",
+      "new_calls": {"CASE-CORE-023": 0, "CASE-CORE-013": 1},
+      "limitation": "새로운 first-response 또는 반복 신뢰성 비교가 아니다. CORE-013의 새 호출은 repair 한 번이다."
+    }
+  },
+  "interpretation_principles": [
+    "작업 또는 슬롯이라는 업무 개념을 RU 첫 출력의 특정 Provider subtype 하나로만 강제하지 않는다.",
+    "fixture에서 필요한 사실의 위치를 확인하되, 정당한 discovery/dependency 경로로 그 사실을 얻는 대안도 허용한다.",
+    "추가 READ, 사용자 범위 위반, 요청하지 않은 WRITE, 필요한 사실 누락, 정보 소유자 불일치를 별도 관측으로 기록한다.",
+    "현재 자료 접근 가능성과 실제 조회·Evidence 선택·정답 사용 성공을 구분한다.",
+    "CORE-019는 필요한 관련 READ 후 구체적인 확인을 요청하는 경로도 허용한다. READ 0을 강제하지 않는다.",
+    "기존 upstream Output 오류가 Source 입력에 포함되어 있으면 Source 후보가 새로 만든 Output 오류로 중복 집계하지 않는다."
+  ],
+  "code_connections": [
+    {
+      "id": "selected_identity",
+      "path": "src/google_work_agent/application/agents/tool_routing/determine_io_resources.py",
+      "symbol": "_deterministic_candidate / _selected_read_candidate",
+      "finding": "READ-only selected Resource는 선택 identity 경로가 우선한다. 다른 Message subtype이 Source에 존재했다는 사실만으로 다른 메일을 검색했다고 판단할 수 없다."
+    },
+    {
+      "id": "gmail_route_collapse",
+      "path": "src/google_work_agent/application/agents/tool_routing/determine_io_resources.py",
+      "symbol": "_collapse_gmail_search_inputs / _collapse_gmail_search_bindings",
+      "finding": "Thread와 Message가 함께 있으면 Thread READ로 합치고 applicable WorkUnit union을 보존한다."
+    },
+    {
+      "id": "dependency_routes",
+      "path": "src/google_work_agent/application/agents/tool_routing/bind_registry_candidates.py",
+      "symbol": "_READ_DEPENDENCIES_BY_RESOURCE / bind_registry_candidates",
+      "finding": "TaskList에는 Task detail, Calendar에는 Event detail route가 추가될 수 있다. TaskList-only 또는 Calendar-only Source를 곧바로 해당 item의 실행 경로 부재로 판정하면 안 된다."
+    },
+    {
+      "id": "dependency_not_business_requirement",
+      "path": "src/google_work_agent/application/agents/tool_routing/bind_registry_candidates.py",
+      "symbol": "business_required_source_routes",
+      "finding": "dependency-only route는 업무 필수 Source와 구분된다. 접근 경로 존재가 필요한 업무 사실을 반드시 요구·회수·선택함을 보장하지 않는다."
+    },
+    {
+      "id": "policy_read_enrichment",
+      "path": "src/google_work_agent/application/agents/tool_routing/resolve_policy_preconditions.py",
+      "symbol": "_reads_for_output / resolve_policy_preconditions",
+      "finding": "Task CREATE는 Task/List 중복 검사, Event CREATE는 Calendar/Event/Freebusy 충돌 검사 READ를 보강한다. 명시적 범위 확인은 별도 유지하며, 메일 Source는 이 정책으로 보강되지 않는다."
+    },
+    {
+      "id": "source_semantic_guard",
+      "path": "src/google_work_agent/application/agents/request_understanding/identify_source_dependencies.py",
+      "symbol": "validate_source_dependency_semantics",
+      "finding": "ANSWER에 typed search/business anchor가 있는데 모든 Source가 NOT_REQUIRED이면 별도 Product semantic guard가 거절한다. Source schema 반환을 무근거 최종 답변 성공으로 읽지 않는다."
+    },
+    {
+      "id": "source_replay_boundary",
+      "path": "scripts/evaluate_request_tool_route_horizontal.py",
+      "symbol": "Source input replay branch",
+      "finding": "기록된 SOURCE_RETURNED와 source_schema_errors는 Source runtime 반환 경계의 결과다. 이 branch는 후속 compiled ToolRoute/Retrieval/Planning 업무 실행 기록이 아니다."
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "CASE-CORE-001",
+      "input_authority": {
+        "dataset_case_ref": "CASE-CORE-001",
+        "fixture_pack": "BOREAL",
+        "review_focus": "선택 Thread의 최신 합의와 법무 담당 조회. 다른 메일 검색 금지는 유지한다.",
+        "selected_identity_present": true
+      },
+      "observed_sources": {
+        "v22_paired_baseline": ["GMAIL_THREAD"],
+        "v20": ["GMAIL_THREAD", "GMAIL_MESSAGE"],
+        "v23": null
+      },
+      "definite_producer_loss": [],
+      "route_reachability": ["selected_identity", "gmail_route_collapse"],
+      "additional_read_risk": "Message 추가만으로 다른 메일 검색 또는 금지 위반이라고 판정할 수 없다. 선택 Thread 안의 상세 정보라는 대안과 실제 route collapse를 확인해야 한다.",
+      "business_unverified": ["최신 회신 선택", "기한·담당자 최종 답변", "실제 다른 메일 조회 여부"],
+      "review_classification": "NO_DEFINITE_SOURCE_SEMANTIC_FAILURE_OBSERVED"
+    },
+    {
+      "case_id": "CASE-CORE-009",
+      "input_authority": {
+        "dataset_case_ref": "CASE-CORE-009",
+        "fixture_pack": "KESTREL",
+        "review_focus": "메일의 지연 사실과 작업 진행 상태를 구분하는 READ 답변이다.",
+        "v20_received_output_authority": ["GMAIL_DRAFT/CREATE", "TASK/CREATE"],
+        "upstream_authority_error": "요청하지 않은 CREATE는 기존 v4 Goal/Output raw에서 유입되었다. Source 후보의 신규 Output 오류로 집계하지 않는다."
+      },
+      "observed_sources": {
+        "v22_paired_baseline": null,
+        "v20": ["GMAIL_THREAD", "GMAIL_MESSAGE", "GMAIL_DRAFT", "TASK_LIST", "TASK"],
+        "v23": null
+      },
+      "definite_producer_loss": [],
+      "route_reachability": ["gmail_route_collapse", "dependency_routes"],
+      "additional_read_risk": "필요 메일·작업 사실 family는 보존된다. Draft는 불필요 acquisition 또는 Source/Output 혼동 의심이며, 실제 범위 위반은 이 raw로 확정하지 않는다.",
+      "business_unverified": ["현재 진행 상태의 근거 기반 답변", "새 납품일 발명 여부", "upstream WRITE 오판의 downstream 처리"],
+      "review_classification": "SOURCE_FACT_ACCESS_PRESERVED_WITH_UPSTREAM_OUTPUT_ERROR"
+    },
+    {
+      "case_id": "CASE-CORE-013",
+      "input_authority": {
+        "dataset_case_ref": "CASE-CORE-013",
+        "fixture_pack": "ATLAS",
+        "review_focus": "QR 준비 상태와 인쇄소 슬롯만 내용 근거로 Draft를 준비한다.",
+        "provider_wording_limit": "작업·슬롯은 사용자 업무 표현이다. 첫 Source 출력의 exact subtype만을 정답으로 만들지 않는다.",
+        "fixture_fact_locations": {"QR 준비 상태": "TASK", "인쇄소 슬롯 시각": "CALENDAR_EVENT"}
+      },
+      "observed_sources": {
+        "v22_paired_baseline": [],
+        "v20": ["GMAIL_DRAFT", "TASK_LIST", "TASK", "CALENDAR_EVENT"],
+        "v23": ["GMAIL_DRAFT", "CALENDAR_EVENT"]
+      },
+      "first_repair_distinction": "baseline first에는 고유 Event REQUIRED와 서로 모순된 중복 Task/List 판정이 있었다. full repair는 모든 Source를 제거했다. v23은 고유 Event를 보존했지만 mutable Task/List는 NOT_REQUIRED가 되었다. v20이 처음 Task/Event 의미를 이해했다는 인과 주장은 하지 않는다.",
+      "definite_producer_loss": [
+        {"variant": "v22_paired_baseline", "finding": "조회가 필요한 두 업무 사실의 Source 책임을 final에서 모두 잃었다."},
+        {"variant": "v23", "finding": "QR 상태가 있는 Task/List 접근 책임은 여전히 없다. Event 보존은 repair 구조 개선이며 업무 회복 완료가 아니다."}
+      ],
+      "route_reachability": ["dependency_routes"],
+      "additional_read_risk": "v20/v23의 Draft REQUIRED는 새 Output을 기존 조회 Source로 혼동한 의심과 빈 Draft acquisition 위험이다. 조회 대상이 QR 관련 근거인지 실제 확인하지 않았으므로 추가 READ 자체를 곧바로 금지 위반으로 확정하지 않는다.",
+      "business_unverified": ["Task 상태와 Event 사실 실제 회수", "QR 관련 근거만 선택", "Draft Preview 정확성", "허용되지 않은 내용 포함 여부"],
+      "review_classification": "BASELINE_REPAIR_LOSS_V23_PARTIAL_PRESERVATION_V20_NEEDED_FACT_ACCESS_RETAINED"
+    },
+    {
+      "case_id": "CASE-CORE-019",
+      "input_authority": {
+        "dataset_case_ref": "CASE-CORE-019",
+        "fixture_pack": "FJORD",
+        "review_focus": "목적·오후 선호를 보존하고 자료에도 없는 실행 필수정보를 구체적으로 확인한다.",
+        "corrected_gold_preserved": "필요한 관련 READ 후 확인하는 경로도 허용한다. 확인 전 READ 0 강제는 제거된 기준이다."
+      },
+      "observed_sources": {
+        "v22_paired_baseline": ["CALENDAR", "GMAIL_DRAFT"],
+        "v20": null,
+        "v23": null
+      },
+      "definite_producer_loss": [
+        {"variant": "v22_paired_baseline", "finding": "CALENDAR에 event_identity/start/end 등 Event 소유 정보를 요구한 Resource/정보 소유자 불일치가 있다. 이것만으로 최종 확인 경로 실패를 확정하지 않는다."}
+      ],
+      "route_reachability": ["dependency_routes", "policy_read_enrichment"],
+      "additional_read_risk": "Calendar READ는 관련 사전 확인일 수 있다. 기존 Draft 조회는 역할 혼동 의심이지만 READ 존재 자체가 Gold 위반은 아니다.",
+      "business_unverified": ["관련 조회 이후 구체적 시간·소요시간 확인", "소요시간 발명 여부", "존재하지 않는 생성 결과를 전제한 Draft 여부"],
+      "review_classification": "CONFIRMATION_OUTCOME_UNVERIFIED_NOT_READ_ZERO_FAILURE"
+    },
+    {
+      "case_id": "CASE-CORE-023",
+      "input_authority": {
+        "dataset_case_ref": "CASE-CORE-023",
+        "fixture_pack": "KESTREL",
+        "review_focus": "지연 메일과 대체 일정 작업을 근거로 사용자가 지정한 상태 점검 Event를 준비한다.",
+        "provider_wording_limit": "작업이라는 단어만으로 exact Google subtype을 강제하는 대신 접근 가능한 작업 사실을 본다."
+      },
+      "observed_sources": {
+        "v22_paired_baseline": ["GMAIL_THREAD", "GMAIL_MESSAGE", "TASK_LIST", "TASK", "CALENDAR_EVENT"],
+        "v20": ["GMAIL_THREAD", "GMAIL_MESSAGE", "GMAIL_DRAFT", "GMAIL_ATTACHMENT", "TASK_LIST", "TASK", "CALENDAR", "CALENDAR_EVENT", "CALENDAR_FREEBUSY"],
+        "v23": ["GMAIL_THREAD", "GMAIL_MESSAGE", "TASK_LIST", "TASK", "CALENDAR_EVENT"]
+      },
+      "definite_producer_loss": [],
+      "route_reachability": ["gmail_route_collapse", "dependency_routes", "policy_read_enrichment"],
+      "additional_read_risk": "v20의 9종 선택은 과잉 acquisition 및 불필요한 required-source 실패 위험이다. Calendar/Freebusy는 Event CREATE 정책에도 필요하다. 필요한 사실 접근을 잃은 business FAIL로 즉시 분류하지 않는다.",
+      "business_unverified": ["필수 메일·Task 사실의 Evidence 선택", "빈 Draft/Attachment 때문에 추가 획득 또는 차단되는지", "요청 시각·근무정책·Preview 보존"],
+      "review_classification": "NEEDED_FACT_ACCESS_PRESERVED_EXTRA_ACQUISITION_RISK"
+    },
+    {
+      "case_id": "CASE-CORE-025",
+      "input_authority": {
+        "dataset_case_ref": "CASE-CORE-025",
+        "fixture_pack": "ECHO",
+        "review_focus": "약관 메일과 검토 작업을 근거로 지정 시간의 검토 Event를 준비한다. 가용성도 확인해야 한다."
+      },
+      "observed_sources": {
+        "v22_paired_baseline": ["GMAIL_THREAD", "TASK_LIST", "CALENDAR"],
+        "v20": ["GMAIL_THREAD", "GMAIL_MESSAGE", "GMAIL_DRAFT", "GMAIL_ATTACHMENT", "TASK_LIST", "TASK", "CALENDAR", "CALENDAR_EVENT", "CALENDAR_FREEBUSY"],
+        "v23": null
+      },
+      "observed_information_specificity": "baseline required_information은 Thread identity, TaskList title, Calendar identity로 빈약하다. 그러나 TaskList→Task와 Calendar→Event dependency 및 Event CREATE 정책이 있다.",
+      "definite_producer_loss": [],
+      "route_reachability": ["gmail_route_collapse", "dependency_routes", "policy_read_enrichment"],
+      "additional_read_risk": "Task/Event 직접 항목 부재를 실행 경로 부재와 동일시하지 않는다. v20은 필요한 family를 갖췄으나 Draft/Attachment 등 불필요한 필수 acquisition 위험이 있다.",
+      "business_unverified": ["dependency로 얻은 Task 내용이 실제 업무 근거로 선택되는지", "메일·작업 사실의 충분성", "요청 시간 전체의 가용성 및 Preview"],
+      "review_classification": "UNDER_SPECIFIED_INFORMATION_WITH_AVAILABLE_DEPENDENCY_PATHS"
+    },
+    {
+      "case_id": "CASE-CORE-027",
+      "input_authority": {
+        "dataset_case_ref": "CASE-CORE-027",
+        "fixture_pack": "ECHO",
+        "review_focus": "업무 마감·작업 예정일·가용시간을 구분하는 READ 답변이며 Event 생성 또는 생성 Preview는 금지다."
+      },
+      "observed_sources": {
+        "v22_paired_baseline": ["GMAIL_THREAD", "TASK_LIST", "TASK", "CALENDAR"],
+        "v20": ["GMAIL_THREAD", "CALENDAR_EVENT", "TASK", "CALENDAR_FREEBUSY"],
+        "v23": null
+      },
+      "definite_producer_loss": [
+        {"variant": "v22_paired_baseline", "finding": "busy_time_ranges를 CALENDAR에 귀속한 정보 소유자 불일치가 있다. Calendar→Event detail 경로가 있어 실제 가용시간 조회 실패로 바로 등치하지 않는다."}
+      ],
+      "route_reachability": ["dependency_routes"],
+      "additional_read_risk": "Event READ는 Event CREATE 금지를 위반하지 않는다. v20은 메일·Task·Event/Freebusy의 필요한 사실 family를 갖춘다.",
+      "business_unverified": ["업무 마감과 date-only Task 예정일의 구분", "전체 요청 시간창 가용성", "근거 없는 가능/불가능 또는 임의 마감시각 답변 여부"],
+      "review_classification": "V20_NEEDED_FACT_ACCESS_PRESERVED_BASELINE_OWNER_MISMATCH"
+    },
+    {
+      "case_id": "CASE-CORE-045",
+      "input_authority": {
+        "dataset_case_ref": "CASE-CORE-045",
+        "fixture_pack": "ECHO",
+        "review_focus": "메일 마감, 작업 기한, Calendar busy를 모두 근거로 판단하되 알려지지 않은 작업 소요시간을 발명하지 않는다."
+      },
+      "observed_sources": {
+        "v22_paired_baseline": [],
+        "v20": null,
+        "v23": null
+      },
+      "definite_producer_loss": [
+        {"variant": "v22_paired_baseline", "finding": "명시적으로 요구한 외부 사실 조회 책임을 모두 NOT_REQUIRED로 반환했다."}
+      ],
+      "route_reachability": ["source_semantic_guard"],
+      "additional_read_risk": "추가 READ 문제가 아니라 필수 사실 획득 책임 소실이다. Product guard의 거절 가능성과 무근거 최종 답변 실행을 구분한다.",
+      "business_unverified": ["Product semantic guard 이후 실제 상태", "최종 답변 및 Evidence 사용"],
+      "review_classification": "DEFINITE_SOURCE_PRODUCER_OMISSION_NOT_OBSERVED_FINAL_ANSWER_FAILURE"
+    },
+    {
+      "case_id": "CASE-CORE-049",
+      "input_authority": {
+        "dataset_case_ref": "CASE-CORE-049",
+        "fixture_pack": "ATLAS",
+        "review_focus": "메일·작업·Calendar를 모두 보고 서로 다른 Task/Event/Draft 세 출력을 준비한다."
+      },
+      "observed_sources": {
+        "v22_paired_baseline": ["CALENDAR_EVENT"],
+        "v20": [],
+        "v23": null
+      },
+      "definite_producer_loss": [
+        {"variant": "v22_paired_baseline", "finding": "명시적 메일·작업 Source 책임이 누락됐다. Task 조회 경로는 생성 정책으로 후속 보강 가능하지만 메일은 아니다."},
+        {"variant": "v20", "finding": "직접 Source 책임을 모두 잃었다. 특히 명시적 메일 Source는 Task/Event CREATE 정책으로 보강되지 않는다."}
+      ],
+      "route_reachability": ["policy_read_enrichment", "dependency_routes"],
+      "additional_read_risk": "Task/Event 정책 조회가 존재할 수 있으므로 모든 family가 영구적으로 사라졌다고 단정하지 않는다. 정책 조회는 원래 업무 사실 전체의 회수·선택 성공을 보장하지 않는다.",
+      "business_unverified": ["후속 route reconsideration 가능성", "세 Source 사실 실제 사용", "세 출력의 독립 의미와 시간 관계", "정확한 승인 전 Preview"],
+      "review_classification": "DEFINITE_MAIL_SOURCE_OMISSION_WITH_PARTIAL_POLICY_ROUTE_RECOVERY_POSSIBLE"
+    }
+  ],
+  "v20_decision_scope_correction": {
+    "historical_decision_preserved": "REJECT",
+    "historical_scores_unchanged": true,
+    "review_disposition": "BUSINESS_EFFECT_JUDGMENT_DEFERRED_NOT_ADOPTED",
+    "correction": "기존 REJECT를 business 전체 실패 또는 필요한 Source 의미가 전혀 개선되지 않았다는 판정으로 확대하지 않는다. 013의 final Task/Event 접근과 027의 가용시간 family 표현 등 회복된 필요 사실 접근, 023/025의 과잉 acquisition 위험, 049의 확실한 메일 책임 누락을 분리해서 후속 연결 판단을 유보한다.",
+    "not_claimed": [
+      "v20이 전체 업무 성공률을 개선했다",
+      "v20이 Output→Source handoff만으로 baseline013의 first 의미를 처음 회복했다",
+      "추가 READ를 허용하면 049 누락도 정상이다",
+      "Production 채택 근거가 충분하다"
+    ]
+  },
+  "bounded_connected_gate_recommendation": {
+    "decision": "RECOMMENDED_WITH_BOUNDARY_SPECIFIC_SUCCESS_CRITERIA",
+    "cases": ["CASE-CORE-001", "CASE-CORE-013", "CASE-CORE-023", "CASE-CORE-027"],
+    "rationale": "네 Case는 selected identity, repair 후 필요한 사실 보존, 과잉 required Source의 실효 영향, READ-only 가용시간 의미라는 서로 다른 연결 불확실성을 작은 범위로 검사한다. 단순 Source schema 또는 RU→ToolRoute까지만 실행하면 실제 Evidence 선택·불필요 acquisition으로 인한 차단은 판정할 수 없다.",
+    "reuse_first": "기존 frozen Source/Output authority raw를 compiled ToolRoute 및 합성 fixture Retrieval 경계에 먼저 연결해 deterministic fan-out, dependency, 정책, business-required 범위를 확인한다. 이는 새 Source 모델 품질 Trial로 세지 않는다.",
+    "actual_model_gate": "동일 고정 SHA/fixture/reference time/runtime에서 사전 선언한 Case당 1회만 실행한다. 의미 선택이 필요한 Query/Evidence/Sufficiency 경계의 실제 모델 결과와 fake deterministic 연결 검증을 별도로 보고한다. Live Google/GitHub와 실제 WRITE는 사용하지 않는다.",
+    "case_questions": {
+      "CASE-CORE-001": "선택 Thread authority가 보존되고 추가 Message subtype이 실제 타 메일 검색으로 확대되지 않는가?",
+      "CASE-CORE-013": "QR Task와 인쇄소 Event 사실이 실제로 회수·선택되는가? Draft Source가 관련 없는 필수 acquisition 또는 빈 결과 차단을 만드는가?",
+      "CASE-CORE-023": "필수 메일·Task 사실을 얻은 뒤 추가 Draft/Attachment 요구가 불필요한 재조회·차단을 만드는가? 정책 Calendar READ와 이를 구분하는가?",
+      "CASE-CORE-027": "Calendar/Event/Freebusy 경로가 마감과 가용시간 근거를 보존하며 ANSWER에 도달하는가? READ를 금지된 Event CREATE로 바꾸지 않는가?"
+    },
+    "required_observations": [
+      "Source first/repair/final과 provenance-preserving merge",
+      "direct / dependency-only / policy input route 및 WorkUnit binding",
+      "실제 실행된 합성 Provider READ 종류·대상·횟수",
+      "각 필수 업무 사실의 Evidence 연결과 sufficiency reason",
+      "추가 Source가 단순 capability인지 mandatory acquisition 차단을 유발하는지",
+      "ANSWER 또는 승인 전 Draft/Event Preview와 미검증 경계"
+    ],
+    "limits": [
+      "이 네 Case만 통과해도 049의 메일 Source 누락 또는 009의 upstream Output 오판이 해결됐다고 할 수 없다.",
+      "새 연결 실행 결과는 과거 Source-only Trial을 성공 Trial로 대체하지 않는다.",
+      "Source raw를 주입한 연결 검증은 원문부터 실제 Production RU까지의 전체 안정성 증명이 아니다.",
+      "이번 리뷰 작성에서는 gate를 실행하지 않았다."
+    ]
+  }
+}

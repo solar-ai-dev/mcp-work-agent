@@ -57,6 +57,10 @@ from scripts.ru_source_family_bound_candidate import BoundSourceFamilyCandidate
 from scripts.ru_source_family_candidate import SourceFamilyCandidate
 from scripts.ru_source_item_repair_candidate import source_item_repair_candidate
 from scripts.ru_source_scope_candidate import source_scope_candidate
+from scripts.ru_source_scope_handoff_candidate import (
+    SourceScopeHandoffCandidate,
+    source_scope_handoff_candidate,
+)
 
 from google_work_agent.adapters.langgraph.main.routing.route_after_supervisor import (
     RESUME_CONTRACT_VERSION,
@@ -288,6 +292,7 @@ def main() -> None:
             "bound-source-family-v18",
             "output-source-handoff-v20",
             "request-grounded-goal-v21",
+            "scope-handoff-v24",
         ),
         default="none",
     )
@@ -436,6 +441,7 @@ def main() -> None:
             "bound-source-family-v18": BoundSourceFamilyCandidate,
             "output-source-handoff-v20": OutputSourceHandoffCandidate,
             "request-grounded-goal-v21": RequestGroundedGoalCandidate,
+            "scope-handoff-v24": SourceScopeHandoffCandidate,
         }.get(args.semantic_candidate)
         semantic_candidate = (
             candidate_class(
@@ -611,7 +617,18 @@ def main() -> None:
                 "fault_profile": cases[case_id].gold.get("fault_profile"),
             }
             repair_events.clear()
+            case_stack = ExitStack()
+            scope_handoff = None
             try:
+                if args.semantic_candidate == "scope-handoff-v24":
+                    scope_events: list[dict[str, Any]] = []
+                    record["source_scope_handoff_events"] = scope_events
+                    scope_handoff = case_stack.enter_context(
+                        source_scope_handoff_candidate(
+                            user_request=request.request_text,
+                            events=scope_events,
+                        )
+                    )
                 if replay_records:
                     replay_prompt_id = (
                         "request_understanding.identify_goal"
@@ -628,6 +645,10 @@ def main() -> None:
                     record["owner_input_sha256"] = object_hash(projection)
                     record["actual_owner_reference_time"] = base.get("run_reference_time")
                     work_ids = [item["unit_id"] for item in base["requested_work"]["work_units"]]
+                    if scope_handoff is not None:
+                        if base["user_request"] != request.request_text:
+                            raise ValueError("scope replay request differs from current case")
+                        scope_handoff.bind_work_units(work_ids)
                     schema = (
                         goal_schema_ops.identify_goal_output_schema(work_ids)
                         if args.goal_replay_from
@@ -690,6 +711,10 @@ def main() -> None:
                     if args.goal_replay_from:
                         record["goal_output"] = record.pop("source_output")
                         record["goal_schema_errors"] = record.pop("source_schema_errors")
+                        if scope_handoff is not None and not schema_errors:
+                            record["validated_scope_items"] = scope_handoff.raw_scopes(
+                                structured_output
+                            )
                     record["llm"] = metrics(transport_calls)
                     record["transport_calls"] = deepcopy(transport_calls)
                     record["atomic"] = deepcopy(recorder.atomic)
@@ -737,6 +762,8 @@ def main() -> None:
                 record["status"] = "ERROR"
                 record["error_type"] = type(error).__name__
                 record["error"] = str(error)[:500]
+            finally:
+                case_stack.close()
             record["logical_llm"] = {
                 "calls": len(recorder.calls)
                 - (0 if semantic_candidate is None else semantic_candidate.cached_response_count)
