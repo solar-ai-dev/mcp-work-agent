@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from copy import deepcopy
 from pathlib import Path
 from typing import Literal, TypedDict, cast
 
@@ -167,8 +168,11 @@ def _ambiguity_goal_candidate_projection(
     projection: dict[str, object] = {
         "goal": goal_candidate["goal"],
         "completion_conditions": list(goal_candidate["completion_conditions"]),
-        "constraints": [dict(item) for item in goal_candidate["constraints"]],
+        "constraints": deepcopy(goal_candidate["constraints"]),
     }
+    requested_work = goal_candidate.get("requested_work")
+    if requested_work is not None:
+        projection["requested_work"] = deepcopy(requested_work)
     resource_responsibilities = goal_candidate.get("resource_responsibilities")
     if resource_responsibilities is not None:
         projection["resource_responsibilities"] = {
@@ -177,10 +181,15 @@ def _ambiguity_goal_candidate_projection(
                     "resource_type": item["resource_type"],
                     "required_information": list(item["required_information"]),
                     "target_scope": item["target_scope"],
+                    **(
+                        {"work_unit_ids": list(item["work_unit_ids"])}
+                        if "work_unit_ids" in item
+                        else {}
+                    ),
                 }
                 for item in resource_responsibilities["source_reads"]
             ],
-            "outputs": [dict(item) for item in resource_responsibilities["outputs"]],
+            "outputs": deepcopy(resource_responsibilities["outputs"]),
         }
     return projection
 
@@ -285,6 +294,7 @@ def _resolve_searchable_target_ownership(
     if (
         candidate["missing_information_owner"] != "USER"
         or candidate["missing_fields"] != ["target_resource"]
+        or _has_multiple_requested_work_units(goal_candidate)
         or _searchable_target_anchor_count(goal_candidate) == 0
         or _connector_owned_source_count(goal_candidate) == 0
     ):
@@ -293,6 +303,12 @@ def _resolve_searchable_target_ownership(
         "missing_information_owner": "CONNECTOR",
         "missing_fields": ["target_resource"],
     }
+
+
+def _has_multiple_requested_work_units(goal_candidate: RequestGoalCandidateV1) -> bool:
+    """An unscoped missing field cannot be assigned to one of several known works."""
+    requested_work = goal_candidate.get("requested_work")
+    return requested_work is not None and len(requested_work["work_units"]) > 1
 
 
 def _resolution_responsibilities(
@@ -357,6 +373,10 @@ def _selected_target_identity_is_resolved(
     selected_resources: Sequence[SelectedResourceRef],
     resource_specific_target_types: frozenset[str],
 ) -> bool:
+    if _has_multiple_requested_work_units(goal_candidate):
+        # A matching Resource type proves no binding to the particular missing
+        # target: the existing ambiguity output carries no WorkUnit identity.
+        return False
     selected_types = {
         item.resource_type.strip().upper()
         for item in selected_resources
@@ -374,7 +394,7 @@ def _selected_target_identity_is_resolved(
 
 def _connector_owned_information(
     goal_candidate: RequestGoalCandidateV1,
-) -> list[dict[str, str]]:
+) -> list[dict[str, object]]:
     responsibilities = goal_candidate.get("resource_responsibilities")
     if responsibilities:
         return [
@@ -385,6 +405,11 @@ def _connector_owned_information(
                 "information": information,
                 "resource_type": item["resource_type"],
                 "owner": "CONNECTOR",
+                **(
+                    {"work_unit_ids": list(item["work_unit_ids"])}
+                    if "work_unit_ids" in item
+                    else {}
+                ),
             }
             for index, item in enumerate(responsibilities["source_reads"])
             for information in item["required_information"]
@@ -394,6 +419,11 @@ def _connector_owned_information(
             "constraint_path": f"$.goal_candidate.constraints[{index}]",
             "information": information,
             "owner": "CONNECTOR",
+            **(
+                {"work_unit_ids": list(constraint["work_unit_ids"])}
+                if "work_unit_ids" in constraint
+                else {}
+            ),
         }
         for index, constraint in enumerate(goal_candidate["constraints"])
         if constraint["field"] == "required_information"

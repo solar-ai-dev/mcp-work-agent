@@ -1068,6 +1068,19 @@ Holdout Gold 원문
 
 `detect_ambiguity` candidate는 `missing_information_owner=NONE | USER | CONNECTOR`를 출력하며 USER branch만 Confirmation을 허용한다.
 
+입력 계약 v3의 `goal_candidate`는 이미 검증된 `requested_work`와
+Source·Output·Constraint의 `work_unit_ids`, exact request provenance를 그대로 소비한다.
+`resolution_responsibilities.connector_owned_information`도 참조한 항목에 있는 WorkUnit binding을
+보존한다. 없는 legacy binding을 새로 추정하거나 Resource 종류만으로 여러 업무를 합치지 않는다.
+이 입력 projection은 업무·Source·effect의 재판정이나 실행 승인이 아니며,
+기존 ambiguity 출력 v2와 persisted RequestIntentV3의 형태는 변경하지 않는다.
+
+기존 ambiguity 출력의 `missing_fields`에는 WorkUnit 귀속이 없다. 여러 WorkUnit이 명시된
+요청에서는 한 업무의 검색 anchor나 같은 Resource 종류의 selected identity만으로
+다른 업무의 `USER` target 판단을 해소·거절할 수 없다. 그 경우 기존 후보를 보존하며,
+코드가 missing field에 업무 ID를 추측해 붙이지 않는다. 단일 업무·legacy의 기존 처리,
+구조 검증과 repository authority 검사는 유지한다.
+
 - 모호성은 기본 BLOCK이 아니라 `NEEDS_CONFIRMATION → ConfirmationRequiredV1 → RequestConfirmation → same-owner interrupt/resume`다.
 - 후보가 있으면 후보·차이·선택지를 제공하고, 후보가 없으면 최소 누락 정보만 질문한다.
 - `처리/진행/시작/정리/마무리`는 문맥으로 의미가 단일하면 질문하지 않는다.

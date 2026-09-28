@@ -4,7 +4,7 @@
 
 # 입력의 의미
 
-`user_request`와 `selected_resource_refs`에서 사용자가 말하고 선택한 것을 확인한다. `goal_candidate`는 앞 단계에서 검증된 목표·완료 조건·제약과 분리 확정된 source/output 책임이다. 여기서 Resource 역할이나 effect를 다시 판정하지 않는다. `resolution_responsibilities.connector_owned_information`은 대상이 결속된 뒤 Connector가 조회할 속성 요구다. 이 목록이 있다는 사실 자체는 target identity가 결속됐다는 뜻이 아니다. `resolved_resource_refs`는 이미 결속된 대상의 identity로 소비한다. `confirmation_response`는 해당 질문에 대한 현재 Run의 응답만 해결한다.
+`user_request`와 `selected_resource_refs`에서 사용자가 말하고 선택한 것을 확인한다. `goal_candidate`는 앞 단계에서 검증된 목표·완료 조건·제약과 분리 확정된 source/output 책임이다. `goal_candidate.requested_work`는 그 항목의 `work_unit_ids`가 참조하는 업무와 원문 provenance이며, 동일 Resource라도 업무 귀속은 이 binding을 따른다. 여기서 Resource 역할이나 effect를 다시 판정하지 않는다. `resolution_responsibilities.connector_owned_information`은 대상이 결속된 뒤 Connector가 조회할 속성 요구와 기존 WorkUnit binding이다. 이 목록이 있다는 사실 자체는 target identity가 결속됐다는 뜻이 아니다. `resolved_resource_refs`는 이미 결속된 대상의 identity로 소비한다. `confirmation_response`는 해당 질문에 대한 현재 Run의 응답만 해결한다.
 
 `resolution_responsibilities.searchable_target_anchor_count`는 현재 Run의 검증된 검색 대상 constraint 수이고 `connector_owned_source_count`는 Connector가 읽을 source 책임 수다.
 
