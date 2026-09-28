@@ -23,6 +23,17 @@ from google_work_agent.ports.llm.structured_inference_contracts import (
 _TARGET = "request_understanding.identify_source_dependencies"
 
 
+@pytest.mark.parametrize(
+    "usage",
+    [{}, {"input_tokens": None, "output_tokens": 4}, {"input_tokens": 5, "output_tokens": None}],
+)
+def test_usage_null_or_missing_is_not_reported_as_complete_zero_usage(
+    usage: dict[str, Any],
+) -> None:
+    assert metrics([usage])["missing_usage_calls"] == 1
+    assert metrics([{"input_tokens": 0, "output_tokens": 0}])["missing_usage_calls"] == 0
+
+
 def _invoke(prompt_id: str) -> Any:
     return transport.OllamaHTTPClient().invoke_structured(
         endpoint="http://127.0.0.1:11434",

@@ -64,7 +64,10 @@ def metrics(calls: list[dict[str, Any]]) -> dict[str, Any]:
         "input_tokens": sum(call.get("input_tokens") or 0 for call in calls),
         "output_tokens": sum(call.get("output_tokens") or 0 for call in calls),
         "reported_latency_ms": sum(call.get("latency_ms") or 0 for call in calls),
-        "missing_usage_calls": sum("input_tokens" not in call for call in calls),
+        "missing_usage_calls": sum(
+            call.get("input_tokens") is None or call.get("output_tokens") is None
+            for call in calls
+        ),
     }
 
 
