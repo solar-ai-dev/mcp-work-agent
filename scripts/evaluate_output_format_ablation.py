@@ -2,8 +2,9 @@
 
 Historical inputs are provenance, not new scores. Both arms retain the schema
 inside the Prompt and use the same Product schema/owner validator afterwards.
-The omitted mode uses six new calls; JSON mode reuses three constrained records
-and performs only three new JSON-mode calls.
+The historical omitted mode uses six new calls; JSON mode reuses three constrained
+records and performs only three new JSON-mode calls. Core5 rebinds inputs to the
+current Prompt and uses ten new calls, with separate strict/fence validation.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from collections import Counter
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import asdict
+from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
@@ -49,6 +51,14 @@ SOURCES = (
     ("CASE-CORE-017", "work-span-codec-v35"),
     ("CASE-CORE-049", "work-span-codec-v35"),
 )
+CORE5_SOURCES = (
+    ("CASE-CORE-009", "064-connected-core8-t1"),
+    ("CASE-CORE-019", "064-connected-core8-t1"),
+    ("CASE-CORE-023", "064-connected-core8-t1"),
+    ("CASE-CORE-025", "064-connected-core8-continuation-t1"),
+    ("CASE-CORE-059", "064-connected-core8-continuation-t1"),
+)
+CORE5_CRITERIA = "evaluation/experiments/064-output-fence-core5-criteria.md"
 ARMS = ("schema_constrained", "format_omitted")
 CANDIDATE_ARMS = {"omitted": "format_omitted", "json": "format_json"}
 TIMEOUT_SECONDS = 180
@@ -68,12 +78,21 @@ def arms_for_mode(candidate_mode: str) -> tuple[str, str]:
     return "schema_constrained", CANDIDATE_ARMS[candidate_mode]
 
 
-def reconstruct_payload(call: dict[str, Any]) -> dict[str, Any]:
+def reconstruct_payload(
+    call: dict[str, Any], *, rebind_current_prompt: bool = False
+) -> dict[str, Any]:
     """Run actual Product payload construction with an in-memory HTTP sink only."""
     registry = PromptRegistry()
     ref = registry.lookup_for_evaluation(PROMPT_ID)
-    if call["prompt_ref"] != asdict(ref):
+    current_ref = asdict(ref)
+    if not rebind_current_prompt and call["prompt_ref"] != current_ref:
         raise ValueError("historical Output PromptRef differs from current artifact")
+    if rebind_current_prompt and any(
+        call["prompt_ref"].get(key) != value
+        for key, value in current_ref.items()
+        if key not in {"prompt_version", "content_hash"}
+    ):
+        raise ValueError("current Prompt rebind cannot change owner/schema contract")
     schema = build_output_responsibility_output_schema(
         call["input"]["output_candidates"], work_unit_ids=_work_ids(call)
     )
@@ -114,7 +133,7 @@ def reconstruct_payload(call: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Product transport must produce exactly one generate payload")
     payload = cast(dict[str, Any], captured[0]["payload"])
     if (
-        object_hash(payload) != call["wire_sha256"]
+        (not rebind_current_prompt and object_hash(payload) != call["wire_sha256"])
         or payload["options"] != call["wire_options"]
         or payload["think"] != call["wire_think"]
     ):
@@ -126,7 +145,7 @@ def payload_for(case: dict[str, Any], arm: str) -> dict[str, Any]:
     if arm not in arms_for_mode(case.get("candidate_mode", "omitted")):
         raise ValueError("unregistered format arm")
     payload = cast(dict[str, Any], deepcopy(case["payload"]))
-    if object_hash(payload) != case["source_call"]["wire_sha256"]:
+    if object_hash(payload) != case.get("baseline_wire_sha256", case["source_call"]["wire_sha256"]):
         raise ValueError("registered historical payload changed")
     prompt = json.loads(payload["prompt"])
     if (
@@ -135,6 +154,11 @@ def payload_for(case: dict[str, Any], arm: str) -> dict[str, Any]:
         or payload["format"] != prompt["output_schema"]
     ):
         raise ValueError("validator authority differs from actual wire input/schema")
+    if "current_prompt_ref" in case and prompt["prompt_ref"] != {
+        key: case["current_prompt_ref"][key]
+        for key in ("prompt_id", "prompt_version", "content_hash")
+    }:
+        raise ValueError("registered current PromptRef differs from actual wire")
     if arm == "format_omitted":
         del payload["format"]
     elif arm == "format_json":
@@ -150,34 +174,49 @@ def make_plan(
     source_root: Path = SOURCE_ROOT,
     candidate_mode: str = "omitted",
     baseline_raw: Path = BASELINE_RAW,
+    input_set: str = "historical3",
+    core5_root: Path = RESULTS,
 ) -> dict[str, Any]:
     arms = arms_for_mode(candidate_mode)
-    source_plan_path = source_root / "plan.json"
-    source_plan = json.loads(source_plan_path.read_text(encoding="utf-8"))
-    if (
-        source_plan["model"]["id"] != model["model_id"]
-        or source_plan["model"]["digest"] != model["model_digest"]
-        or not model["model_digest"]
+    if input_set not in {"historical3", "core5"} or (
+        input_set == "core5" and candidate_mode != "omitted"
     ):
-        raise ValueError("actual installed model differs from historical model digest")
-    if source_plan["dataset_sha256"] != file_hash(DEFAULT_DATASET_PATH) or source_plan[
-        "snapshot_sha256"
-    ] != file_hash(DEFAULT_PROVIDER_FIXTURE_PATH):
-        raise ValueError("historical dataset/fixture binding changed")
+        raise ValueError("Core5 permits only the fixed constrained/omitted paired comparison")
+    sources = (
+        [(case_id, "production", core5_root / directory) for case_id, directory in CORE5_SOURCES]
+        if input_set == "core5"
+        else [(case_id, arm, source_root) for case_id, arm in SOURCES]
+    )
+    source_plans: dict[Path, dict[str, Any]] = {}
     canonical = load_cases()
     cases = []
-    for case_id, arm in SOURCES:
-        directory = source_root / case_id / arm
+    for case_id, arm, root in sources:
+        source_plan_path = root / "plan.json"
+        if source_plan_path not in source_plans:
+            source_plan = json.loads(source_plan_path.read_text(encoding="utf-8"))
+            if (
+                source_plan["model"]["id"] != model["model_id"]
+                or source_plan["model"]["digest"] != model["model_digest"]
+                or not model["model_digest"]
+            ):
+                raise ValueError("actual installed model differs from historical model digest")
+            if source_plan["dataset_sha256"] != file_hash(DEFAULT_DATASET_PATH) or source_plan[
+                "snapshot_sha256"
+            ] != file_hash(DEFAULT_PROVIDER_FIXTURE_PATH):
+                raise ValueError("historical dataset/fixture binding changed")
+            source_plans[source_plan_path] = source_plan
+        source_plan = source_plans[source_plan_path]
+        directory = root / case_id / arm
         calls_path, raw_path = directory / "calls.json", directory / "raw.json"
         calls = json.loads(calls_path.read_text(encoding="utf-8"))["calls"]
         matches = [
-            call
-            for call in calls
+            (index, call)
+            for index, call in enumerate(calls)
             if call.get("prompt_id") == PROMPT_ID and "base_projection" not in call["input"]
         ]
         if len(matches) != 1:
             raise ValueError("exactly one original Output FIRST required per fixed source")
-        call = matches[0]
+        call_index, call = matches[0]
         raw = json.loads(raw_path.read_text(encoding="utf-8"))
         binding = next(item for item in source_plan["cases"] if item["case_id"] == case_id)
         if (
@@ -190,27 +229,50 @@ def make_plan(
             or call["model"] != model["model_id"]
         ):
             raise ValueError("frozen Case/Run/request/model provenance mismatch")
-        payload = reconstruct_payload(call)
+        if input_set == "core5":
+            _validate_core5_reference_time(call, binding, canonical[case_id].raw, source_plan)
+        payload = reconstruct_payload(call, rebind_current_prompt=input_set == "core5")
         candidate_payload = {k: v for k, v in payload.items() if k != "format"}
         if candidate_mode == "json":
             candidate_payload["format"] = "json"
-        cases.append(
-            {
-                "case_id": case_id,
-                "candidate_mode": candidate_mode,
-                "case_binding": deepcopy(binding),
-                "source_arm": arm,
-                "source_calls_path": calls_path.resolve().as_posix(),
-                "source_calls_sha256": file_hash(calls_path),
-                "source_raw_path": raw_path.resolve().as_posix(),
-                "source_raw_sha256": file_hash(raw_path),
-                "source_call": deepcopy(call),
-                "payload": payload,
-                "instruction_sha256": hashlib.sha256(payload["system"].encode()).hexdigest(),
-                "candidate_wire_sha256": object_hash(candidate_payload),
-            }
-        )
-    bound_files = (
+        case = {
+            "case_id": case_id,
+            "candidate_mode": candidate_mode,
+            "case_binding": deepcopy(binding),
+            "source_arm": arm,
+            "source_calls_path": calls_path.resolve().as_posix(),
+            "source_calls_sha256": file_hash(calls_path),
+            "source_raw_path": raw_path.resolve().as_posix(),
+            "source_raw_sha256": file_hash(raw_path),
+            "source_call": deepcopy(call),
+            "payload": payload,
+            "instruction_sha256": hashlib.sha256(payload["system"].encode()).hexdigest(),
+            "candidate_wire_sha256": object_hash(candidate_payload),
+        }
+        if input_set == "core5":
+            current_ref = asdict(PromptRegistry().lookup_for_evaluation(PROMPT_ID))
+            case.update(
+                input_set="core5",
+                source_plan_path=source_plan_path.resolve().as_posix(),
+                source_plan_sha256=file_hash(source_plan_path),
+                source_plan_object_sha256=object_hash(source_plan),
+                source_call_array_index=call_index,
+                source_call_sha256=object_hash(call),
+                historical_prompt_ref=deepcopy(call["prompt_ref"]),
+                historical_wire_sha256=call["wire_sha256"],
+                current_prompt_ref=current_ref,
+                prompt_ref_diff={
+                    key: {"historical": call["prompt_ref"].get(key), "current": value}
+                    for key, value in current_ref.items()
+                    if call["prompt_ref"].get(key) != value
+                },
+                baseline_wire_sha256=object_hash(payload),
+                historical_response_reused=False,
+                historical_score_reused=False,
+                fence_admission="EVALUATION_ONLY_SINGLE_JSON_FENCE",
+            )
+        cases.append(case)
+    bound_files: tuple[str, ...] = (
         "scripts/evaluate_output_format_ablation.py",
         "scripts/evaluate_effect_prohibition_sampler.py",
         "scripts/ru_observation.py",
@@ -226,7 +288,9 @@ def make_plan(
         "src/google_work_agent/application/prompt_runtime/sources/request_understanding.identify_output_responsibilities.md",
         "src/google_work_agent/ports/llm/output_schema_validation.py",
     )
-    plan = {
+    if input_set == "core5":
+        bound_files += (CORE5_CRITERIA,)
+    plan: dict[str, Any] = {
         "schema_version": 1,
         "kind": "FROZEN_OUTPUT_FIRST_FORMAT_ONLY_OWNER_DIAGNOSTIC",
         "candidate_mode": candidate_mode,
@@ -239,7 +303,7 @@ def make_plan(
         "source_hashes": {path: file_hash(ROOT / path) for path in bound_files},
         "policy": {
             "trials_per_case_arm": 1,
-            "max_http_generation_calls": 3 if candidate_mode == "json" else 6,
+            "max_http_generation_calls": len(cases) * (1 if candidate_mode == "json" else 2),
             "reused_baseline_calls": 3 if candidate_mode == "json" else 0,
             "http_calls_per_arm": 1,
             "timeout_seconds_per_arm": TIMEOUT_SECONDS,
@@ -262,9 +326,57 @@ def make_plan(
             if candidate_mode != "json" or arm == "format_json"
         ],
     }
+    if input_set == "core5":
+        del plan["source_plan_path"], plan["source_plan_sha256"]
+        plan["policy"]["runtime_options"] = "EXACT_HISTORICAL_OPTIONS_AND_THINK_UNCHANGED"
+        plan.update(
+            input_set="core5",
+            kind="CURRENT_PROMPT_FROZEN_CORE5_OUTPUT_OWNER_DIAGNOSTIC",
+            source_plans=[
+                {
+                    "path": path.resolve().as_posix(),
+                    "sha256": file_hash(path),
+                    "object_sha256": object_hash(value),
+                    "head_sha": value["head_sha"],
+                    "model": deepcopy(value["model"]),
+                }
+                for path, value in source_plans.items()
+            ],
+            historical_response_reuse=False,
+            historical_score_reuse=False,
+        )
     if candidate_mode == "json":
         plan["reused_baseline"] = load_reused_baseline(baseline_raw, plan)
     return plan
+
+
+def _validate_core5_reference_time(
+    call: dict[str, Any],
+    binding: dict[str, Any],
+    canonical: dict[str, Any],
+    source_plan: dict[str, Any],
+) -> None:
+    """Keep the observed Case clock and fault binding, never replace them with now."""
+    reference = call["input"]["run_reference_time"]
+    observed = datetime.fromisoformat(reference["reference_time"])
+    case_reference = (canonical.get("evaluation_context") or {}).get("run_reference_time")
+    expected_ms = source_plan["preregistered_reference_time_ms"]
+    if case_reference is not None:
+        case_clock = datetime.fromisoformat(case_reference)
+        if case_clock.utcoffset() is None:
+            raise ValueError("Canonical reference time requires an explicit offset")
+        expected_ms = int(case_clock.timestamp() * 1000)
+    if (
+        observed.utcoffset() is None
+        or int(observed.timestamp()) != binding["effective_reference_time_ms"] // 1000
+        or binding["effective_reference_time_ms"] != expected_ms
+        or binding["case_reference_time"] != case_reference
+        or binding["reference_time_source"]
+        != ("CASE" if case_reference is not None else "PREREGISTERED_PAIR_START")
+        or binding["fault_profile"] != canonical["evaluation_gold"]["fault_profile"]
+        or binding["request_sha256"] != object_hash(canonical["canonical_user_prompt"])
+    ):
+        raise ValueError("historical Case reference time/request/fault binding changed")
 
 
 def load_reused_baseline(path: Path, plan: dict[str, Any]) -> dict[str, Any]:
@@ -513,6 +625,13 @@ def run_arm(
         "schema_repairs": 0,
         "http_retries": 0,
     }
+    if case.get("input_set") == "core5":
+        record.update(
+            prompt_ref=deepcopy(case["current_prompt_ref"]),
+            historical_prompt_ref=deepcopy(case["historical_prompt_ref"]),
+            historical_wire_sha256=case["historical_wire_sha256"],
+            historical_response_reused=False,
+        )
     persist(record)
     started = time.monotonic()
     try:
@@ -537,8 +656,14 @@ def run_arm(
             output_tokens=response.get("eval_count"),
             latency_ms=total_duration // 1_000_000 if type(total_duration) is int else None,
         )
+        if case.get("input_set") == "core5":
+            for field in ("load_duration", "prompt_eval_duration", "eval_duration"):
+                duration = response.get(field)
+                record[f"{field}_ms"] = duration // 1_000_000 if type(duration) is int else None
         persist(record)
         record["validation"] = validate_response(record["content"], case)
+        if case.get("input_set") == "core5" and arm == "format_omitted":
+            record["fence_validation"] = validate_fenced_response(record["content"], case)
     except Exception as error:
         record.update(
             state="ERROR",
@@ -558,10 +683,16 @@ def execute_plan(plan: dict[str, Any], output: Path, *, plan_sha256: str) -> dic
     if not output.is_relative_to(RESULTS.resolve()) or output == RESULTS.resolve():
         raise ValueError("dedicated evaluation/results directory required")
     candidate_mode = plan.get("candidate_mode", "omitted")
+    input_set = plan.get("input_set", "historical3")
+    if input_set not in {"historical3", "core5"} or (
+        input_set == "core5" and candidate_mode != "omitted"
+    ):
+        raise ValueError("only the registered input set and format mode are allowed")
+    sources = CORE5_SOURCES if input_set == "core5" else SOURCES
     arms = arms_for_mode(candidate_mode)
     expected_order = [
         {"case_id": case_id, "arm": arm}
-        for index, (case_id, _) in enumerate(SOURCES)
+        for index, (case_id, _) in enumerate(sources)
         for arm in (arms if index % 2 == 0 else tuple(reversed(arms)))
         if candidate_mode != "json" or arm == "format_json"
     ]
@@ -569,12 +700,13 @@ def execute_plan(plan: dict[str, Any], output: Path, *, plan_sha256: str) -> dic
         plan["execution_order"] != expected_order
         or plan["arms"] != list(arms)
         or any(case.get("candidate_mode", "omitted") != candidate_mode for case in plan["cases"])
-        or tuple(item["case_id"] for item in plan["cases"]) != tuple(row[0] for row in SOURCES)
-        or plan["policy"]["max_http_generation_calls"] != (3 if candidate_mode == "json" else 6)
+        or any(case.get("input_set", "historical3") != input_set for case in plan["cases"])
+        or tuple(item["case_id"] for item in plan["cases"]) != tuple(row[0] for row in sources)
+        or plan["policy"]["max_http_generation_calls"]
+        != len(sources) * (1 if candidate_mode == "json" else 2)
+        or plan["policy"]["reused_baseline_calls"] != (3 if candidate_mode == "json" else 0)
     ):
-        raise ValueError(
-            "only the registered three inputs and mode-bound one-shot arms are allowed"
-        )
+        raise ValueError("only the registered inputs and mode-bound one-shot arms are allowed")
     reused = []
     if candidate_mode == "json":
         authority = plan["reused_baseline"]
@@ -636,6 +768,7 @@ def main() -> None:
     parser.add_argument("--execute-plan", type=Path)
     parser.add_argument("--expected-plan-sha256")
     parser.add_argument("--candidate-mode", choices=tuple(CANDIDATE_ARMS), default="omitted")
+    parser.add_argument("--input-set", choices=("historical3", "core5"), default="historical3")
     parser.add_argument("--reuse-baseline-raw", type=Path, default=BASELINE_RAW)
     parser.add_argument("--regrade-fenced-raw", type=Path, action="append")
     args = parser.parse_args()
@@ -643,7 +776,11 @@ def main() -> None:
     if not output.is_relative_to(RESULTS.resolve()) or output == RESULTS.resolve():
         raise ValueError("dedicated evaluation/results directory required")
     if args.regrade_fenced_raw:
-        if args.execute_plan is not None or args.expected_plan_sha256 is not None:
+        if (
+            args.execute_plan is not None
+            or args.expected_plan_sha256 is not None
+            or args.input_set != "historical3"
+        ):
             raise ValueError("offline revalidation cannot be combined with model execution")
         report = regrade_fenced_raw(args.regrade_fenced_raw)
         path = output / "fence-revalidation.json"
@@ -654,6 +791,7 @@ def main() -> None:
         inspect_model(transport.OllamaHTTPClient()),
         candidate_mode=args.candidate_mode,
         baseline_raw=args.reuse_baseline_raw,
+        input_set=args.input_set,
     )
     if args.execute_plan is None:
         path = output / "preregistered-plan.json"

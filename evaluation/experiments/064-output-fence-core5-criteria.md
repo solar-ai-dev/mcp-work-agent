@@ -72,3 +72,18 @@ calls/input·output tokens/reported·wall latency와 누락usage를 기록한다
 분리하고 작은 표본으로 성능 개선을 일반화하지 않는다. 모델 실행 중 pytest/mypy/다른
 모델을 겹치지 않으며 RAM/VRAM/온도를 시작·종료 시 확인한다. 현재 사용 가능한 컴퓨터
 자원이 부족하면 미실행 Case를 보존하고 환경을 회복한 뒤 **미실행 부분만** 이어간다.
+
+## 실행 장치 검증과 명령
+
+동일 `scripts/evaluate_output_format_ablation.py`에 `--input-set core5`만 추가했다.
+별도 runner나 Product parser는 만들지 않았다. 직접 검사 **69 PASS / 6.62초**, Ruff/scoped
+mypy PASS. 실제 원 기록5개의 메모리 dry plan에서도 두 source plan, 원 입력·clock·fault,
+현재Prompt 재결속 및 신규 wire를 확인했다. 이 검증에서 모델/Provider 호출은0이다.
+
+```powershell
+.venv/Scripts/python.exe -m scripts.evaluate_output_format_ablation --input-set core5 --result-dir evaluation/results/<new-plan>
+.venv/Scripts/python.exe -m scripts.evaluate_output_format_ablation --input-set core5 --result-dir evaluation/results/<new-trial> --execute-plan evaluation/results/<new-plan>/preregistered-plan.json --expected-plan-sha256 <object-hash>
+```
+
+첫 명령은 read-only catalog/show와 plan 생성만 수행한다. 두 번째 명령은 HEAD/코드/원본/
+현재Prompt/모델 binding이 사전 plan과 같은지 확인한 뒤 한 번만 실행한다.

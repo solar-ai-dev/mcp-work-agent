@@ -645,3 +645,275 @@ def test_offline_raw_regrade_preserves_original_failures_and_skips_reused_rows(
     assert before == [runner.file_hash(path) for path in (old_path, new_path)]
     with pytest.raises(ValueError, match="counted twice"):
         runner.regrade_fenced_raw([old_path, old_path])
+
+
+@pytest.fixture
+def frozen_core5(
+    frozen: tuple[Path, dict[str, Any]], tmp_path: Path
+) -> tuple[Path, dict[str, Any]]:
+    original_root, model = frozen
+    template = json.loads(
+        (original_root / "CASE-CORE-005/production/calls.json").read_text(encoding="utf-8")
+    )["calls"][0]
+    root = tmp_path / "core5-sources"
+    canonical = runner.load_cases()
+    plans: dict[str, dict[str, Any]] = {}
+    pending = []
+    for case_id, directory in runner.CORE5_SOURCES:
+        request = canonical[case_id].raw["canonical_user_prompt"]
+        reference = (canonical[case_id].raw.get("evaluation_context") or {}).get(
+            "run_reference_time"
+        )
+        binding = {
+            "case_id": case_id,
+            "case_sha256": runner.object_hash(canonical[case_id].raw),
+            "request_sha256": runner.object_hash(request),
+            "effective_reference_time_ms": 1786060800000,
+            "case_reference_time": reference,
+            "reference_time_source": "CASE" if reference else "PREREGISTERED_PAIR_START",
+            "fault_profile": None,
+        }
+        plan = plans.setdefault(
+            directory,
+            {
+                "head_sha": "historical-" + directory,
+                "preregistered_reference_time_ms": 1786060800000,
+                "model": {"id": model["model_id"], "digest": model["model_digest"]},
+                "dataset_sha256": runner.file_hash(runner.DEFAULT_DATASET_PATH),
+                "snapshot_sha256": runner.file_hash(runner.DEFAULT_PROVIDER_FIXTURE_PATH),
+                "cases": [],
+            },
+        )
+        plan["cases"].append(binding)
+        call = deepcopy(template)
+        call["prompt_ref"].update(prompt_version="1.1.0", content_hash="historical-content-hash")
+        call["wire_sha256"] = "historical-wire-" + case_id
+        call["input"]["user_request"] = request
+        call["input"]["run_reference_time"] = {
+            "reference_time": "2026-08-07T09:00:00+09:00",
+            "timezone": "Asia/Seoul",
+        }
+        call["input"]["goal_candidate"]["goal"] = request
+        call["input"]["requested_work"]["work_units"][0]["request_provenance"] = [
+            {
+                "source": "USER_REQUEST",
+                "start_offset": 0,
+                "end_offset": len(request),
+                "source_text": request,
+            }
+        ]
+        call["input_sha256"] = runner.object_hash(call["input"])
+        revision = deepcopy(call)
+        revision["input"]["base_projection"] = {"output_responsibilities": []}
+        calls = [{"prompt_id": "unrelated"}] * 4 + [call, revision]
+        pending.append((case_id, directory, binding, calls))
+    for directory, plan in plans.items():
+        _dump(root / directory / "plan.json", plan)
+    for case_id, directory, binding, calls in pending:
+        destination = root / directory / case_id / "production"
+        _dump(destination / "calls.json", {"calls": calls})
+        _dump(
+            destination / "raw.json",
+            {
+                "case_binding": binding,
+                "arm": "production",
+                "plan_sha256": runner.object_hash(plans[directory]),
+            },
+        )
+    return root, model
+
+
+def test_core5_rebinds_current_prompt_without_reusing_historical_wire_or_scores(
+    frozen_core5: tuple[Path, dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, model = frozen_core5
+    before = {path: runner.file_hash(path) for path in root.rglob("*.json")}
+
+    def forbidden(**_kwargs: Any) -> Any:
+        raise AssertionError("dry plan must not inspect or generate with the model")
+
+    monkeypatch.setattr(runner, "inspect_model", forbidden)
+    monkeypatch.setattr(runner.transport, "_post_json", forbidden)
+    plan = runner.make_plan(model, input_set="core5", core5_root=root)
+    assert len(plan["cases"]) == 5 and len(plan["source_plans"]) == 2
+    assert plan["policy"]["max_http_generation_calls"] == 10
+    assert plan["policy"]["reused_baseline_calls"] == 0
+    assert plan["historical_response_reuse"] is plan["historical_score_reuse"] is False
+    assert "source_plan_path" not in plan and "reused_baseline" not in plan
+    assert runner.CORE5_CRITERIA in plan["source_hashes"]
+    assert [(row["case_id"], row["arm"]) for row in plan["execution_order"]] == [
+        ("CASE-CORE-009", "schema_constrained"),
+        ("CASE-CORE-009", "format_omitted"),
+        ("CASE-CORE-019", "format_omitted"),
+        ("CASE-CORE-019", "schema_constrained"),
+        ("CASE-CORE-023", "schema_constrained"),
+        ("CASE-CORE-023", "format_omitted"),
+        ("CASE-CORE-025", "format_omitted"),
+        ("CASE-CORE-025", "schema_constrained"),
+        ("CASE-CORE-059", "schema_constrained"),
+        ("CASE-CORE-059", "format_omitted"),
+    ]
+    for case in plan["cases"]:
+        first = case["source_call"]
+        assert first["call_index"] == 5 and case["source_call_array_index"] == 4
+        assert case["source_call_sha256"] == runner.object_hash(first)
+        assert case["historical_prompt_ref"] == first["prompt_ref"]
+        assert set(case["prompt_ref_diff"]) == {"prompt_version", "content_hash"}
+        assert case["historical_wire_sha256"] != case["baseline_wire_sha256"]
+        assert case["historical_response_reused"] is case["historical_score_reused"] is False
+        baseline = runner.payload_for(case, "schema_constrained")
+        candidate = runner.payload_for(case, "format_omitted")
+        assert candidate == {k: v for k, v in baseline.items() if k != "format"}
+        prompt = json.loads(baseline["prompt"])
+        assert prompt["input"] == first["input"]
+        assert prompt["output_schema"] == first["output_schema"]
+        assert baseline["options"] == first["wire_options"]
+        assert baseline["think"] == first["wire_think"]
+        assert runner.object_hash(baseline) == case["baseline_wire_sha256"]
+        assert runner.object_hash(candidate) == case["candidate_wire_sha256"]
+        with pytest.raises(ValueError, match="PromptRef differs"):
+            runner.reconstruct_payload(first)
+    assert before == {path: runner.file_hash(path) for path in before}
+
+
+@pytest.mark.parametrize("drift", ["duplicate_first", "schema", "prompt_owner", "runtime", "clock"])
+def test_core5_first_call_and_contract_drift_reject_before_dispatch(
+    frozen_core5: tuple[Path, dict[str, Any]], drift: str
+) -> None:
+    root, model = frozen_core5
+    case_id, directory = runner.CORE5_SOURCES[0]
+    path = root / directory / case_id / "production/calls.json"
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    call = raw["calls"][4]
+    if drift == "duplicate_first":
+        raw["calls"].append(deepcopy(call))
+    elif drift == "schema":
+        call["output_schema"]["required"] = []
+    elif drift == "prompt_owner":
+        call["prompt_ref"]["input_schema_version"] = "changed"
+    elif drift == "runtime":
+        call["wire_options"]["num_ctx"] = 4096
+    else:
+        call["input"]["run_reference_time"]["reference_time"] = "2026-08-08T09:00:00+09:00"
+        call["input_sha256"] = runner.object_hash(call["input"])
+    runner.write_json(path, raw)
+    with pytest.raises(ValueError):
+        runner.make_plan(model, input_set="core5", core5_root=root)
+
+
+@pytest.mark.parametrize("field", ["model", "dataset_sha256", "snapshot_sha256"])
+def test_core5_each_source_plan_must_match_same_model_and_dataset(
+    frozen_core5: tuple[Path, dict[str, Any]], field: str
+) -> None:
+    root, model = frozen_core5
+    path = root / runner.CORE5_SOURCES[-1][1] / "plan.json"
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if field == "model":
+        value[field]["digest"] = "different-digest"
+    else:
+        value[field] = "changed"
+    runner.write_json(path, value)
+    with pytest.raises(ValueError):
+        runner.make_plan(model, input_set="core5", core5_root=root)
+
+
+@pytest.mark.parametrize("field", ["case_reference_time", "fault_profile", "reference_time_source"])
+def test_core5_canonical_clock_and_nested_fault_authority_are_checked(
+    frozen_core5: tuple[Path, dict[str, Any]], field: str
+) -> None:
+    root, model = frozen_core5
+    case_id, directory = runner.CORE5_SOURCES[0]
+    plan_path = root / directory / "plan.json"
+    source_plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    binding = source_plan["cases"][0]
+    binding[field] = "changed"
+    runner.write_json(plan_path, source_plan)
+    raw_path = root / directory / case_id / "production/raw.json"
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))
+    raw.update(case_binding=binding, plan_sha256=runner.object_hash(source_plan))
+    runner.write_json(raw_path, raw)
+    with pytest.raises(ValueError, match="reference time/request/fault"):
+        runner.make_plan(model, input_set="core5", core5_root=root)
+
+
+def test_core5_first_selection_is_not_an_array_index_assumption(
+    frozen_core5: tuple[Path, dict[str, Any]],
+) -> None:
+    root, model = frozen_core5
+    case_id, directory = runner.CORE5_SOURCES[0]
+    path = root / directory / case_id / "production/calls.json"
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["calls"].insert(1, raw["calls"].pop(4))
+    runner.write_json(path, raw)
+    plan = runner.make_plan(model, input_set="core5", core5_root=root)
+    assert plan["cases"][0]["source_call_array_index"] == 1
+    assert plan["cases"][0]["source_call"]["call_index"] == 5
+
+
+def test_core5_runs_ten_new_calls_preserving_strict_failure_and_separate_admission(
+    frozen_core5: tuple[Path, dict[str, Any]], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, model = frozen_core5
+    plan = runner.make_plan(model, input_set="core5", core5_root=root)
+    monkeypatch.setattr(runner, "RESULTS", tmp_path)
+    output = tmp_path / "new-trial"
+    calls = []
+
+    def post(**kwargs: Any) -> dict[str, Any]:
+        saved = json.loads((output / "raw.json").read_text(encoding="utf-8"))
+        assert saved["results"][-1]["state"] == "DISPATCH_STARTED"
+        assert kwargs["timeout_seconds"] == 180
+        calls.append(kwargs)
+        body = '{"output_responsibilities":[]}'
+        if "format" not in kwargs["payload"]:
+            body = f"```json\n{body}\n```"
+        return {"response": body, "eval_count": 5, "load_duration": 7_000_000}
+
+    monkeypatch.setattr(runner.transport, "_post_json", post)
+    result = runner.execute_plan(plan, output, plan_sha256=runner.object_hash(plan))
+    assert len(calls) == result["actual_http_calls"] == 10
+    assert result["reused_http_calls"] == 0 and result["reused_results"] == []
+    assert result["new_call_metrics"]["output_tokens"] == 50
+    for row in result["results"]:
+        assert row["new_call"] and row["historical_response_reused"] is False
+        assert row["schema_repairs"] == row["http_retries"] == 0
+        assert row["load_duration_ms"] == 7 and row["prompt_eval_duration_ms"] is None
+        assert row["semantic_verdict"] == "UNREVIEWED"
+        if row["arm"] == "format_omitted":
+            assert row["validation"]["structural_result"] == "INVALID_JSON"
+            assert row["fence_validation"]["strict_validation"] == row["validation"]
+            assert (
+                row["fence_validation"]["candidate_validation"]["structural_result"] == "VALIDATED"
+            )
+            assert row["fence_validation"]["raw_content"] == row["content"]
+        else:
+            assert row["validation"]["structural_result"] == "VALIDATED"
+            assert "fence_validation" not in row
+    with pytest.raises(ValueError, match="prior partial/failed"):
+        runner.execute_plan(plan, output, plan_sha256=runner.object_hash(plan))
+    with pytest.raises(FileExistsError):
+        runner.execute_plan(plan, tmp_path / "repeat", plan_sha256=runner.object_hash(plan))
+    assert len(calls) == 10
+
+
+@pytest.mark.parametrize("drift", ["extra_call", "json_mode", "budget", "case_order"])
+def test_core5_fixed_pair_budget_rejects_extra_or_reused_baseline_calls(
+    frozen_core5: tuple[Path, dict[str, Any]],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    drift: str,
+) -> None:
+    root, model = frozen_core5
+    plan = runner.make_plan(model, input_set="core5", core5_root=root)
+    monkeypatch.setattr(runner, "RESULTS", tmp_path)
+    if drift == "extra_call":
+        plan["execution_order"].append(plan["execution_order"][0])
+    elif drift == "json_mode":
+        plan["candidate_mode"] = "json"
+    elif drift == "budget":
+        plan["policy"]["max_http_generation_calls"] = 11
+    else:
+        plan["cases"].reverse()
+    with pytest.raises(ValueError, match="registered"):
+        runner.execute_plan(plan, tmp_path / "no-run", plan_sha256=runner.object_hash(plan))
+    assert not (tmp_path / "no-run").exists()
