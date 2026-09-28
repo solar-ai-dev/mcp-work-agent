@@ -516,3 +516,18 @@ mixed legacy 입력은 계속 fail-closed한다. 모델의 SUFFICIENT 판단을 
 직접15 + 관련 assessor/Query(q19/EXHAUSTIVE)/Registry/Policy 합계202 PASS.
 두 수정 모두 Product Prompt/State/Schema/Node·승인/실행 경계 변경0, 실제 모델/Provider0.
 이 연결 결함 수정은 Source producer의 잔여 의미 오판을 해결했다는 주장이 아니다.
+
+## 상태 집합의 READ argument lowering 손실
+
+SourceStatus 귀속 감사 중 별도의 결정적 소비 결함을 재현했다. 이미 확정된 Query의
+OPEN+CLOSED는 GitHub CLOSED 하나로, DRAFT+SENT는 Gmail AND 형태로 바뀌었다. 공유 READ의
+한쪽 업무에 필요한 상태가 사라지므로 provider argument projection에서만 수정했다.
+동일 상태의 중복은 제거하고 ANY의 상태 비제한 의미를 보존한다. keyword/container·Tool
+authority·Route binding은 그대로이며 조회 횟수나 WRITE 권한을 추가하지 않는다.
+
+공식 [Gmail search operators](https://support.google.com/mail/answer/7190?hl=en)의 OR group과
+[GitHub repository issues](https://docs.github.com/en/rest/issues/issues#list-repository-issues)의
+state=all 계약 및 기존 Connector enum을 확인했다. Provider 자체에는 연결하지 않았다.
+수정 전 직접14개 중7 FAIL, 수정 후 keyword 결합 반례를 포함한15개와 관련 projector/Connector
+총87 PASS. Task/Calendar의 모든 상태 materialization을 검증했다는 결과는 아니며,
+SourceStatus producer의 잘못된 WorkUnit union은 별도 비활성 후보로 검증 중이다.

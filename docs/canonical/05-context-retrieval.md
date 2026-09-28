@@ -277,7 +277,7 @@ class ContainerRefConstraintV1:
 
 class StatusScopeConstraintV1:
     kind: Literal["STATUS_SCOPE"]
-    values: list[Literal["ANY", "INCOMPLETE", "COMPLETED", "DRAFT", "SENT", "CANCELLED", "CONFIRMED", "TENTATIVE"]]
+    values: list[Literal["ANY", "INCOMPLETE", "COMPLETED", "OPEN", "CLOSED", "DRAFT", "SENT", "CANCELLED", "CONFIRMED", "TENTATIVE"]]
 
 SemanticRetrievalConstraintV1 = (
     TemporalRangeConstraintV1
@@ -322,6 +322,12 @@ class RetrievalQueryPlanV2:
 ```
 
 `operation`이 유효 branch를 결정한다.
+
+`STATUS_SCOPE.values`는 해당 Resource에서 허용한 상태의 대안 집합이다. 동일 frozen
+READ가 여러 업무의 상태를 조회하더라도 임의의 한 상태만 선택하거나 모든 상태가 동시에
+일치하는 조건으로 내리지 않는다. Gmail DRAFT/SENT는 하나의 OR group, GitHub OPEN/CLOSED는
+ALL로 materialize하며 다른 keyword/container 제약과 Route·권한은 유지한다. ANY는 상태
+필터가 없음을 뜻한다. 이는 조회 허용 상태의 표현이지 Evidence의 업무 귀속·충분성 판정이 아니다.
 
 | Operation | `search_spec` | `detail_candidate_ref` |
 | --- | --- | --- |

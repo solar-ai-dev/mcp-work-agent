@@ -531,6 +531,10 @@ def _includes_status(plan: SourceFetchPlanV1, status: str) -> bool:
 
 
 def _github_issue_state(plan: SourceFetchPlanV1) -> str:
+    if _includes_status(plan, "ANY") or (
+        _includes_status(plan, "OPEN") and _includes_status(plan, "CLOSED")
+    ):
+        return "ALL"
     if _includes_status(plan, "CLOSED"):
         return "CLOSED"
     if _includes_status(plan, "OPEN"):
@@ -568,7 +572,15 @@ def _gmail_query(plan: SourceFetchPlanV1) -> str:
             terms.extend("in:" + item for item in constraint["container_refs"])
         elif constraint["kind"] == "STATUS_SCOPE":
             mapping = {"DRAFT": "in:drafts", "SENT": "in:sent"}
-            terms.extend(mapping[item] for item in constraint["values"] if item in mapping)
+            if "ANY" in constraint["values"]:
+                continue
+            statuses = list(dict.fromkeys(
+                mapping[item] for item in constraint["values"] if item in mapping
+            ))
+            if len(statuses) > 1:
+                terms.append("{" + " ".join(statuses) + "}")
+            else:
+                terms.extend(statuses)
     return " ".join(terms)
 
 
