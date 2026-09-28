@@ -41,6 +41,14 @@ PASS로 바꾸는 변경이 아니다. Model Source 판정이 잘못되면 그 �
 안전 검사/Review가 반드시 이를 복구한다고 주장하지 않는다. Source 의미 안정화와 이후
 connected 품질 검증이 필요한 잔여 위험을 명시한다.
 
+실제 no-route 분기와 compiled Planning을 추가 연결해 제공 메모/외부메일 누락 반례2개를
+확인했다(`test_source_free_answer_handoff.py`). 원문, RequestIntent, Evidence0은 그대로
+compose에 도착하고 조회 coverage·source status를 새로 합성하지 않는다. 네트워크 접근0.
+outline은 이 경로에서 결정적이고 fake compose1회만 소비한다. 역사 guard11검사와 함께
+**13 PASS / 0.80초**. 이것은 별도 의미 성공률이 아니며 fake 답변도 의미 PASS로 세지 않는다.
+기존 Canonical06대로 `ANSWER_ONLY`는 Review를 거치지 않고 응답 합성으로 간다.
+따라서 Review가 Source 누락 또는 답변의 근거 오류를 잡는다는 보장은 없다.
+
 ## 재현·검증 경계
 
 과거 실제 caller를 고정한 평가 fixture와 현재 Product caller를 비교한다. 제공자료 반례와
@@ -68,7 +76,8 @@ monkeypatch하지 않고 실제 수정 Product를 실행한다.
 이전 guard가 요청하던 Source revision1회는 해당 조건에서 없어지지만, 기존 조기차단 요청이
 이후로 진행하며 downstream 호출이 늘 수 있다. **전체 tokens/latency 개선은 미측정**이다.
 
-모델/Graph/업무 Provider 신규 실행0. Canonical92 전체의 새 점수는 아직 없으며 061/062나
+실제 모델/Production MainGraph/업무 Provider 신규 실행0. compiled Planning component는 위에
+별도로 구분했다. Canonical92 전체의 새 점수는 아직 없으며 061/062나
 v44의 숫자를 이번 Product의 점수로 승계하지 않는다. Core/합성/역사 검색 분모도 합치지 않는다.
 외부 Provider WRITE/SEND0. 프론트/백엔드 재시작0. 단일 테스트 프로세스만 사용한다.
 
@@ -81,3 +90,11 @@ v44의 숫자를 이번 Product의 점수로 승계하지 않는다. Core/합성
 사용자가 지정한 새 Task 제목처럼 겹칠 수 있으며, 누락된 정보 항목에 origin을 붙일 수는 없다.
 동일 모델의 새 라벨을 독립 진실 증거로 취급하지 않는다. v6/v7의 필요정보 재생성 실패와
 구분되는 이득이 아직 명확하지 않아 새 model call/Schema/Prompt를 추가하지 않았다.
+
+후속 read-only 검토는 관련11파일/raw4개 약3.15MB로 제한했다. 원문·Work provenance·selected
+identity·READ 후보/fact 종류는 FIRST 입력에 이미 있다. 017은 동일 Schema에서 올바른
+Task/Event를 표현했고 049는 FIRST부터 새 산출물 조건을 기존 Source 사실로 오인했다.
+같은 Work 안의 Source/Output별 anchor 결속 부재는 표현력 후보지만 이번 실패를 강제한다는
+증거는 없다. v6/v7 정보요구 재생성, v8 fusion, v20 확정 Output context, v22 중복 제거,
+v41~44 설명/decoding/분할/예시를 새 이름으로 반복하지 않는다. 현재 바로 실행할 근거 있는
+새 최소 Source 가설은 없어 producer 실험은 동결하며, 모델의 절대 한계라고 결론내리지 않는다.

@@ -375,4 +375,3 @@ def identify_goal_with_budget(
         )
         candidate["requested_work"] = {**requested_work, "work_relations": relations}
         return candidate, merge_provider_dispatch_usage(retry_budget)
-
