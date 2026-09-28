@@ -714,6 +714,13 @@ class StateArtifactMetaV1:
 | RequestIntent / Retrieval / WorkAnalysis 변경 | 같은 dependency 원칙으로 필요한 downstream만 재생성한다. |
 | Domain 사실 | Graph invalidation으로 승인·실행·검증 사실을 소급 변경하지 않는다. |
 
+같은 Run의 RequestIntent revision에서 InputRoutePlan과 Retrieval을 재사용하려면 Source
+responsibility·constraint뿐 아니라 결속된 `requested_work` 정의도 동일해야 한다. 같은
+WorkUnit ID 문자열이라도 원문 provenance나 WorkRelation이 바뀌면 이전 Evidence 귀속을
+새 업무의 충분성으로 간주하지 않는다. 이 경우 기존 dependency invalidation을 적용하며
+Work 의미를 코드가 비교·재해석해 동등하다고 추정하지 않는다. Work와 입력 의미가 같고
+Output/Goal/완료 조건만 재판정된 기존 재사용 경계는 유지한다.
+
 #### Planning revision 후 Review RECHECK
 
 | 시점 | 허용되는 사용 |

@@ -255,6 +255,8 @@ def _request_input_semantics(intent: Mapping[str, object]) -> object | None:
     return {
         "source_reads": source_reads,
         "constraints": constraints,
+        # Work IDs are local to an Intent revision, not stable semantic identities.
+        "requested_work": intent.get("requested_work"),
     }
 
 
