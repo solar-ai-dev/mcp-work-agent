@@ -11,6 +11,12 @@ from google_work_agent.application.agents.retrieval.contracts.query_plan import 
 from google_work_agent.application.agents.retrieval.extract_requested_business_concepts import (
     extract_requested_business_concepts,
 )
+from google_work_agent.application.agents.retrieval.project_route_constraints import (
+    project_route_constraints,
+)
+from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
+    InputToolRouteV1,
+)
 
 _PARTICIPANT_FIELDS = frozenset(
     {
@@ -31,13 +37,21 @@ _GMAIL_STATUS_VALUES = frozenset({"ANY", "DRAFT", "SENT"})
 
 def resolve_gmail_planner_constraint_kinds(
     prompt_input: Mapping[str, object],
+    *,
+    route: InputToolRouteV1,
 ) -> set[str] | None:
     """Narrow optional lexical/status filters to current user meaning, not examples."""
     intent = prompt_input.get("request_intent")
     if not isinstance(intent, Mapping):
         return None
-    constraints = intent.get("constraints")
-    if not isinstance(constraints, list) or not constraints:
+    constraints = project_route_constraints(prompt_input, route)
+    if (
+        not constraints
+        and intent.get("schema_version") != 3
+        and "requested_work" not in intent
+        and "work_unit_ids" not in route
+        and not intent.get("constraints")
+    ):
         return None
     kinds = {
         "CONTAINER_REF",

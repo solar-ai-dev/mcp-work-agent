@@ -10,6 +10,9 @@ from google_work_agent.application.agents.retrieval.extract_requested_business_c
 from google_work_agent.application.agents.retrieval.is_searchable_gmail_route import (
     is_searchable_gmail_route,
 )
+from google_work_agent.application.agents.retrieval.project_route_constraints import (
+    project_route_constraints,
+)
 from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
     InputToolRouteV1,
 )
@@ -22,9 +25,13 @@ def resolve_requested_gmail_concepts(
     intent = prompt_input.get("request_intent")
     if not isinstance(intent, Mapping):
         return {}
-    concepts = extract_requested_business_concepts(intent.get("constraints"))
-    return {
-        route["route_id"]: concepts
-        for route in frozen_routes
-        if is_searchable_gmail_route(route) and concepts
-    }
+    result: dict[str, set[str]] = {}
+    for route in frozen_routes:
+        if not is_searchable_gmail_route(route):
+            continue
+        concepts = extract_requested_business_concepts(
+            project_route_constraints(prompt_input, route)
+        )
+        if concepts:
+            result[route["route_id"]] = concepts
+    return result

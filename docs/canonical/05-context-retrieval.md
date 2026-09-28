@@ -223,7 +223,8 @@ route-local 집합을 사용한다. WorkUnit binding이 없는 V3 항목에 전�
 투영을 사용하며 새 ID를 만들지 않는다.
 기간의 결정적 결속도 같은 WorkUnit ownership을 소비한다. 서로 다른 Route의 기간·시간축을
 섞지 않고, 공유 READ의 모든 적용 WorkUnit에서 동일한 기간이 확정된 경우에만 그 기간을
-Route 전체의 필수 초기 조건으로 만든다. 일부 업무만 기간이 있거나 서로 다른 기간이면
+Route 전체에 적용할 결정적 기간으로 결속한다. 필수 slot 여부는 기존 Resource 계약을
+유지한다. 일부 업무만 기간이 있거나 서로 다른 기간이면
 코드가 하나를 선택·합성하지 않고 기존 planner의 typed 입력에 원래 제약을 유지한다.
 같은 WorkUnit 안의 Source 조회 시각과 Output 생성 시각을 새로 구별하는 의미 판단은 이
 projection의 책임이 아니다.

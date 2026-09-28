@@ -865,25 +865,22 @@ def plan_query(
         validated_container_refs=validated_container_refs,
     )
     is_followup = "current_round_no" in prompt_input
-    meaningful_kinds = resolve_gmail_planner_constraint_kinds(prompt_input)
-    if meaningful_kinds is not None:
-        supported_kinds = {
-            route["route_id"]: (
-                frozenset(supported_kinds[route["route_id"]]).intersection(
-                    meaningful_kinds
-                    | (
-                        {"CONCEPT"}
-                        if is_followup
-                        and "CONCEPT" in route_policies[route["route_id"]].supported_kinds
-                        else set()
-                    )
-                )
-                | route_policies[route["route_id"]].required_kinds
-                if route["resource_type"] in {"GMAIL_THREAD", "GMAIL_MESSAGE"}
-                else supported_kinds[route["route_id"]]
-            )
-            for route in frozen_routes
-        }
+    for route in frozen_routes:
+        if route["resource_type"] not in {"GMAIL_THREAD", "GMAIL_MESSAGE"}:
+            continue
+        meaningful_kinds = resolve_gmail_planner_constraint_kinds(prompt_input, route=route)
+        if meaningful_kinds is None:
+            continue
+        route_id = route["route_id"]
+        followup_kinds = (
+            {"CONCEPT"}
+            if is_followup and "CONCEPT" in route_policies[route_id].supported_kinds
+            else set()
+        )
+        supported_kinds[route_id] = (
+            frozenset(supported_kinds[route_id]).intersection(meaningful_kinds | followup_kinds)
+            | route_policies[route_id].required_kinds
+        )
     concepts_by_route = resolve_requested_gmail_concepts(prompt_input, frozen_routes)
     planner_kinds: dict[str, Collection[RetrievalConstraintKindV1]] = dict(supported_kinds)
     anchors_by_route = {

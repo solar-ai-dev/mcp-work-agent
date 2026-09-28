@@ -580,3 +580,13 @@ baseline/후보 각각1회, schema repair최대1회, semantic revision0으로 �
 동일 Product Prompt 원문·qwen3.5:9b digest·temperature0/seed20260923/ctx16384/thinkfalse/
 timeout180으로 계약 표현만 비교한다. first/repair와 calls/tokens/latency, 잘못된 binding 및
 상태 과잉/누락을 각각 기록한다. 실제 Provider 연결0, Production activation0이다.
+
+### Query concept/지원 종류도 동일 업무 귀속으로 닫음
+
+exact anchor 이후 `resolve_requested_gmail_concepts`가 다른 업무 concept을 모든 Gmail
+Route에 복제하고, 지원 constraint 종류도 다른 업무의 상태/시간 제약으로 확대하는
+동형 손실을 확인했다. 같은 route constraint projector를 사용해 해당 업무의 concept
+합집합과 허용 종류만 계산한다. V3 누락 binding을 전역 값으로 복구하지 않고 기존 기본
+discovery 능력·shared READ·legacy 호환·선택 exact DETAIL의 LLM0을 유지한다.
+신규10개 포함 관련112 PASS, Product Ruff/mypy/diff-check PASS. 모델/Provider0.
+이는 Source/기간/개념을 새로 해석하거나 특정 Case의 검색어를 주입하는 변경이 아니다.
