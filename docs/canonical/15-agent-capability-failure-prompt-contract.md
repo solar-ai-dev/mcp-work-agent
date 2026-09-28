@@ -965,6 +965,13 @@ membership을 다시 고르거나 코드가 누락된 판정을 추측하지 않
 Product State/Graph·호출 예산·활성 Prompt를 변경하지 않는다. 합성 경계 control은
 Canonical Case/실제 upstream/업무 성공 점수와 분리한다.
 
+Source의 독립 판정 진단은 전체 원문·Goal·Work·Registry catalog를 보존한 FIRST 입력에
+`assessment_resource_type`을 추가해 현재 후보 하나의 필요 여부와 details를 함께
+판정할 수 있다. evaluation 역할의 반환 범위만 단일 후보로 정합화하고 기존 Source
+구조를 그 후보 하나에 닫아 검증한다. 미판정 후보는 불필요로 채우거나 전체 Source
+결정으로 조립하지 않는다. 이는 부분 owner 진단이며 Source 종류만큼 늘어날 호출·지연과
+전체 결정 조립을 검증하기 전에는 Production Node·State·budget 변경 근거가 아니다.
+
 Source의 비활성 contrastive 비교는 기존 one-call role·실제 Run input·Schema·sampling을
 유지한 채 일반적인 입력→출력 예시만 분리된 후보 artifact로 추가할 수 있다. 예시 출력도
 현재 Source owner 계약으로 검증하며, 현재 평가 Case/Gold/Fixture 정답을 예시로 복사하지
