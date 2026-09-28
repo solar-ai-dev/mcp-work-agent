@@ -133,3 +133,24 @@ temperature0.05/seed20260923/num_ctx16384/thinkfalse, 원문·선택·Work prove
 따라서 생성 완료조건이 Source에 직접 전해졌다는 설명도, 검색어 감소 하나가 회귀의
 원인이라는 설명도 현재 근거와 맞지 않는다. 상반된 결과가 있으므로 새 Source 후보를
 선택할 때 upstream 표현 차이와 Source owner 판단을 분리해야 한다. 모델 호출 0으로 확인했다.
+
+## 2026-09-28 Runtime envelope 감사 — System 누락 가설 반증
+
+v35 연결 결과 이후 현재 모델의 `/api/show` template이 `{{ .Prompt }}`이고 renderer
+필드가 노출되지 않아 System 누락을 의심했다. 그러나 설치 manifest digest
+`6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7`의 config에는
+`renderer=qwen3.5`, `parser=qwen3.5`가 존재한다. API 응답의 필드 부재는 실제 설정 부재가 아니다.
+
+Ollama v0.34.0의 [Generate 처리](https://github.com/ollama/ollama/blob/v0.34.0/server/routes.go)와
+[Qwen3.5 renderer](https://github.com/ollama/ollama/blob/v0.34.0/model/renderers/qwen35.go)는
+현재 generate 요청의 System/User를 role 구간으로 조립한다. 설치 binary에도 합성 sentinel을
+넣은 `_debug_render_only=true` 요청을 1회 수행했다. 반환된 rendered template에 두 role과
+`think=false`의 종료 구간이 모두 있었다(2026-09-28T10:03:12.6049336Z).
+이는 추론 전 렌더 진단이며 신규 모델 생성·Provider 업무 호출 0, Product runtime 변경 0이다.
+
+기존 v10/v22는 본문의 중복 schema/input만 제거했고 top-level `format`은 유지했다.
+v12/v13은 `think=true` 비교로 content 부재/timeout이 있었지만, 동일 instruction/input의
+`format` 유무 비교는 검토한 046~064 기록에서 확인되지 않았다. 이 구분을 새 진단의
+근거로 삼되, grammar가 특정 오답을 강제한다고 미리 단정하지 않는다. 과거 CORE005
+MainGraph T1 Output FIRST는 v35와 같은 schema hash `59736b77…`에서 빈 Output 배열을
+반환했으므로, 해당 schema가 빈 배열 자체를 막는다는 가설도 반증됐다.
