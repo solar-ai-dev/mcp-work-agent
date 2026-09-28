@@ -70,3 +70,38 @@ fold 이후 결과와 기존 성공 회귀를 별도로 검수한다.
 
 준비 단계는 direct/fake transport 검증만 수행한다. 실제 모델 실행은 Root의 사전등록 이후다.
 Product/Prompt activation/Node/State migration0, Provider READ/WRITE0.
+
+## 실제 결과 — 구조 유효성으로 의미 실패를 가리지 않음
+
+실행 HEAD `0ee84dba`, plan SHA256
+`44c88ecc607b258d3ba3674a75e5ed6afd0b78b521f1b05b5b6633294f55a5e9`.
+기존 Product baseline6개를 검증 후 재사용했고 후보6개를 각1회 실행했다.
+후보 FIRST schema6/6, repair0, semantic revision0, rerun0이다. 업무별 ID는 모두
+closed set과 일치했으나 이것이 업무별 판단의 정확성을 보장하지 않았다.
+
+| 입력 | Product baseline | v30 FIRST → fold/후처리 | 판단 |
+| --- | --- | --- | --- |
+| Alpha 일정 + 별도 미정 일정 | 전역 CONNECTOR | 두 Work 모두 CONNECTOR/event_identity → 확인 없음 | 다른 업무의 target이 미정인데 identity를 조회할 속성으로 취급. 최초 손실은 Work2의 LLM 판단이며 fold가 아님 |
+| 선택 일정 + 별도 미정 일정 | USER/target_resource | 두 Work 모두 NONE → 확인 없음 | 기존 성공 회귀. Work2의 필요한 사용자 선택이 사라짐. NONE을 READ 불필요와 동일시하지는 않으나, 대상 미정의 확인 누락은 남음 |
+| 작업 collection 전체 제목/상태 | USER/target_resource | CONNECTOR/title,completion_status → 확인 없음 | 불필요 질문 감소와 조회 fact 표현 모두 개선. v29의 count-as-fact 오류는 재발하지 않음 |
+| 지정 목록 Task CREATE | NONE | NONE | 기존 owner 성공 유지; 실제 승인/생성은 미실행 |
+| CORE005 선택 Task 조회 | CONNECTOR | 동일 Source facts의 CONNECTOR | 기존 owner 성공 유지; 실제 답변 정확도는 이번 범위 밖 |
+| CORE019 | CONNECTOR | 기존 Source facts의 CONNECTOR | 관련 READ 진행 허용 범위 유지. 원래 Source 오판은 그대로이며 전체 업무 성공으로 세지 않음 |
+
+전역 owner 종류만은4/6→4/6이다. collection은 의미 개선이지만 selected-other 회귀가
+있으므로 **Production 미채택**이다. typed per-Work 결과를 표현·전달할 수 있다는 것과
+모델이 실제 사용자 선택/조회 사실을 구분했다는 것을 분리한다. validator나 fold가
+정상 USER를 지운 사례는 없으며 FIRST 단계에서 이미 USER가 생성되지 않았다.
+
+신규6 calls/input15,833/output436 tokens/reported30,300ms/usage누락0.
+재사용 baseline6 calls/input17,403/output98/reported20,384ms는 새 실행 비용에 더하지 않는다.
+표현량과 응답 tokens는 증가했고 지연 개선 근거도 없다. 반복 안정성·fresh upstream·
+same-Run confirmation binding·Retrieval/Planning 이후는 미검증이다.
+
+추가 enum/설명/예제를 붙여 같은 표현 실험을 반복하지 않는다. 실제 selected Source ref
+귀속과 target 선택 책임의 연결, 이미 확인된 소비 경계 결함 및 compiled workflow 연결을
+다음 조사 대상으로 유지한다. 후보 판정만으로 전체 작업을 종료하지 않는다.
+
+raw: `evaluation/results/064-ambiguity-work-bound-v30-t1/raw.json`, SHA256
+`c4894fbe93caea6012224fc7b3808f47dff17e5c4abeeb4e49991bb8ff22168d`.
+Provider READ/WRITE0, Product activation0. 원본 raw 불변.
