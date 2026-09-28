@@ -94,6 +94,9 @@ from google_work_agent.adapters.langgraph.main.state import (
     request_from_state,
 )
 from google_work_agent.adapters.langgraph.main.supervisor import route_supervisor
+from google_work_agent.adapters.langgraph.main.supervisor_artifact_revisions import (
+    cleared_review_recheck_context,
+)
 from google_work_agent.adapters.langgraph.main.supervisor_control_adapter import (
     lifecycle_state_update,
     project_lifecycle_control,
@@ -1797,6 +1800,7 @@ class _WorkflowRuntimeComposition:
             **state,
             "planning_result": draft,
             "plan_review": None,
+            "prompt_context": cleared_review_recheck_context(state.get("prompt_context", {})),
             "approved_plan_id": plan_id,
             "__modify_review_plan_id__": plan_id,
             "__modify_review_version__": review_version,

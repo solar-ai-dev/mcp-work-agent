@@ -8,7 +8,11 @@ from google_work_agent.adapters.langgraph.subgraphs.review.projections.proposal_
 
 def _plan(action_id: str, arguments: dict[str, object]) -> dict[str, object]:
     return {
-        "meta": {"artifact_id": action_id, "revision": 1, "based_on": []},
+        "meta": {
+            "artifact_id": action_id,
+            "revision": 1,
+            "based_on": [{"artifact_id": "output-1", "revision": 1}],
+        },
         "actions": [
             {
                 "action_id": action_id,
@@ -67,3 +71,16 @@ def test_proposal_transition_does_not_guess_ambiguous_or_changed_tool() -> None:
     no_route = _review()
     no_route["issues"][0]["affected_route_ids"] = []
     assert capture_reviewed_proposal(_plan("old", {}), no_route) is None
+
+
+def test_proposal_transition_does_not_promote_unbound_or_other_upstream_history() -> None:
+    captured = capture_reviewed_proposal(_plan("old", {}), _review())
+    assert captured is not None
+    current = _plan("new", {})
+    current["meta"]["based_on"] = [{"artifact_id": "output-1", "revision": 2}]
+    assert project_proposal_transition(captured, current) is None
+    current = _plan("new", {})
+    captured["previous_plan_ref"]["based_on"] = []
+    assert project_proposal_transition(captured, current) is None
+    current["meta"]["based_on"] = []
+    assert project_proposal_transition(captured, current) is None

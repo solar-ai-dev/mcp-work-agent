@@ -3,9 +3,21 @@ from json import dumps
 from types import SimpleNamespace
 from typing import Any, cast
 
+import pytest
+
+from google_work_agent.adapters.langgraph.main.state import WorkflowPhase
+from google_work_agent.adapters.langgraph.main.supervisor_control_adapter import (
+    project_lifecycle_control,
+)
+from google_work_agent.adapters.langgraph.main.supervisor_state_projection import (
+    project_supervisor_state,
+)
 from google_work_agent.adapters.langgraph.main.workflow import LangGraphWorkflowRuntime
 from google_work_agent.adapters.langgraph.subgraphs.planning.graph import PlanningSubgraph
 from google_work_agent.adapters.langgraph.subgraphs.review.graph import ReviewSubgraph
+from google_work_agent.application.use_cases.run.get_supervisor_observation import (
+    SupervisorObservationV1,
+)
 from google_work_agent.application.use_cases.run.guard_run_budget import build_default_run_budget
 from google_work_agent.domain.action.model import Action, ActionEvidence
 from google_work_agent.domain.evidence.model import Evidence, EvidenceOriginType
@@ -14,7 +26,10 @@ from google_work_agent.domain.resource_ref.model import ResourceRef
 from google_work_agent.ports.persistence.plan_repository import PlanBundle
 
 
-def test_modify_review_restart__with_persisted_plan__restores_evidence() -> None:
+@pytest.mark.parametrize("has_old_review_context", [False, True])
+def test_modify_review_restart__with_persisted_plan__restores_evidence(
+    has_old_review_context: bool,
+) -> None:
     plan = Plan(
         id="plan-1",
         run_id="run-1",
@@ -96,7 +111,7 @@ def test_modify_review_restart__with_persisted_plan__restores_evidence() -> None
     )
     runtime = cast(Any, object.__new__(LangGraphWorkflowRuntime))
     runtime._unit_of_work_factory = lambda: nullcontext(unit_of_work)
-    state = {
+    state: dict[str, Any] = {
         "run_id": plan.run_id,
         "planning_result": {
             "schema_version": 2,
@@ -118,13 +133,44 @@ def test_modify_review_restart__with_persisted_plan__restores_evidence() -> None
             ],
         },
         "retry_budget": build_default_run_budget(),
+        "prompt_context": {"unrelated_context": "preserve"},
     }
+    if has_old_review_context:
+        state["prompt_context"].update(
+            {
+                "review_prior_findings": [{"dimension": "review.inspect_goal_and_evidence"}],
+                "review_affected_dimensions": ["review.inspect_goal_and_evidence"],
+                "review_previous_proposal": {"route_id": "route-1"},
+            }
+        )
 
     prepared = runtime._prepare_modify_review_state(  # noqa: SLF001
         cast(Any, state),
         plan_id=plan.id,
         review_version=plan.review_version,
     )
+
+    assert prepared["prompt_context"] == {
+        "unrelated_context": "preserve", "review_prior_findings": None,
+        "review_affected_dimensions": None, "review_previous_proposal": None,
+    }
+    assert ReviewSubgraph()._route_at_entry(cast(Any, prepared)) == "inspect_goal_and_evidence"  # noqa: SLF001
+    assert bool(state["prompt_context"].get("review_prior_findings")) is has_old_review_context
+    # The WAITING_APPROVAL caller merges this patch once more. Deleting keys
+    # locally must not resurrect them from the prior parent context.
+    update, candidate = project_lifecycle_control(
+        source_phase=WorkflowPhase.WAITING_APPROVAL,
+        prior_state=state, control_result=prepared,
+    )
+    merged = project_supervisor_state(
+        state=cast(Any, state), stage_update=cast(Any, update), candidate=candidate,
+        durable_facts=SupervisorObservationV1(
+            run_status="WAITING_APPROVAL", next_allowed_commands=(),
+            action_statuses=(), cancel_intent_active=False,
+        ),
+    ).state
+    assert merged["prompt_context"] == prepared["prompt_context"]
+    assert ReviewSubgraph()._route_at_entry(cast(Any, merged)) == "inspect_goal_and_evidence"  # noqa: SLF001
 
     assert prepared["__modify_review_evidence__"] == [
         {

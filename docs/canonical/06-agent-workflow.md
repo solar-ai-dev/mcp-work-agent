@@ -731,6 +731,14 @@ Output/Goal/완료 조건만 재판정된 기존 재사용 경계는 유지한�
 | 새 PlanReviewResult revision 생성 | 직전 REVISE selector/context를 소비 완료로 폐기한다. |
 
 이 제한적 전달은 stale Review를 current Review로 복권시키지 않는다.
+RequestIntent·Input/Output Route·Retrieval·WorkAnalysis revision이 바뀌면 이전 Review의
+`prompt_context` 재검사 finding/dimension/previous-proposal도 함께 폐기한다. 새 계획은
+INITIAL Review 대상이며 이전에 문제가 있었던 dimension만 검사하지 않는다. Planning만
+바뀐 경우에도 직전 계획에 결속된 REVISE만 이 예외를 사용할 수 있다. 동일 계획의 유효한
+CONFIRM 응답과 새 계획에 이미 결속된 새 Review는 이 문맥 폐기로 무효화하지 않는다.
+수정 전후 proposal 전달도 두 Plan의 명시적 upstream `based_on` 결속이 같을 때만 허용한다.
+예전 context에 참조가 없거나 다른 upstream revision을 가리키면 이전 인자를 새 비교 입력으로
+확장하지 않는다. 문맥 폐기는 후속 merge에서도 유지되도록 명시적 빈 값으로 전달한다.
 
 ## 3. Typed Schema 계약
 

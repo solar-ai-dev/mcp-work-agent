@@ -170,7 +170,58 @@ def invalidate_stale_downstream(*, previous: GraphState, current: GraphState) ->
         current.get("tool_route_plan")
     ) and not _same_input_plan(previous, current):
         current["input_plan_reuse"] = None
+    _expire_review_recheck_context(previous=previous, current=current)
     return invalidated
+
+
+def _expire_review_recheck_context(*, previous: GraphState, current: GraphState) -> None:
+    """Keep a stale selector only for the immediate Planning-only REVISE."""
+    upstream_changed = any(
+        _artifact_signature(previous.get(field)) != _artifact_signature(current.get(field))
+        for field in (
+            "request_intent",
+            "tool_route_plan",
+            "retrieval_result",
+            "work_analysis_result",
+        )
+    )
+    planning_changed = _artifact_signature(previous.get("planning_result")) != (
+        _artifact_signature(current.get("planning_result"))
+    )
+    if not upstream_changed and not planning_changed:
+        return
+    new_review = current.get("plan_review")
+    new_planning = current.get("planning_result")
+    if (
+        isinstance(new_review, Mapping)
+        and isinstance(new_planning, Mapping)
+        and _artifact_signature(new_review) != _artifact_signature(previous.get("plan_review"))
+        and _depends_on(new_review, new_planning)
+    ):
+        return  # A freshly produced Review owns its own context.
+    prior_review = previous.get("plan_review")
+    prior_planning = previous.get("planning_result")
+    if (
+        not upstream_changed
+        and isinstance(prior_review, Mapping)
+        and prior_review.get("status") == "REVISE"
+        and isinstance(prior_planning, Mapping)
+        and _depends_on(prior_review, prior_planning)
+    ):
+        return
+    context = current.get("prompt_context")
+    if context is not None:
+        current["prompt_context"] = cleared_review_recheck_context(context)
+
+
+def cleared_review_recheck_context(context: Mapping[str, object]) -> dict[str, object]:
+    """Use explicit tombstones so subsequent context merges cannot revive selectors."""
+    return {
+        **context,
+        "review_prior_findings": None,
+        "review_affected_dimensions": None,
+        "review_previous_proposal": None,
+    }
 
 
 def artifact_revision_projection(state: GraphState) -> dict[str, str]:
@@ -368,4 +419,5 @@ __all__ = [
     "input_plan_reuse_is_current",
     "invalidate_stale_downstream",
     "is_work_analysis_required",
+    "cleared_review_recheck_context",
 ]

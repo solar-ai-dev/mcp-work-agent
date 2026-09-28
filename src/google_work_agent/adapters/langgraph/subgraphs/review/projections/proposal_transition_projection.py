@@ -69,12 +69,17 @@ def project_proposal_transition(
     route_id = previous.get("route_id")
     actions = planning_result.get("actions")
     meta = planning_result.get("meta")
+    previous_meta = previous.get("previous_plan_ref")
+    prior_inputs = previous_meta.get("based_on") if isinstance(previous_meta, Mapping) else None
     before_arguments = previous.get("previous_arguments")
     historical = previous.get("historical_review_issues")
     if (
         not isinstance(route_id, str)
         or not isinstance(actions, list)
         or not isinstance(meta, Mapping)
+        or not isinstance(prior_inputs, list)
+        or not prior_inputs
+        or prior_inputs != meta.get("based_on")
         or not isinstance(before_arguments, Mapping)
         or not isinstance(historical, list)
         or not historical

@@ -372,10 +372,9 @@ class ReviewSubgraph:
         reviewed_proposal = capture_reviewed_proposal(
             cast(Mapping[str, object], state["planning_result"]), result
         )
-        if reviewed_proposal is None:
-            prompt_context.pop("review_previous_proposal", None)
-        else:
-            prompt_context["review_previous_proposal"] = reviewed_proposal
+        # Explicit replacement survives Supervisor's context merge; a missing key
+        # would resurrect the prior proposal when this result has no binding.
+        prompt_context["review_previous_proposal"] = reviewed_proposal
         if signal is not None:
             decision_update["workflow_signal"] = signal
         if result["status"] == "CONFIRM":
@@ -537,10 +536,8 @@ class ReviewSubgraph:
             working["affected_action_ids"] = self._affected_ids(findings, "affected_action_ids")
             working["affected_route_ids"] = self._affected_ids(findings, "affected_route_ids")
             previous_proposal = context.get("review_previous_proposal")
-            if (
-                isinstance(previous_proposal, Mapping)
-                and isinstance(prior, Mapping)
-                and prior.get("status") == "REVISE"
+            if isinstance(previous_proposal, Mapping) and (
+                prior is None or (isinstance(prior, Mapping) and prior.get("status") == "REVISE")
             ):
                 transition = project_proposal_transition(previous_proposal, planning_result)
                 if transition is not None:
