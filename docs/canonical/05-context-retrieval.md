@@ -357,6 +357,12 @@ ALL로 materialize하며 다른 keyword/container 제약과 Route·권한은 유
 
 Branch 필드를 섞으면 Provider 호출 전에 `QUERY_OPERATION_FIELD_MISMATCH`로 차단하거나 bounded revision한다.
 
+`DETAIL_FETCH` 생성 Schema는 첫 호출과 bounded revision 모두 해당 frozen Route의
+검증된 exact Resource ref와 현재 Run의 해당 Resource candidate ref의 합집합으로 닫는다.
+이미 선택된 exact ref도 아직 검색된 candidate가 없다는 이유로 제외하지 않는다.
+이는 실행 validator가 허용하는 기존 identity 집합을 전달하는 것이며, native ID의
+prefix 추정·자동 보정이나 다른 Route의 selected identity 이관을 허용하지 않는다.
+
 **결정적으로 만들 수 있는 초기 계획**
 
 | 적용 조건 | 처리 | 적용하지 않는 경우 |

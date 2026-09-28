@@ -565,7 +565,8 @@ def _bind_route_operation(
                 else {"type": "string"}
             )
     if operation == "DETAIL_FETCH":
-        candidates = sorted(set(detail_candidate_refs))
+        # Match the consumer's exact-selected or acquired-candidate authority.
+        candidates = sorted(set(allowed_resource_refs) | set(detail_candidate_refs))
         if candidates:
             operation_properties["detail_candidate_ref"] = {
                 "type": "string",
