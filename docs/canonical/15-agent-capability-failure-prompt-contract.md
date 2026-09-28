@@ -974,6 +974,16 @@ PromptRef를 등록한다. 입력은 기존 compose 계약으로 검증하며 in
 revision은 기존 Product PromptRef/schema/assembly를 그대로 보존한다. 출력 union의
 discriminator property 순서는 실제 전송 bytes와 함께 봉인하며 유효값을 확대하지 않는다.
 
+ANSWER의 별도 비활성 입력 projection은 조회 목적의 파생 alias 중복을 비교할 수 있다.
+기존 compose 입력을 먼저 검증한 뒤 Source로부터 값·WorkUnit binding·전체 항목이
+정확히 재구성되는 `USER_REQUIREMENT.required_information` 복사본만 생략할 수 있다.
+원래 Source responsibility와 원문·Goal·그 밖의 조건·Evidence는 그대로 보존하며,
+provenance나 사용자 정정으로 별도 결속된 항목은 제거하지 않는다. 축소 projection은
+새 evaluation input contract로 검증하고 완전한 Product RequestIntentV3라고 표시하지
+않는다. 이 비교는 RU/Source/State의 authority나 Retrieval·결정적 formatter의 계약을
+변경하지 않으며, source field 목록을 정답 답변 범위로 강제하거나 원문에서 원하는 field를
+추론하는 deterministic 로직을 추가하지 않는다.
+
 Source 판단의 개발 구조 비교는 기존 요청 원문·선택 identity·WorkUnit binding을 보존한
 채 출력 표현, Source/Output 역할 조립, provider 입력 envelope를 분리 비교할 수 있다.
 확정 의미의 결정적 handoff와 실제 consumer 계약 검증을 포함하며, 출력 형식 통과를
