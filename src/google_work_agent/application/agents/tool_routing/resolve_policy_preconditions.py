@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
@@ -79,11 +79,13 @@ def resolve_policy_preconditions(
     """
 
     required_reads = _required_reads(candidate)
+    required_bindings = _required_read_bindings(candidate)
     resolver = scope_expansion or ScopeExpansionResolver()
     out_of_scope = resolver.out_of_scope_reads(
         request_intent=request_intent,
         required_reads=required_reads,
         category_of=coarse_resource_category,
+        required_work_unit_bindings=required_bindings,
     )
     if out_of_scope:
         required_resource_types = tuple(sorted({read[1] for read in out_of_scope}))
@@ -106,7 +108,9 @@ def resolve_policy_preconditions(
                 },
             )
     return PolicyPreconditionResolutionV1(
-        candidate=_merge_required_reads(candidate, required_reads=required_reads),
+        candidate=_merge_required_reads(
+            candidate, required_reads=required_reads, required_bindings=required_bindings
+        ),
         workflow_signal=None,
     )
 
@@ -116,57 +120,50 @@ def _required_reads(
 ) -> tuple[tuple[str, str, str], ...]:
     required: set[tuple[str, str, str]] = set()
     for resource_type, effect in candidate.output_pairs:
-        key = (resource_type, effect.value)
-        if key == ("TASK", "CREATE"):
-            required.update(
-                {
-                    ("", "TASK", "POLICY_TASK_DUPLICATE_CHECK"),
-                    ("", "TASK_LIST", "POLICY_TASK_DUPLICATE_CHECK"),
-                }
-            )
-        elif key == ("CALENDAR_EVENT", "CREATE"):
-            required.update(
-                {
-                    (
-                        "",
-                        "CALENDAR",
-                        "POLICY_CALENDAR_CONFLICT_CHECK",
-                    ),
-                    (
-                        "",
-                        "CALENDAR_EVENT",
-                        "POLICY_CALENDAR_CONFLICT_CHECK",
-                    ),
-                    (
-                        "",
-                        "CALENDAR_FREEBUSY",
-                        "POLICY_CALENDAR_CONFLICT_CHECK",
-                    ),
-                }
-            )
+        required.update(_reads_for_output(resource_type, effect.value))
     return tuple(sorted(required))
+
+
+def _reads_for_output(resource_type: str, effect: str) -> tuple[tuple[str, str, str], ...]:
+    if (resource_type, effect) == ("TASK", "CREATE"):
+        return tuple(
+            ("", resource, "POLICY_TASK_DUPLICATE_CHECK") for resource in ("TASK", "TASK_LIST")
+        )
+    if (resource_type, effect) == ("CALENDAR_EVENT", "CREATE"):
+        return tuple(
+            ("", resource, "POLICY_CALENDAR_CONFLICT_CHECK")
+            for resource in ("CALENDAR", "CALENDAR_EVENT", "CALENDAR_FREEBUSY")
+        )
+    return ()
+
+
+def _required_read_bindings(
+    candidate: SemanticRouteCandidate,
+) -> dict[tuple[str, str, str], tuple[str, ...]]:
+    bindings: dict[tuple[str, str, str], tuple[str, ...]] = {}
+    for resource, effect, unit_ids in candidate.output_work_unit_bindings:
+        for read in _reads_for_output(resource, effect.value):
+            bindings[read] = tuple(dict.fromkeys((*bindings.get(read, ()), *unit_ids)))
+    return bindings
 
 
 def _merge_required_reads(
     candidate: SemanticRouteCandidate,
     *,
     required_reads: Sequence[tuple[str, str, str]],
+    required_bindings: Mapping[tuple[str, str, str], tuple[str, ...]],
 ) -> SemanticRouteCandidate:
     input_resources = set(candidate.input_resource_types)
     reason_codes = dict(candidate.input_reason_codes)
     work_unit_ids_by_resource = dict(candidate.input_work_unit_bindings)
-    output_unit_ids = tuple(
-        dict.fromkeys(
-            unit_id
-            for _resource_type, _effect, unit_ids in candidate.output_work_unit_bindings
-            for unit_id in unit_ids
-        )
-    )
-    for _connector_id, resource_type, reason_code in required_reads:
+    for read in required_reads:
+        _connector_id, resource_type, reason_code = read
         input_resources.add(resource_type)
         reason_codes[resource_type] = reason_code
         existing = list(work_unit_ids_by_resource.get(resource_type, ()))
-        existing.extend(unit_id for unit_id in output_unit_ids if unit_id not in existing)
+        existing.extend(
+            unit_id for unit_id in required_bindings.get(read, ()) if unit_id not in existing
+        )
         work_unit_ids_by_resource[resource_type] = tuple(existing)
     return SemanticRouteCandidate(
         input_resource_types=tuple(sorted(input_resources)),
@@ -209,15 +206,24 @@ class ScopeExpansionResolver:
         request_intent: RequestIntentV3,
         required_reads: Iterable[PolicyReadTriple],
         category_of: Callable[[str], str],
+        required_work_unit_bindings: Mapping[PolicyReadTriple, tuple[str, ...]] | None = None,
     ) -> tuple[PolicyReadTriple, ...]:
-        required_sources, forbidden_sources = _explicit_source_scope(request_intent)
         out_of_scope: list[PolicyReadTriple] = []
-        for connector_id, resource_type, reason_code in required_reads:
+        for read in required_reads:
+            _connector_id, resource_type, _reason_code = read
             category = category_of(resource_type)
-            forbidden = category in forbidden_sources
-            not_allowed = required_sources is not None and category not in required_sources
-            if forbidden or not_allowed:
-                out_of_scope.append((connector_id, resource_type, reason_code))
+            unit_ids = (required_work_unit_bindings or {}).get(read, ())
+            # Missing legacy bindings remain conservative; a typed binding only
+            # limits the comparison to the WorkUnits that require this READ.
+            for unit_id in unit_ids or (None,):
+                required_sources, forbidden_sources = _explicit_source_scope(
+                    request_intent, work_unit_id=unit_id
+                )
+                forbidden = category in forbidden_sources
+                not_allowed = required_sources is not None and category not in required_sources
+                if forbidden or not_allowed:
+                    out_of_scope.append(read)
+                    break
         return tuple(out_of_scope)
 
     def find_valid_approval(
@@ -322,11 +328,16 @@ def build_policy_confirmation_receipt(
 
 def _explicit_source_scope(
     request_intent: RequestIntentV3,
+    *,
+    work_unit_id: str | None = None,
 ) -> tuple[frozenset[str] | None, frozenset[str]]:
     required: set[str] | None = None
     forbidden: set[str] = set()
     for constraint in request_intent["constraints"]:
         if constraint["kind"] != "SCOPE":
+            continue
+        bound_ids = constraint.get("work_unit_ids", ())
+        if work_unit_id is not None and bound_ids and work_unit_id not in bound_ids:
             continue
         value = constraint["value"]
         values = value if isinstance(value, list) else [value]

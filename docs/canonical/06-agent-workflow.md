@@ -831,6 +831,7 @@ class RequestIntentV3:
 
 - 현재 atomic Request Understanding 경로는 단일·교차 Resource 여부와 무관하게 `resource_responsibilities`를 확정한다. nullable 표현은 compatibility 입력을 위한 것이며, 평면 resource/effect 목록을 정상 downstream이 다시 source/output으로 분류하게 두지 않는다.
 - `source_reads`의 각 항목은 `resource_type`과 Connector가 해결할 기존 사실 또는 exact resource identity인 `required_information`을 가진다. Retrieval 전 부재는 user-owned missing choice가 아니다.
+- 검증된 Source decision의 조립은 `required_information`, `target_scope`, `work_unit_ids`를 그대로 보존한다. 부모·자식 Resource의 동시 선택이나 원문 키워드 부재를 이유로 확정 Source item을 삭제하지 않는다. 접근에 필요한 dependency-only Route와 업무 Source의 구분은 Tool Route의 기존 typed responsibility·Registry 경계가 소유한다.
 - `outputs`의 각 항목은 `resource_type`과 `CREATE | UPDATE | SEND | DELETE` 중 하나인 `effect`를 가진다. 같은 Write 결과의 Verification reread는 별도 source read 책임으로 만들지 않는다.
 - source/output 책임을 투영한 Resource와 Effect 집합은 `requested_resource_hints`와 `requested_effect_hints`에 정확히 일치해야 한다. 불일치·중복 항목·지원하지 않는 Resource/effect 조합과 같은 Resource UPDATE/DELETE의 source 누락은 Provider 호출 전 Request Understanding validator가 거절한다.
 - Tool Route는 검증된 책임을 IN Resource와 OUT Resource/Effect로 결정적으로 투영한다. Tool 이름과 Registry binding은 계속 Tool Route owner가 소유한다.
@@ -1319,6 +1320,11 @@ class ToolRouteStateV1:
 `io_resource_failure`는 `determine_io_resources`의 bounded semantic revision이 소진됐을 때 마지막 typed validation failure를 보존한다. 사용자 확인 interrupt의 reason과 affected path는 이 record에서 투영하며 generic route 상태로 덮어쓰지 않는다.
 
 #### Policy Precondition READ
+
+각 Policy READ의 `work_unit_ids`는 그 검사를 필요로 하는 Output의 binding에서만
+파생한다. 공유 READ는 해당 binding만 union하고, 범위 제한은 각 적용 WorkUnit의
+Constraint와 비교한다. 무관한 업무의 금지를 전역화하거나 다른 업무의 허용 범위로
+금지를 상쇄하지 않는다. 적용 업무 하나라도 범위 확장이 필요하면 기존 확인을 유지한다.
 
 | 상황 | 처리 |
 | --- | --- |

@@ -136,7 +136,7 @@ def bind_registry_candidates(
         reason_codes_by_resource=dict(candidate.input_reason_codes),
         work_unit_ids_by_resource=dict(candidate.input_work_unit_bindings),
     )
-    existing = {route["resource_type"] for route in input_routes}
+    existing = {route["resource_type"]: route for route in input_routes}
     selected_resource_types = {
         resource_type
         for resource_type, reason_code in candidate.input_reason_codes
@@ -146,24 +146,29 @@ def bind_registry_candidates(
         candidate.input_resource_types,
         direct_resource_types=selected_resource_types,
     ):
-        if resource_type in existing:
-            continue
-        input_routes.extend(
-            _bind_input_routes(
-                resource_types=(resource_type,),
-                tool_catalog=tool_catalog,
-                id_factory=id_factory,
-                reason_code=reason_code,
-                reason_codes_by_resource={},
-                work_unit_ids_by_resource={
-                    resource_type: _dependency_work_unit_ids(
-                        dependency_resource_type=resource_type,
-                        candidate=candidate,
-                    )
-                },
-            )
+        dependency_work_unit_ids = _dependency_work_unit_ids(
+            dependency_resource_type=resource_type,
+            candidate=candidate,
+            direct_resource_types=selected_resource_types,
         )
-        existing.add(resource_type)
+        if resource_type in existing:
+            route = existing[resource_type]
+            route["work_unit_ids"] = list(
+                dict.fromkeys((*route["work_unit_ids"], *dependency_work_unit_ids))
+            )
+            if reason_code not in route["reason_codes"]:
+                route["reason_codes"].append(reason_code)
+            continue
+        dependency_routes = _bind_input_routes(
+            resource_types=(resource_type,),
+            tool_catalog=tool_catalog,
+            id_factory=id_factory,
+            reason_code=reason_code,
+            reason_codes_by_resource={},
+            work_unit_ids_by_resource={resource_type: dependency_work_unit_ids},
+        )
+        input_routes.extend(dependency_routes)
+        existing[resource_type] = dependency_routes[0]
     return RouteBindingCandidateV1(
         semantic=candidate,
         input_routes=tuple(input_routes),
@@ -206,10 +211,14 @@ def _dependency_work_unit_ids(
     *,
     dependency_resource_type: str,
     candidate: SemanticRouteCandidate,
+    direct_resource_types: Iterable[str] = (),
 ) -> tuple[str, ...]:
     direct_bindings = dict(candidate.input_work_unit_bindings)
+    direct_resources = set(direct_resource_types)
     refs: list[str] = []
     for resource_type in candidate.input_resource_types:
+        if resource_type in direct_resources:
+            continue
         if dependency_resource_type not in {
             dependency for dependency, _reason in _READ_DEPENDENCIES_BY_RESOURCE.get(
                 resource_type, ()

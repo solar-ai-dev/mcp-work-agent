@@ -237,10 +237,86 @@ def test_multi_work__shares_read_capability__but_preserves_independent_outputs()
     assert len(binding.input_routes) == 1
     assert binding.input_routes[0]["work_unit_ids"] == ["work-1", "work-2"]
     assert len(binding.output_candidates) == 2
-    assert {
-        candidate.eligible_tool_ids for candidate in binding.output_candidates
-    } == {("github_create_issue",)}
+    assert {candidate.eligible_tool_ids for candidate in binding.output_candidates} == {
+        ("github_create_issue",)
+    }
     assert [candidate.work_unit_ids for candidate in binding.output_candidates] == [
         ("work-1",),
         ("work-2",),
     ]
+
+
+def test_existing_direct_read__unions_dependency_work_units__without_duplicate_routes() -> None:
+    ids = iter(f"route-{index}" for index in range(10))
+    binding = bind_registry_candidates(
+        candidate=SemanticRouteCandidate(
+            input_resource_types=("TASK_LIST", "TASK"),
+            output_pairs=(),
+            output_mode="ANSWER",
+            analysis_requirement="NONE",
+            input_work_unit_bindings=(
+                ("TASK_LIST", ("work-1",)),
+                ("TASK", ("work-2",)),
+            ),
+        ),
+        tool_catalog=_catalog(),
+        id_factory=lambda: next(ids),
+    )
+
+    routes = {route["resource_type"]: route for route in binding.input_routes}
+    assert len(binding.input_routes) == 2
+    assert routes["TASK_LIST"]["work_unit_ids"] == ["work-1", "work-2"]
+    assert routes["TASK"]["work_unit_ids"] == ["work-2", "work-1"]
+    assert all(not is_retrieval_dependency_route(route) for route in binding.input_routes)
+    assert binding.output_candidates == ()
+
+
+def test_selected_direct_read__does_not_inherit_unneeded_discovery_binding() -> None:
+    ids = iter(f"route-{index}" for index in range(10))
+    binding = bind_registry_candidates(
+        candidate=SemanticRouteCandidate(
+            input_resource_types=("TASK", "TASK_LIST"),
+            output_pairs=(),
+            output_mode="ANSWER",
+            analysis_requirement="NONE",
+            input_reason_codes=(("TASK", "RESOURCE_SELECTED"),),
+            input_work_unit_bindings=(
+                ("TASK", ("work-1",)),
+                ("TASK_LIST", ("work-2",)),
+            ),
+        ),
+        tool_catalog=_catalog(),
+        id_factory=lambda: next(ids),
+    )
+
+    routes = {route["resource_type"]: route for route in binding.input_routes}
+    assert len(binding.input_routes) == 2
+    assert routes["TASK"]["work_unit_ids"] == ["work-1", "work-2"]
+    assert routes["TASK_LIST"]["work_unit_ids"] == ["work-2"]
+    assert "RESOURCE_SELECTED" in routes["TASK"]["reason_codes"]
+
+
+def test_shared_dependency__unions_all_origin_bindings__without_duplicate_routes() -> None:
+    ids = iter(f"route-{index}" for index in range(10))
+    binding = bind_registry_candidates(
+        candidate=SemanticRouteCandidate(
+            input_resource_types=("CALENDAR_EVENT", "CALENDAR_FREEBUSY"),
+            output_pairs=(),
+            output_mode="ANSWER",
+            analysis_requirement="NONE",
+            input_work_unit_bindings=(
+                ("CALENDAR_EVENT", ("work-1",)),
+                ("CALENDAR_FREEBUSY", ("work-2",)),
+            ),
+        ),
+        tool_catalog=_catalog(),
+        id_factory=lambda: next(ids),
+    )
+
+    routes = {route["resource_type"]: route for route in binding.input_routes}
+    assert len(binding.input_routes) == 3
+    assert routes["CALENDAR"]["work_unit_ids"] == ["work-1", "work-2"]
+    assert routes["CALENDAR_EVENT"]["work_unit_ids"] == ["work-1", "work-2"]
+    assert routes["CALENDAR_FREEBUSY"]["work_unit_ids"] == ["work-2"]
+    assert is_retrieval_dependency_route(routes["CALENDAR"])
+    assert not is_retrieval_dependency_route(routes["CALENDAR_EVENT"])

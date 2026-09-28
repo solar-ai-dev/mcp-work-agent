@@ -253,9 +253,7 @@ _ADDITIONAL_CONSTRAINT_LIST_SCHEMA = {
         },
     },
 }
-_NAMED_SEARCH_CONSTRAINT_PROPERTIES["additional_constraints"] = (
-    _ADDITIONAL_CONSTRAINT_LIST_SCHEMA
-)
+_NAMED_SEARCH_CONSTRAINT_PROPERTIES["additional_constraints"] = _ADDITIONAL_CONSTRAINT_LIST_SCHEMA
 _NAMED_SEARCH_CONSTRAINTS_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -435,9 +433,7 @@ def identify_goal_output_schema(work_unit_ids: Sequence[str]) -> OutputSchemaDef
             item_schema = cast(dict[str, object], field_schema["items"])
             field_properties = cast(dict[str, object], item_schema["properties"])
         field_properties["work_unit_ids"] = deepcopy(binding_schema)
-    additional_schema = cast(
-        dict[str, object], constraint_properties["additional_constraints"]
-    )
+    additional_schema = cast(dict[str, object], constraint_properties["additional_constraints"])
     additional_item = cast(dict[str, object], additional_schema["items"])
     additional_properties = cast(dict[str, object], additional_item["properties"])
     additional_properties["work_unit_ids"] = deepcopy(binding_schema)
@@ -445,6 +441,7 @@ def identify_goal_output_schema(work_unit_ids: Sequence[str]) -> OutputSchemaDef
         schema_version="request-goal-candidate-v17",
         json_schema=schema,
     )
+
 
 def validate_request_goal_candidate(
     value: object,
@@ -469,9 +466,7 @@ def validate_request_goal_candidate(
     if not isinstance(effect_prohibitions, Mapping):
         raise ValueError("effect prohibition candidate is invalid")
     raw_prohibitions = effect_prohibitions.get("effect_prohibitions")
-    if not isinstance(raw_prohibitions, Sequence) or isinstance(
-        raw_prohibitions, (str, bytes)
-    ):
+    if not isinstance(raw_prohibitions, Sequence) or isinstance(raw_prohibitions, (str, bytes)):
         raise ValueError("effect prohibition candidate is invalid")
     normalized_prohibitions = [
         {
@@ -487,9 +482,7 @@ def validate_request_goal_candidate(
         "effect_prohibitions": normalized_prohibitions,
         "requested_work": deepcopy(requested_work),
     }
-    effects, resources, source_information = derive_requested_resource_fields(
-        normalized_responsibilities
-    )
+    effects, resources, _ = derive_requested_resource_fields(normalized_responsibilities)
     raw_additional = cast(list[Mapping[str, object]], slots["additional_constraints"])
     try:
         additional = cast(
@@ -498,9 +491,7 @@ def validate_request_goal_candidate(
                 {
                     "kind": cast(
                         ConstraintKindValue,
-                        _ADDITIONAL_CONSTRAINT_FIELD_KINDS[
-                            cast(str, constraint["field"])
-                        ],
+                        _ADDITIONAL_CONSTRAINT_FIELD_KINDS[cast(str, constraint["field"])],
                     ),
                     "field": cast(str, constraint["field"]),
                     "value": cast(str | list[str], constraint["value"]),
@@ -524,20 +515,24 @@ def validate_request_goal_candidate(
                 "work_unit_ids": list(cast(Sequence[str], coverage["work_unit_ids"])),
             }
         )
-    if source_information:
-        source_unit_ids = list(
-            dict.fromkeys(
-                unit_id
-                for source in normalized_responsibilities["source_reads"]
-                for unit_id in source["work_unit_ids"]
-            )
+    information_by_binding: dict[tuple[str, ...], list[str]] = {}
+    for source in normalized_responsibilities["source_reads"]:
+        if not source["required_information"]:
+            continue
+        source_unit_ids = tuple(source["work_unit_ids"])
+        bound_information = information_by_binding.setdefault(source_unit_ids, [])
+        bound_information.extend(
+            information
+            for information in source["required_information"]
+            if information not in bound_information
         )
+    for source_unit_ids, source_information in information_by_binding.items():
         normalized_constraints.append(
             {
                 "kind": "USER_REQUIREMENT",
                 "field": "required_information",
                 "value": source_information,
-                "work_unit_ids": source_unit_ids,
+                "work_unit_ids": list(source_unit_ids),
             }
         )
     normalized_constraints.extend(
@@ -547,9 +542,13 @@ def validate_request_goal_candidate(
             provenance_sources=provenance_sources,
         )
     )
-    if any(
-        constraint["field"] == "repository" for constraint in cast(list[ConstraintV1], additional)
-    ) and "GITHUB_ISSUE" not in resources:
+    if (
+        any(
+            constraint["field"] == "repository"
+            for constraint in cast(list[ConstraintV1], additional)
+        )
+        and "GITHUB_ISSUE" not in resources
+    ):
         raise ValueError(
             "request goal candidate is invalid: repository constraint requires GITHUB_ISSUE"
         )
@@ -566,9 +565,7 @@ def validate_request_goal_candidate(
         raise RequestGoalSemanticValidationError(
             str(error),
             reason_code="REQUEST_RESOURCE_RESPONSIBILITY_MISMATCH",
-            affected_field_paths=(
-                "$.resource_responsibilities",
-            ),
+            affected_field_paths=("$.resource_responsibilities",),
         ) from error
     value = {
         **normalized_root,
@@ -612,9 +609,7 @@ def _validate_resource_responsibilities_shape(
     )
     if errors:
         raise ValueError(f"resource responsibility candidate is invalid: {'; '.join(errors)}")
-    responsibilities = _normalize_source_read_responsibilities(
-        cast(Mapping[str, object], value)
-    )
+    responsibilities = _normalize_source_read_responsibilities(cast(Mapping[str, object], value))
     _validate_resource_responsibility_text(responsibilities)
     return responsibilities
 
@@ -697,9 +692,7 @@ def _validate_semantic_constraint_text(
     for index, additional_value in enumerate(additional):
         constraint_value = additional_value["value"]
         additional_values = (
-            [constraint_value]
-            if isinstance(constraint_value, str)
-            else constraint_value
+            [constraint_value] if isinstance(constraint_value, str) else constraint_value
         )
         for value_index, value in enumerate(cast(Sequence[str], additional_values)):
             _require_semantic_text(
@@ -712,6 +705,7 @@ def _validate_semantic_constraint_text(
                 cast(str, provenance["source_text"]),
                 f"$.constraints.additional_constraints[{index}].provenance.source_text",
             )
+
 
 def _validate_resource_responsibility_text(
     responsibilities: ResourceResponsibilitiesV1,
@@ -820,9 +814,7 @@ def validate_normalized_request_goal_candidate(value: object) -> RequestGoalCand
 def _validate_existing_resource_mutation_sources(
     responsibilities: ResourceResponsibilitiesV1,
 ) -> None:
-    source_resource_types = {
-        source["resource_type"] for source in responsibilities["source_reads"]
-    }
+    source_resource_types = {source["resource_type"] for source in responsibilities["source_reads"]}
     missing_source_paths = [
         f"$.resource_responsibilities.outputs[{index}]"
         for index, output in enumerate(responsibilities["outputs"])

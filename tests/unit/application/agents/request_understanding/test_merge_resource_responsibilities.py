@@ -122,8 +122,9 @@ def test_atomic_decisions__after_validation__merge_to_canonical_contract(
     ] == expected_outputs
 
 
-def test_merge_resource_responsibilities__with_explicit_item_sources__restores_child_sources(
-) -> None:
+def test_merge_resource_responsibilities__with_validated_sources__preserves_all_owner_items() -> (
+    None
+):
     merged = responsibility_merge.merge_resource_responsibilities(
         source_decisions=_source(
             values={
@@ -145,7 +146,9 @@ def test_merge_resource_responsibilities__with_explicit_item_sources__restores_c
 
     assert [item["resource_type"] for item in merged["source_reads"]] == [
         "GMAIL_DRAFT",
+        "TASK_LIST",
         "TASK",
+        "CALENDAR",
         "CALENDAR_EVENT",
     ]
     assert merged["outputs"] == [
@@ -157,8 +160,59 @@ def test_merge_resource_responsibilities__with_explicit_item_sources__restores_c
     ]
 
 
-def test_merge_resource_responsibilities__with_typed_mail_fact_source__preserves_source(
+@pytest.mark.parametrize(
+    ("parent_resource", "child_resource", "parent_fact", "child_fact"),
+    [
+        ("TASK_LIST", "TASK", "task_list_title", "completion_status"),
+        ("CALENDAR", "CALENDAR_EVENT", "calendar_metadata", "start"),
+    ],
+)
+@pytest.mark.parametrize("request_text", [None, "", "Compare the container and its items."])
+def test_source_parent_and_child__preserve_typed_binding__without_lexical_rejudgment(
+    parent_resource: str,
+    child_resource: str,
+    parent_fact: str,
+    child_fact: str,
+    request_text: str | None,
 ) -> None:
+    decisions = _source(
+        values={
+            parent_resource: ([parent_fact], "SINGULAR"),
+            child_resource: ([child_fact], "CRITERIA"),
+        }
+    )
+    for item in decisions["source_dependencies"]:
+        if item["resource_type"] == parent_resource:
+            item["work_unit_ids"] = ["work-1"]
+        elif item["resource_type"] == child_resource:
+            item["work_unit_ids"] = ["work-2"]
+
+    merged = responsibility_merge.merge_resource_responsibilities(
+        source_decisions=decisions,
+        output_decisions=_output(),
+        source_candidates=_SOURCE_CANDIDATES,
+        output_candidates=_OUTPUT_CANDIDATES,
+        request_text=request_text,
+    )
+
+    assert merged["source_reads"] == [
+        {
+            "resource_type": parent_resource,
+            "required_information": [parent_fact],
+            "target_scope": "SINGULAR",
+            "work_unit_ids": ["work-1"],
+        },
+        {
+            "resource_type": child_resource,
+            "required_information": [child_fact],
+            "target_scope": "CRITERIA",
+            "work_unit_ids": ["work-2"],
+        },
+    ]
+    assert merged["outputs"] == []
+
+
+def test_merge_resource_responsibilities__with_typed_mail_fact_source__preserves_source() -> None:
     merged = responsibility_merge.merge_resource_responsibilities(
         source_decisions=_source(
             values={
@@ -189,13 +243,9 @@ def test_merge_resource_responsibilities__with_typed_mail_fact_source__preserves
     ]
 
 
-def test_merge_resource_responsibilities__with_singular_source__preserves_scope_and_facts() -> (
-    None
-):
+def test_merge_resource_responsibilities__with_singular_source__preserves_scope_and_facts() -> None:
     merged = responsibility_merge.merge_resource_responsibilities(
-        source_decisions=_source(
-            values={"CALENDAR_EVENT": (["start", "end"], "SINGULAR")}
-        ),
+        source_decisions=_source(values={"CALENDAR_EVENT": (["start", "end"], "SINGULAR")}),
         output_decisions=_output(),
         source_candidates=_SOURCE_CANDIDATES,
         output_candidates=_OUTPUT_CANDIDATES,
