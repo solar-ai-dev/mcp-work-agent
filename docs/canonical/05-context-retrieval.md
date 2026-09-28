@@ -611,6 +611,14 @@ exact Resource/version에 결속하고, `needsAction`은 미완료, `completed`�
 hash 불일치는 fact를 생성하지 않으며 excerpt나 검색 status 조건에서 보충하지 않는다.
 Product의 기존 snapshot 비노출 계약은 유지하고 후보 input/활성화 경계는15를 따른다.
 
+단일 Task의 직접 사실 조회에 한정한 비활성 평가에서는 검증된 snapshot의 필드 존재를
+`(approved evidence_ref, field)` 선택지로만 표현할 수 있다. snapshot 값·원본 전체를
+새 Prompt 필드로 전송하지 않는다. 선택 후 값은 기존 same-Run/exact-version resolver와
+해당 필드 formatter가 materialize하며, notes는 원본 데이터 인용이지 명령·상태 authority가
+아니다. 누락·미지 enum·잘못된 날짜는 해당 선택지를 만들지 않고, 상충 version이나
+snapshot 무결성 실패는 객체를 제외한다. 이를 일반 요약·분석·부분 조회의 대체 계약으로
+적용하거나 Product snapshot 공개 범위를 변경하지 않는다.
+
 `excluded_segment_ids`는 Retrieval의 selection 결과다. Browser가 직접 수정하지 않으며 사용자 제외·추가 검색은 기존 `run.adjust_context → ContextAdjustmentV1`을 통해 같은 Run의 Retrieval에만 전달한다. Browser·Agent의 Main State/Evidence row 직접 변경은 금지한다. 사용자 제외의 수명은 §4.2를 따른다.
 
 ### 5.8 `retrieval.assess_sufficiency`

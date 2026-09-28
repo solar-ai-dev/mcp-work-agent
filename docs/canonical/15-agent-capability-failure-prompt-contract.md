@@ -942,6 +942,15 @@ task_status`로 닫고05의 same-Run/version 검증 결과만 전달한다. 미�
 않고 상태 의미를 후처리하거나 답변을 강제하지 않는다. Production registry/Prompt activation,
 State·Graph·Approval·Execution 계약은 이 개발 후보에 의해 변경되지 않는다.
 
+확정 사실의 재서술 오류를 분리하는 비활성 lookup 출력 후보에서는 별도 evaluation
+PromptRef로 기존 compose 입력을 유지하고 응답만 `items[{evidence_ref, field}]`로 닫는다.
+허용 pair는 현재 approved Evidence와 검증된 snapshot에서 결정적으로 생성하며, field의
+정답 선택이나 개수를 강제하지 않는다. 모델은 자유문장이나 값을 재생성하지 않고 renderer는
+선택된 필드만 기존 enum/date 의미 또는 원문 인용으로 materialize한다. 최종 draft는 기존
+Answer validator를 통과해야 한다. 누락·잘못된 field 선택은 의미 실패로 남기며 빈 응답을
+정상 미발견으로 처리하지 않는다. 이 후보는 Source/Effect 판단, 일반 답변 전체, 자동
+eligibility/fallback 또는 Product Prompt activation을 변경하지 않는다.
+
 Source 판단의 개발 구조 비교는 기존 요청 원문·선택 identity·WorkUnit binding을 보존한
 채 출력 표현, Source/Output 역할 조립, provider 입력 envelope를 분리 비교할 수 있다.
 확정 의미의 결정적 handoff와 실제 consumer 계약 검증을 포함하며, 출력 형식 통과를

@@ -1515,6 +1515,14 @@ class WorkAnalysisStateV2:
 
 ### 5.6 Planning Subgraph
 
+비활성 개발 후보에서 단일 Task의 직접 사실 조회는 기존 compose 호출 하나의 출력을
+검증된 `(evidence_ref, field)` 선택으로 바꿔 비교할 수 있다. 모델은 질문에 필요한
+필드와 배치만 고르고, 확정 상태·date-only 값·메모는 Source snapshot을 소비하는
+결정적 renderer가 그대로 표현한다. 자유 `answer/value`를 이 후보에 혼합하지 않는다.
+빈 선택은 미발견 답변이 아니라 후보 답변 미생성이다. 요약/분석/복수자료/미완전 조회의
+자동 분류·fallback·새 LLM 호출은 추가하지 않으며, 고정된 evaluation lookup 입력 밖에는
+적용하지 않는다. Product ANSWER·Review·Approval 계약과 checkpoint는 그대로 유지한다.
+
 Planning 진입 시 Tool Route는 이미 확정되어 있다.
 
 | 현재 입력 | 적용 책임 |
