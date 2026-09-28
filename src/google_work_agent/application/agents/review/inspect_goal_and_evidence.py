@@ -36,6 +36,7 @@ def inspect_goal_and_evidence(
     confirmation_response: Mapping[str, object] | None = None,
     user_action_modifications: Sequence[Mapping[str, object]] = (),
     run_reference_time: Mapping[str, object] | None = None,
+    source_snapshots: Mapping[str, Mapping[str, object]] | None = None,
 ) -> ReviewInspectorResultV1:
     if confirmation_response is None and (
         is_exact_calendar_create_plan(
@@ -53,6 +54,7 @@ def inspect_goal_and_evidence(
                 request_intent=request_intent,
                 planning_result=planning_result,
                 evidence=evidence,
+                source_snapshots=source_snapshots,
             )
         )
     ):

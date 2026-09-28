@@ -10,7 +10,7 @@ from google_work_agent.application.agents.planning.contracts.planning_semantics 
     AnswerDraftCandidateV2,
     AnswerOutlineV1,
 )
-from google_work_agent.application.agents.planning.resolve_task_calendar_snapshot import (
+from google_work_agent.application.agents.retrieval.resolve_task_calendar_snapshot import (
     resolve_unique_task_calendar_snapshots,
 )
 

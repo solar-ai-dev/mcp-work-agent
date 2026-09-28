@@ -136,8 +136,9 @@ def test_inspect_goal__and_evidence_rejects__final_disposition_field() -> None:
         )
 
 
-def test_cross_resource_draft__fully_grounded_preview__skips_semantic_review() -> None:
+def test_cross_resource_draft__legacy_excerpt_without_snapshot__retains_semantic_review() -> None:
     calls: list[object] = []
+
     def invoke(*_args: object) -> dict[str, object]:
         calls.append(object())
         return _result()
@@ -209,8 +210,8 @@ def test_cross_resource_draft__fully_grounded_preview__skips_semantic_review() -
         invoke=cast(ReviewSemanticInvoker, invoke),
     )
 
-    assert result == {"schema_version": 1, "dimension": DIMENSION, "findings": []}
-    assert calls == []
+    assert result == _result()
+    assert len(calls) == 1
 
 
 @pytest.mark.parametrize(

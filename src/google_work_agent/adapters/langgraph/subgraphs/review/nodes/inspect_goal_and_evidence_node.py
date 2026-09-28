@@ -16,7 +16,10 @@ from google_work_agent.application.agents.review.inspect_goal_and_evidence impor
 
 
 def inspect_goal_and_evidence_node(
-    state: Mapping[str, object], *, invoke: ReviewSemanticInvoker
+    state: Mapping[str, object],
+    *,
+    invoke: ReviewSemanticInvoker,
+    source_snapshots: Mapping[str, Mapping[str, object]] | None = None,
 ) -> dict[str, object]:
     projected = input_projection.project_inspect_goal_and_evidence_input(state)
     return {
@@ -29,5 +32,6 @@ def inspect_goal_and_evidence_node(
             user_action_modifications=projected.get("user_action_modifications", ()),
             run_reference_time=projected.get("run_reference_time"),
             invoke=invoke,
+            source_snapshots=source_snapshots,
         )
     }

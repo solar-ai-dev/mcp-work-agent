@@ -41,6 +41,7 @@ from google_work_agent.adapters.langgraph.subgraphs.review.state import (
     ReviewState,
 )
 from google_work_agent.adapters.system.memory.retrieval_evidence_store import (
+    EvidenceResolutionError,
     RunScopedEvidenceStore,
     resolve_evidence_projection,
 )
@@ -284,12 +285,44 @@ class ReviewSubgraph:
 
     def _inspect_goal_and_evidence_node(self, state: ReviewState) -> ReviewState:
         working = self._project_runtime_inputs(state)
+        source_snapshots = self._source_snapshots(working)
         return self._run_semantic_node(
             state,
             working,
             "inspect_goal_and_evidence",
-            lambda invoke: inspect_goal_and_evidence_node(working, invoke=invoke),
+            lambda invoke: inspect_goal_and_evidence_node(
+                working, invoke=invoke, source_snapshots=source_snapshots
+            ),
         )
+
+    def _source_snapshots(self, state: ReviewState) -> dict[str, dict[str, object]]:
+        """Resolve source authority without adding raw snapshots to State or Prompt."""
+        run_id = state.get("run_id")
+        if self._evidence_store is None or not isinstance(run_id, str) or not run_id:
+            return {}
+        snapshots: dict[str, dict[str, object]] = {}
+        for item in state.get("evidence", []):
+            ref = item.get("evidence_ref") or item.get("evidence_id") or item.get("id")
+            handle, locator = item.get("resource_handle"), item.get("locator")
+            version = locator.get("source_version_ref") if isinstance(locator, Mapping) else None
+            if (
+                not isinstance(ref, str)
+                or not ref
+                or not isinstance(handle, str)
+                or not handle.startswith(("task:", "calendar_event:"))
+                or not isinstance(version, str)
+                or not version
+            ):
+                continue
+            try:
+                snapshots[ref] = self._evidence_store.resolve_resource_snapshot(
+                    run_id=run_id,
+                    resource_handle=handle,
+                    source_version_ref=version,
+                )
+            except EvidenceResolutionError:
+                continue
+        return snapshots
 
     def _inspect_action_scope_and_route_node(self, state: ReviewState) -> ReviewState:
         return self._run_semantic_node(

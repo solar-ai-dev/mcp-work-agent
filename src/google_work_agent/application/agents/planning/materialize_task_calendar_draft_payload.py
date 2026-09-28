@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from datetime import datetime
+from datetime import date, datetime
 
-from google_work_agent.application.agents.planning.resolve_task_calendar_snapshot import (
+from google_work_agent.application.agents.retrieval.resolve_task_calendar_snapshot import (
     resolve_unique_task_calendar_snapshots,
 )
 from google_work_agent.application.agents.task_calendar_draft_source import (
@@ -164,6 +164,11 @@ def _date_value(value: str) -> str:
 
 
 def _datetime_value(value: str) -> str:
+    if len(value) == 10:
+        try:
+            return date.fromisoformat(value).isoformat()
+        except ValueError:
+            return value
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:

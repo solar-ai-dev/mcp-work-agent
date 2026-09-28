@@ -356,6 +356,12 @@ Goal/evidence/action/route/constraint/policy 검사를 atomic inspector responsi
 
 세 inspector는 `06 Workflow`의 `ReviewInspectorResultV1` typed intermediate만 반환한다. free-form dimension/object를 반환하지 않으며 `ReviewDimensionIdV1` closed set 밖 값은 deterministic validator가 거절한다.
 
+`inspect_goal_and_evidence`의 Task/Calendar Draft 결정적 fast path는 `05`가 소유한
+same-Run/version snapshot을 내부 optional 인자로만 받는다. 이 값은 Prompt projection이나
+persisted Review State에 추가하지 않는다. source-bound expected payload 전체가 실제 Preview와
+exact 일치할 때만 이 fast path를 사용한다. snapshot의 부재·충돌 또는 Preview의 차이는
+기존 semantic inspector로 보내며, Planning의 성공 주장만으로 Review를 생략하지 않는다.
+
 #### Fusion·안전 경계
 
 더 강한 Runtime에서 인접 LLM Node를 fuse하려면 위 atomic candidate의 Typed Output 의미를 모두 재현하고 `12 Test / 13 Evaluation`의 parity·failure-isolation gate를 통과해야 한다.

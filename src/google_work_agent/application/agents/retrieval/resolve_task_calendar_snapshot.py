@@ -1,4 +1,4 @@
-"""Resolve only an Evidence-bound Task/Event snapshot, never its free-form excerpt."""
+"""Resolve source-owned Task/Event snapshots for deterministic downstream consumers."""
 
 from __future__ import annotations
 

@@ -586,7 +586,8 @@ Resource type/handle/parent/Provider version과 이 필드들의 canonical conte
 
 Snapshot 원문은 Evidence locator나 LLM Prompt에 추가하지 않는다. Locator에는
 `source_version_ref`만 additive하게 붙이고, Planning은 같은 Run의 exact Resource/version을
-선택된 Evidence ID에 연결하여 결정적 consumer에만 전달한다. 기존 normalized text,
+선택된 Evidence ID에 연결하여 결정적 consumer에만 전달한다. Review의 결정적 근거 검사도
+동일 Source authority를 사용하되 실제 Plan과 독립적으로 대조하며, 내부 인자로만 전달한다. 기존 normalized text,
 chunk schema version, SourceSegment ID는 변경하지 않는다. 새 locator를 가진 신규 Evidence의
 ID는 기존 Evidence hash 규칙을 따르되, persisted Evidence/Checkpoint의 ID나 내용을 변환하지
 않는다. 과거 Evidence에 version binding이 없거나 같은 Run snapshot이 없으면 excerpt나

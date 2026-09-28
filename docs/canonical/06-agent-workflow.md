@@ -1552,6 +1552,7 @@ class PlanningStateV2:
 #### 결정적 작성과 검증
 
 - 제목만 지정된 정확한 Task CREATE와 제목·날짜·시작·종료·Timezone이 모두 지정된 정확한 Calendar CREATE는 frozen Output Route와 검증된 Request Intent가 각각 하나로 일치할 때 동일 candidate schema를 결정적으로 materialize할 수 있다. 필드가 부족하거나 복수 제약·추가 의미 판단이 남아 있으면 기존 LLM Node를 유지하며, 결정적 결과도 기존 assemble/validate 경계를 우회하지 않는다.
+- Task/Calendar 근거를 Draft로 작성할 때 필드 authority는 `05`의 같은 Run/version snapshot이다. Calendar 날짜-only 값은 날짜로 보존하며 존재하지 않는 자정 시각을 덧붙이지 않는다.
 - current registered Tool catalog 전체를 Planning Node에 다시 노출해 Tool을 재선택하게 하지 않는다. Tool 수는 Registry closed set에서 파생되며 Planning 문서가 별도 numeric authority를 갖지 않는다.
 - Tool Candidate shortlisting을 Planning에서 수행하지 않는다. Tool 선택 책임은 Tool Route가 이미 소유한다.
 #### Dependency와 최종 조립
@@ -1606,6 +1607,7 @@ class ReviewInspectorResultV1:
 | 상황 | 적용 기준 |
 | --- | --- |
 | 정확한 Task/Calendar CREATE | 검증된 Intent·frozen Route와 Plan이 일치하고 필수 중복/충돌 분석이 끝났으며 ambiguity·risk·relation·override가 모두 비어 있을 때, inspector 결과를 빈 Finding으로 결정적으로 만들 수 있다. |
+| Task+Calendar 근거의 정확한 Gmail Draft | 기존 recipient/action/evidence 검사를 유지하고 `05`의 exact same-Run snapshot으로 기존 결정적 materializer가 만든 전체 expected payload를 실제 Preview와 exact 비교한다. excerpt의 title/status/date 문자열이나 본문 내 단어 존재는 metadata·관계의 증명이 아니다. snapshot이 없거나 version이 충돌하거나 payload가 다르면 기존 semantic inspector를 실행한다. 다른 정당한 문체를 결정적으로 FAIL 처리하지 않는다. 날짜-only 자료에는 시각을 요구하거나 생성하지 않는다. |
 | 조건 미충족·Confirmation/Policy 판단 남음 | 해당 inspector LLM을 유지한다. 위 최적화로 Domain Validation·Approval·Verification을 생략하지 않는다. |
 | aggregate_review_findings | 세 결과를 deterministic severity/disposition precedence로 합성한다. LLM이 최종 routing authority를 갖지 않는다. |
 | recheck_affected_dimensions | REVISE가 표시한 affected_dimensions만 재검사한다. action/route IDs가 있으면 해당 dimension의 bounded context로만 사용한다. 동일 frozen route의 전후 Action이 일대일로 확인되는 경우에만 변경된 argument path와 이전 issue를 낮은 권위의 제안 이력으로 전달한다. 이전 issue의 해결 상태와 현재의 새 finding을 별도로 출력하고, 현재 finding만 집계한다. |
