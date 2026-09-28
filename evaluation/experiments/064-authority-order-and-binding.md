@@ -590,3 +590,39 @@ Route에 복제하고, 지원 constraint 종류도 다른 업무의 상태/시�
 discovery 능력·shared READ·legacy 호환·선택 exact DETAIL의 LLM0을 유지한다.
 신규10개 포함 관련112 PASS, Product Ruff/mypy/diff-check PASS. 모델/Provider0.
 이는 Source/기간/개념을 새로 해석하거나 특정 Case의 검색어를 주입하는 변경이 아니다.
+
+### v26 실제 owner 비교 결과 — 미채택, 다음 표현 축으로 이동
+
+실행 HEAD `66a771281253984f6e861680ef4c1272ed0c8485`, 사전 고정한 6건을 각 arm 1회
+실행했다. 첫 schema는 양쪽 모두6/6, repair0이었다. Product Prompt 본문은 동일하며
+candidate의 requested_work 입력과 WorkUnit-bound output 계약만 달랐다.
+
+| 진단 | baseline | v26 | 최초 의미 차이 |
+| --- | --- | --- | --- |
+| 서로 다른 Task 상태 | FAIL | PASS | baseline은 조건 누락, 후보는 업무별 INCOMPLETE/COMPLETED 보존 |
+| Draft/Sent 별개 Mail 업무 | FAIL | FAIL | 두 출력 모두 빈 status로 명시 조건 누락 |
+| 공통 미완료 제한 | FAIL | PASS | 후보는 두 업무에 같은 INCOMPLETE 제한 보존 |
+| 상태 제한 없는 두 Task 업무 | PASS | FAIL | 후보가 두 업무에 요청하지 않은 INCOMPLETE 필터 추가 |
+| CORE005 현재 상태 답변 | PASS | FAIL(owner) | 후보가 COMPLETED/INCOMPLETE 필터 생성; 합집합은 ANY와 같으므로 실제 업무 실패로 단정하지 않음 |
+| CORE060 완료 상태로 UPDATE | FAIL | PASS | baseline은 현재 Source에 INCOMPLETE를 추정, 후보는 Output effect와 구분 |
+
+owner 의미 판정은2/6→3/6이나 기존 PASS2건이 모두 회귀했다. Typed carry 손실은 없고
+최초 잔여 실패는 LLM의 현재 상태 필터 판단이다. provenance exact span이 존재해도 그
+span이 선택한 상태 의미를 정당화한다는 증명은 아니다. **Production 미채택**이다.
+
+각 arm6 calls. baseline input9,401/output76 tokens/reported14,532ms;
+candidate input10,869/output437 tokens/reported21,322ms. 동일 qwen3.5:9b digest,
+temperature0/seed20260923/ctx16384/thinkfalse. rerun0, Provider0, activation0.
+원본: `evaluation/results/064-status-work-bound-owner6-t1/raw.json`, SHA256
+`fa210a5fe796dc6586fd260f4250eac3b27f8e90a44120fd5e5c1bdc11c52d6e`.
+
+이는 실제 upstream decomposition이 아닌 고정 typed fixture를 사용한 owner 진단이다.
+특히 공통 Task fixture의 required_information은 title/status/due를 포함하므로 NONE의
+두 번째 업무 요청보다 넓다. 입력을 사후 변경하지 않았고 이 제한을 결과와 함께 보존한다.
+현재 상태를 답하는 데 필요한 fact와 검색 상태 제한은 다른 의미다. 이 결과를 Canonical92,
+RU→Route 연결, Retrieval/Planning 이후의 업무 성공률로 승계하지 않는다.
+
+다음 v27은 같은 Resource×WorkUnit membership에서 모델이 NO_FILTER 또는 상태 조건을
+명시적으로 선택하는 계약 표현만 비교한다. 빈 출력에 NO_FILTER를 기본 주입하지 않으며
+기존 원문·Goal·Source·Output 입력과6건/1회 예산을 유지한다. 새 규칙·few-shot·Node는
+추가하지 않고 v26 raw를 비교 기준으로 재사용한다.
