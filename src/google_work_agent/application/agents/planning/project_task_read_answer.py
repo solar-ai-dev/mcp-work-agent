@@ -42,7 +42,9 @@ def project_task_read_answer(
     ]
     evidence_refs = [ref for item in citation_items if (ref := _evidence_ref(item)) is not None]
     korean = any("\uac00" <= character <= "\ud7a3" for character in user_request)
-    requested_fields = _requested_task_fields(request_intent)
+    requested_fields = _requested_task_fields(
+        request_intent, require_uniform_source_fields=bool(task_items)
+    )
     if requested_fields is None:
         return None
     if task_items:
@@ -120,7 +122,9 @@ def _evidence_ref(item: Mapping[str, object]) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _requested_task_fields(request_intent: Mapping[str, object]) -> frozenset[str] | None:
+def _requested_task_fields(
+    request_intent: Mapping[str, object], *, require_uniform_source_fields: bool
+) -> frozenset[str] | None:
     responsibilities = request_intent.get("resource_responsibilities")
     if not isinstance(responsibilities, Mapping):
         return frozenset({"title"})
@@ -143,6 +147,21 @@ def _requested_task_fields(request_intent: Mapping[str, object]) -> frozenset[st
     }
     if not required_information.issubset(information_to_field):
         return None
+    if require_uniform_source_fields:
+        source_field_sets: set[frozenset[str]] = set()
+        for source in source_reads:
+            if not isinstance(source, Mapping) or source.get("resource_type") != "TASK":
+                continue
+            fields = {
+                "title",
+                *(
+                    information_to_field[item]
+                    for item in _strings(source.get("required_information"))
+                ),
+            }
+            source_field_sets.add(frozenset(fields))
+        if len(source_field_sets) > 1:
+            return None
     return frozenset({"title", *(information_to_field[item] for item in required_information)})
 
 

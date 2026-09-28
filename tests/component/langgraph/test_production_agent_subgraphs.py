@@ -10,6 +10,7 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
+from tests.support.task_calendar_evidence import bind_task_calendar_snapshots
 
 from google_work_agent.adapters.langgraph.main.state import (
     CONTEXT_QUERY_ATTEMPTS_KEY,
@@ -57,6 +58,9 @@ from google_work_agent.adapters.system.memory.run_retrieval_cache import (
 )
 from google_work_agent.application.agents.planning.contracts.planning_semantics import (
     PlanningSemanticInvoker,
+)
+from google_work_agent.application.agents.request_understanding.contracts import (
+    request_goal_candidate_schema,
 )
 from google_work_agent.application.agents.request_understanding.validate_intent import (
     validate_intent,
@@ -4176,3 +4180,196 @@ def test_task_collection_scope__compiled_read__preserves_business_and_policy_cov
     assert {attempt["round_no"] for attempt in result[CONTEXT_QUERY_ATTEMPTS_KEY]} == {0}
     assert intent == original_intent
     assert routes == original_routes
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    ["heterogeneous", "same-work-heterogeneous", "same-work-partial", "uniform", "complete-empty"],
+)
+def test_planning__task_work_field_scope__preserves_compiled_compose_handoff(
+    scenario: str,
+) -> None:
+    """Exercise actual compiled consumers, not the fake composer's semantic quality."""
+    first_request = "작업 A의 상태만 알려줘."
+    second_request = (
+        "작업 B의 상태만 알려줘." if scenario == "uniform" else "작업 B의 기한만 알려줘."
+    )
+    request = first_request + " " + second_request
+    partial = scenario == "same-work-partial"
+    same_work = scenario in {"same-work-heterogeneous", "same-work-partial"}
+    work_ids = ["work-1"] if same_work else ["work-1", "work-2"]
+    work_units = []
+    spans = (
+        [(work_ids[0], request, 0)]
+        if same_work
+        else [
+            (work_ids[0], first_request, 0),
+            (work_ids[1], second_request, len(first_request) + 1),
+        ]
+    )
+    for unit_id, text, start in spans:
+        work_units.append(
+            {
+                "unit_id": unit_id,
+                "request_provenance": [
+                    {
+                        "source": "USER_REQUEST",
+                        "source_text": text,
+                        "start_offset": start,
+                        "end_offset": start + len(text),
+                    }
+                ],
+            }
+        )
+    responsibilities = {
+        "source_reads": [
+            {
+                "resource_type": "TASK",
+                "required_information": ["completion_status"],
+                "target_scope": "SINGULAR",
+                "work_unit_ids": [work_ids[0]],
+            },
+            {
+                "resource_type": "TASK",
+                "required_information": ["status" if scenario == "uniform" else "due"],
+                "target_scope": "SINGULAR",
+                "work_unit_ids": [work_ids[-1]],
+            },
+        ],
+        "outputs": [],
+    }
+    intent = validate_intent(
+        {
+            **_intent(),
+            "goal": "두 업무에서 요청한 각각의 작업 정보를 반환한다.",
+            "requested_resource_hints": ["TASK"],
+            "requested_work": {"work_units": work_units, "work_relations": []},
+            "resource_responsibilities": responsibilities,
+            "constraints": request_goal_candidate_schema.derive_source_information_constraints(
+                cast(Any, responsibilities)
+            ),
+        },
+        require_meta=True,
+        provenance_sources={"USER_REQUEST": request},
+    )
+    evidence: list[dict[str, object]] = []
+    fields = {
+        "e-task-a": {"title": "작업 A", "status": "needsAction", "due": "2026-10-01"},
+        "e-task-b": {"title": "작업 B", "status": "completed", "due": "2026-10-02"},
+    }
+    if scenario != "complete-empty":
+        evidence = [
+            {
+                "schema_version": 1,
+                "evidence_id": ref,
+                "resource_handle": handle,
+                "segment_id": f"segment-{ref}",
+                "kind": "excerpt",
+                "excerpt": "\n".join(f"{key}: {value}" for key, value in fields[ref].items()),
+                "locator": {},
+                "reason_codes": ["SUPPORTS"],
+            }
+            for ref, handle in (("e-task-a", "task:a"), ("e-task-b", "task:b"))
+        ]
+        if partial:
+            evidence = evidence[:1]
+    snapshots = bind_task_calendar_snapshots(evidence, fields)
+    store = RunScopedEvidenceStore()
+    run_id = f"task-work-scope-{scenario}"
+    store.put(run_id=run_id, evidence_drafts=cast(Any, evidence))
+    for item in evidence:
+        locator = cast(dict[str, str], item["locator"])
+        store.put_resource_snapshot(
+            run_id=run_id,
+            resource_handle=cast(str, item["resource_handle"]),
+            source_version_ref=locator["source_version_ref"],
+            snapshot=snapshots[cast(str, item["evidence_id"])],
+        )
+    refs = [cast(str, item["evidence_id"]) for item in evidence]
+    # Shared READ coverage does not assign a separate Task target to each Source item.
+    bindings = [{"work_unit_id": work_id, "evidence_refs": list(refs)} for work_id in work_ids]
+    route_plan = _container_read_route_plan("TASK")
+    input_plan = cast(dict[str, Any], route_plan["input_plan"])
+    input_plan["input_routes"][0]["work_unit_ids"] = work_ids
+    retrieval = {
+        **_retrieval_result(),
+        "coverage": "PARTIAL" if partial else "SUFFICIENT",
+        "evidence_refs": refs,
+        "source_resource_refs": [item["resource_handle"] for item in evidence],
+        "evidence_by_work_unit": bindings,
+        "source_statuses": [
+            {
+                "route_id": "route-1",
+                "resource_type": "task",
+                "status": "PARTIAL" if partial else "COMPLETE",
+                "evidence_refs": refs,
+                "failure_kind": None,
+                "checked_read_count": 1,
+                "observed_resource_count": len(evidence),
+                "scope_complete": not partial,
+                "continuation_status": "HAS_MORE" if partial else "EXHAUSTED",
+            }
+        ],
+    }
+    original = deepcopy((intent, evidence, route_plan, retrieval, snapshots))
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
+        assert scenario in {"heterogeneous", "same-work-heterogeneous", "same-work-partial"}, (
+            "uniform/complete-empty must remain zero-call"
+        )
+        calls.append((prompt_id, deepcopy(dict(prompt_input))))
+        return {
+            "schema_version": 2,
+            "answer": (
+                "작업 A는 미완료입니다. 작업 B의 기한은 현재 근거로 확인할 수 없습니다."
+                if partial
+                else "작업 A는 미완료입니다. 작업 B의 기한은 2026-10-02입니다."
+            ),
+            "evidence_refs": refs,
+        }
+
+    graph = PlanningSubgraph(
+        dependencies=PlanningRuntimeDependencies(invoke=invoke),
+        evidence_store=store,
+    ).build()
+    result = graph.invoke(
+        {
+            "run_id": run_id,
+            "user_request": request,
+            "request_intent": intent,
+            "tool_route_plan": route_plan,
+            "retrieval_result": retrieval,
+        }
+    )
+    assert result["planning_disposition"] == "ANSWER"
+    assert result["final_result"]["evidence_refs"] == refs
+    assert (intent, evidence, route_plan, retrieval, snapshots) == original
+    assert len(input_plan["input_routes"]) == 1
+    assert input_plan["input_routes"][0]["work_unit_ids"] == work_ids
+    if scenario in {"heterogeneous", "same-work-heterogeneous", "same-work-partial"}:
+        assert [slot for slot, _ in calls] == ["planning.compose_answer"]
+        projection = calls[0][1]
+        assert projection["user_request"] == request != intent["goal"]
+        assert projection["request_intent"] == intent
+        assert projection["evidence"] == evidence
+        assert projection["evidence_by_work_unit"] == bindings
+        assert projection["coverage"] == retrieval["coverage"]
+        assert projection["source_statuses"] == retrieval["source_statuses"]
+        assert "source_snapshots" not in projection
+        assert "2026-10-01" not in result["final_result"]["answer"]
+        if partial:
+            assert refs == ["e-task-a"]
+            assert "2026-10-02" not in result["final_result"]["answer"]
+    else:
+        assert calls == []
+        answer = result["final_result"]["answer"]
+        if scenario == "uniform":
+            assert "작업 A — 상태: 미완료" in answer
+            assert "작업 B — 상태: 완료" in answer
+            assert "예정일" not in answer
+        else:
+            assert answer == (
+                "접근 가능한 전체 범위를 확인했지만 관련 항목을 찾지 못했습니다.\n\n"
+                "Google Tasks에서 현재 표시할 할 일을 찾지 못했습니다."
+            )

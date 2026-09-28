@@ -1549,6 +1549,15 @@ Planning 진입 시 Tool Route는 이미 확정되어 있다.
 
 분기 진입은 `planning.choose_answer_or_action_from_route`의 결정적 Application operation이며 별도 checkpoint/resume Runtime Node가 아니다.
 
+결정적 Task 목록 답변의 공통 필드 표현은 Source item별 요구가 동등할 때만 사용한다.
+서로 다른 업무가 다른 필드를 요구하면 기존 compose owner가 원문·검증된 item binding과
+Retrieval의 WorkUnit Evidence projection을 함께 소비한다. 공유 READ의 적용 WorkUnit
+union은 개별 Resource의 업무 귀속을 새로 확정하는 근거가 아니며, 이를 이용해 필드
+요구를 임의로 Resource별 분배하거나 전역 평탄화하지 않는다. 같은 업무 안에서도
+Source 필드 범위를 대상에 분배할 수 없는 경우 기존 작성 owner에 위임한다. 실제 관측된
+Task가 하나여도 미발견 대상을 배제하거나 Source 간 동일 target을 확정하지 않는다.
+새 Node·추론 단계나 WorkUnit별 Provider 호출 복제를 추가하지 않는다.
+
 현재 문서의 Local State 참조:
 
 ```python
