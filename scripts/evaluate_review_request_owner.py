@@ -1,6 +1,6 @@
 """Sealed Review owner diagnostic: one historical input + three synthetic controls.
 
-Eight new FIRST calls, no Graph/repair/Provider/approval. This invokes the semantic
+Sealed profile-specific FIRST calls, no Graph/repair/Provider/approval. This invokes the semantic
 inspector directly, including controls its deterministic CREATE shortcut might
 otherwise satisfy. Neither structural validity nor a fake control is a score.
 """
@@ -49,6 +49,8 @@ SUFFIX = ROOT / "evaluation/prompt_candidates/review-request-owner-v1/instructio
 CRITERIA = ROOT / "evaluation/experiments/065-review-request-reconsideration-criteria.md"
 PARTITION_ROLE = ROOT / "evaluation/prompt_candidates/review-request-owner-v2/role.md"
 PARTITION_CRITERIA = ROOT / "evaluation/experiments/065-review-owner-partition-v2-criteria.md"
+REQUEST_ONLY_ROLE = ROOT / "evaluation/prompt_candidates/review-request-owner-v3/role.md"
+REQUEST_ONLY_CRITERIA = ROOT / "evaluation/experiments/065-review-request-only-v3-criteria.md"
 PRIOR_RAW = RESULTS / "065-review-owner-v1-t1/raw.json"
 PRIOR_RAW_HASH = "22b7fbcb1257f3aede60f2f82d6c561e4c3d80c1e5fdc5fdc764ebab9ae113af"
 ARMS = ("production", "request_owner")
@@ -128,6 +130,17 @@ def build_payloads(
 
         new_role = PARTITION_ROLE.read_text(encoding="utf-8").rstrip()
         new_schema = build_output_schema(work_ids)
+    elif profile == "request_only_v3":
+        from scripts.review_request_owner_partition import build_request_only_output_schema
+
+        if any(key in projection for key in ("confirmation_response", "user_action_modifications")):
+            raise ValueError("this fixed Request-only probe has no correction fixture")
+        new_input = {
+            "user_request": user_request,
+            "request_intent": deepcopy(projection["request_intent"]),
+        }
+        new_role = REQUEST_ONLY_ROLE.read_text(encoding="utf-8").rstrip()
+        new_schema = build_request_only_output_schema(work_ids)
     elif profile != "v1":
         raise ValueError("unknown Review candidate profile")
     candidate_version = f"evaluation-review-request-owner-{profile}"
@@ -393,7 +406,7 @@ def make_plan(
         CRITERIA,
     ]
     reused: list[dict[str, Any]] = []
-    if profile == "partition_v2":
+    if profile in {"partition_v2", "request_only_v3"}:
         if existing.file_hash(PRIOR_RAW) != PRIOR_RAW_HASH:
             raise ValueError("prior fixed trial raw changed")
         prior = _read(PRIOR_RAW)
@@ -416,6 +429,8 @@ def make_plan(
                 ROOT / "tests/evaluation/test_review_request_owner_partition.py",
             ]
         )
+        if profile == "request_only_v3":
+            dependencies.extend([REQUEST_ONLY_ROLE, REQUEST_ONLY_CRITERIA])
     # Includes every Product producer/validator/Prompt dependency without importing a runtime.
     dependencies += [
         p
@@ -424,6 +439,24 @@ def make_plan(
         and p.suffix in {".py", ".json", ".md", ".sql"}
         and "__pycache__" not in p.parts
     ]
+    order: list[list[str]] = []
+    aliases: dict[str, str] = {}
+    seen_inputs: dict[str, str] = {}
+    for entry in cases:
+        wire_hash = entry["wire_hashes"]["request_owner"]
+        if profile == "request_only_v3" and wire_hash in seen_inputs:
+            aliases[entry["case_id"]] = seen_inputs[wire_hash]
+            continue
+        seen_inputs[wire_hash] = entry["case_id"]
+        order.extend([[entry["case_id"], arm] for arm in (("request_owner",) if reused else ARMS)])
+    if profile == "request_only_v3" and (
+        len(order) != 3
+        or aliases
+        != {
+            "SYNTHETIC-PLANNING-TITLE": "SYNTHETIC-TASK-CREATE",
+        }
+    ):
+        raise ValueError("Request-only fixed unique-input comparison changed")
     return {
         "schema_version": 1,
         "kind": "REVIEW_REQUEST_OWNER_DIAGNOSTIC",
@@ -438,14 +471,13 @@ def make_plan(
         "cases": cases,
         "reused_baseline": reused,
         "reused_raw_sha256": PRIOR_RAW_HASH if reused else None,
+        "candidate_input_aliases": aliases,
         "source_hashes": {
             p.relative_to(ROOT).as_posix(): existing.file_hash(p) for p in sorted(set(dependencies))
         },
-        "execution_order": [
-            [c["case_id"], arm] for c in cases for arm in (("request_owner",) if reused else ARMS)
-        ],
+        "execution_order": order,
         "policy": {
-            "max_http_generation_calls": len(cases) if reused else MAX_CALLS,
+            "max_http_generation_calls": len(order),
             "trials_per_case_arm": 1,
             "concurrency": 1,
             "timeout_seconds": existing.TIMEOUT_SECONDS,
@@ -479,13 +511,19 @@ def validate_response(content: object, case: dict[str, Any], arm: str) -> dict[s
         result["product_shape"] = "VALID"
     except ValueError as error:
         result.update(product_shape="INVALID", product_shape_error=str(error)[:500])
-    if case.get("profile") == "partition_v2" and arm == "request_owner":
-        from scripts.review_request_owner_partition import validate_and_project
+    if case.get("profile") in {"partition_v2", "request_only_v3"} and arm == "request_owner":
+        from scripts.review_request_owner_partition import (
+            validate_and_project,
+            validate_request_only_and_project,
+        )
 
         try:
-            result.update(
-                validate_and_project(value, **_context(case["input"], case["user_request"]))
+            validate = (
+                validate_request_only_and_project
+                if case["profile"] == "request_only_v3"
+                else validate_and_project
             )
+            result.update(validate(value, **_context(case["input"], case["user_request"])))
             result["closed_context"] = "VALID"
         except ValueError as error:
             result.update(closed_context="INVALID", closed_context_error=str(error)[:500])
@@ -631,7 +669,9 @@ def main() -> None:
     parser.add_argument("--result-dir", type=Path, required=True)
     parser.add_argument("--execute-plan", type=Path)
     parser.add_argument("--expected-plan-sha256")
-    parser.add_argument("--profile", choices=("v1", "partition_v2"), default="v1")
+    parser.add_argument(
+        "--profile", choices=("v1", "partition_v2", "request_only_v3"), default="v1"
+    )
     args = parser.parse_args()
     if args.execute_plan:
         if not args.expected_plan_sha256:

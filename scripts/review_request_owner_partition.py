@@ -28,6 +28,10 @@ ROLE_PATH = (
     Path(__file__).resolve().parents[1]
     / "evaluation/prompt_candidates/review-request-owner-v2/role.md"
 )
+REQUEST_ONLY_ROLE_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "evaluation/prompt_candidates/review-request-owner-v3/role.md"
+)
 REQUEST_FINDING_CODE = "REQUEST_INTENT_MEANING_CONFLICT"
 
 
@@ -134,3 +138,44 @@ def validate_and_project(
         "validated_findings": [receipt.finding for receipt in receipts],
         "candidate_projections": projections,
     }
+
+
+def build_request_only_output_schema(work_unit_ids: Sequence[str]) -> OutputSchemaDefinition:
+    """Reuse the exact v2 Request item; no Planning assessment is requested."""
+    schema = cast(dict[str, Any], deepcopy(build_output_schema(work_unit_ids).json_schema))
+    properties = cast(dict[str, Any], schema["properties"])
+    properties["schema_version"] = {"const": 3}
+    properties.pop("planning_findings")
+    schema["required"] = ["schema_version", "dimension", "request_intent_findings"]
+    return OutputSchemaDefinition(
+        schema_version="evaluation-review-request-only-v3",
+        json_schema=schema,
+    )
+
+
+def validate_request_only_and_project(value: object, **context: Any) -> dict[str, Any]:
+    """Use current v1 binding without claiming to have inspected absent Plan data.
+
+    The caller retains Plan metadata solely for local receipt compatibility; it
+    is not a model input or a new Product handoff/approval authority.
+    """
+    previous.validate_review_candidate(
+        {"schema_version": 1, "dimension": DIMENSION, "findings": []},
+        **context,
+    )
+    intent = context["current_intent"]
+    work_ids = [unit["unit_id"] for unit in intent["requested_work"]["work_units"]]
+    errors = validate_output_schema(value, build_request_only_output_schema(work_ids).json_schema)
+    if errors:
+        raise ValueError("Request-only Review schema is invalid: " + "; ".join(errors))
+    parsed = cast(dict[str, Any], value)
+    result = validate_and_project(
+        {
+            "schema_version": 2,
+            "dimension": DIMENSION,
+            "request_intent_findings": deepcopy(parsed["request_intent_findings"]),
+            "planning_findings": [],
+        },
+        **context,
+    )
+    return {**result, "planning_semantics": "NOT_EVALUATED"}

@@ -41,6 +41,9 @@ def _finding(kind: str = "ISSUE") -> dict[str, Any]:
 def plan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """No ignored local artifact dependency; real Product assembly is retained."""
     control = runner.synthetic_controls()[0]
+    # Keep the mocked historical input distinct from the CREATE control without
+    # adding any semantic test answer; the real historical intent is distinct.
+    control["input"]["request_intent"]["goal"] += " (기록 입력)"
     canonical = {"case_id": "CASE-CORE-005", "canonical_user_prompt": control["user_request"]}
     dataset = tmp_path / "cases.jsonl"
     fixture = tmp_path / "snapshot.json"
@@ -360,3 +363,72 @@ def test_partition_cannot_reuse_a_different_baseline_wire(
     monkeypatch.setattr(runner, "PRIOR_RAW_HASH", runner.existing.file_hash(prior))
     with pytest.raises(ValueError, match="exact current Product wire"):
         runner.make_plan(plan["model"], origin=Path(plan["origin"]), profile="partition_v2")
+
+
+def test_request_only_keeps_exact_intent_and_aliases_identical_wires(
+    plan: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _bind_prior_baseline(plan, monkeypatch)
+    request_plan = runner.make_plan(
+        plan["model"],
+        origin=Path(plan["origin"]),
+        profile="request_only_v3",
+    )
+    assert len(request_plan["reused_baseline"]) == 4
+    assert request_plan["candidate_input_aliases"] == {
+        "SYNTHETIC-PLANNING-TITLE": "SYNTHETIC-TASK-CREATE",
+    }
+    assert len(request_plan["execution_order"]) == 3
+    assert request_plan["policy"]["max_http_generation_calls"] == 3
+    for case in request_plan["cases"]:
+        actual_input = json.loads(case["payloads"]["request_owner"]["prompt"])["input"]
+        assert actual_input == {
+            "user_request": case["user_request"],
+            "request_intent": case["input"]["request_intent"],
+        }
+    correct, wrong_plan = request_plan["cases"][1:3]
+    assert correct["payloads"]["request_owner"] == wrong_plan["payloads"]["request_owner"]
+    assert correct["payloads"]["production"] != wrong_plan["payloads"]["production"]
+    calls: list[dict[str, Any]] = []
+
+    def post(**kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs)
+        return {
+            "response": json.dumps(
+                {
+                    "schema_version": 3,
+                    "dimension": runner.PROMPT_ID,
+                    "request_intent_findings": [],
+                }
+            )
+        }
+
+    monkeypatch.setattr(runner.existing.transport, "_post_json", post)
+    raw = runner.execute_plan(
+        request_plan,
+        runner.RESULTS / "request-only",
+        plan_sha256=runner.object_hash(request_plan),
+    )
+    assert len(calls) == raw["actual_http_calls"] == 3
+    assert all(row["validation"]["closed_context"] == "VALID" for row in raw["calls"])
+    assert all(row["validation"]["planning_semantics"] == "NOT_EVALUATED" for row in raw["calls"])
+    assert raw["metrics_by_group"]["synthetic"]["request_owner"]["calls"] == 2
+    assert raw["semantic_verdict"] == "UNREVIEWED"
+
+
+@pytest.mark.parametrize("field", ["confirmation_response", "user_action_modifications"])
+def test_request_only_must_not_silently_drop_correction_authority(
+    plan: dict[str, Any],
+    field: str,
+) -> None:
+    case = plan["cases"][1]
+    corrected_input = deepcopy(case["input"])
+    corrected_input[field] = {"correction": "현재 사용자 정정"}
+    with pytest.raises(ValueError, match="correction"):
+        runner.build_payloads(
+            corrected_input,
+            case["user_request"],
+            plan["runtime"],
+            profile="request_only_v3",
+        )

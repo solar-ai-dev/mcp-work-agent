@@ -170,3 +170,86 @@ def test_existing_provenance_and_prepublication_guards_remain(
 ) -> None:
     with pytest.raises(ValueError):
         _validate(_root(_request_finding()), intent, **override)
+
+
+def _request_only(*findings: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": 3,
+        "dimension": candidate.DIMENSION,
+        "request_intent_findings": list(findings),
+    }
+
+
+def _validate_request_only(
+    value: object,
+    intent: dict[str, Any],
+    **overrides: Any,
+) -> dict[str, Any]:
+    context = {
+        "current_intent": intent,
+        "user_request": _REQUEST,
+        "current_plan_ref": _PLAN_REF,
+        "pre_publication": True,
+    }
+    context.update(overrides)
+    return candidate.validate_request_only_and_project(value, **context)
+
+
+def test_request_only_schema_reuses_exact_v2_request_item() -> None:
+    properties = candidate.build_request_only_output_schema(["work-1"]).json_schema["properties"]
+    previous = candidate.build_output_schema(["work-1"]).json_schema["properties"]
+    assert properties["request_intent_findings"] == previous["request_intent_findings"]
+    assert set(properties) == {"schema_version", "dimension", "request_intent_findings"}
+    assert properties["schema_version"] == {"const": 3}
+
+
+@pytest.mark.parametrize("findings", [[], [_request_finding()]])
+def test_request_only_preserves_projection_but_never_claims_plan_was_reviewed(
+    intent: dict[str, Any],
+    findings: list[dict[str, Any]],
+) -> None:
+    raw = _request_only(*findings)
+    before = deepcopy((raw, intent))
+    result = _validate_request_only(raw, intent)
+    expected = _validate(_root(*findings), intent)
+    assert result == {**expected, "planning_semantics": "NOT_EVALUATED"}
+    assert result["semantic_verdict"] == "UNREVIEWED"
+    assert (raw, intent) == before
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {"schema_version": 2},
+        {"planning_findings": []},
+        {"findings": []},
+        {"request_intent_findings": [{**_request_finding(), "work_unit_ids": ["unknown"]}]},
+        {
+            "request_intent_findings": [
+                {**_request_finding(), "semantic_field_paths": ["$.actions"]}
+            ]
+        },
+    ],
+)
+def test_request_only_rejects_wrong_shapes_and_closed_references(
+    intent: dict[str, Any],
+    mutation: dict[str, Any],
+) -> None:
+    with pytest.raises(ValueError, match="Request-only Review schema"):
+        _validate_request_only({**_request_only(), **mutation}, intent)
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"user_request": "다른 원문"},
+        {"pre_publication": False},
+        {"current_plan_ref": {"artifact_id": "plan-1", "revision": 0}},
+    ],
+)
+def test_request_only_preserves_context_authority(
+    intent: dict[str, Any],
+    override: dict[str, Any],
+) -> None:
+    with pytest.raises(ValueError):
+        _validate_request_only(_request_only(_request_finding()), intent, **override)
