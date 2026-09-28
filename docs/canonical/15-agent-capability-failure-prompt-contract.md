@@ -948,6 +948,19 @@ Source 판단의 개발 구조 비교는 기존 요청 원문·선택 identity·
 의미 통과로 취급하지 않는다. 비활성 후보의 직접 모델 호출은 Production budget,
 Prompt activation 또는 release evidence를 대체하지 않는다.
 
+Source의 비활성 provenance 후보는 기존 full-catalog one-call 판단을 유지하고 REQUIRED
+item에 `source_request_ranges`를 추가할 수 있다. 모델은 현재 원문의 request-local token
+ID로 조회 필요성을 정의하는 구간을 선택하며, codec은 원문 offset/text로만 결속한다.
+Source/Output 역할을 Goal에 재위임하거나 생성된 설명을 원문으로 역매핑하지 않는다.
+exact-set·fact·scope·Work binding은 기존 Source validator로 계속 검증한다. 구간이
+실제 조회 의미를 뒷받침하는지는 별도 의미 검수이며, 구조적으로 유효한 오선택을
+validator가 바꾸지 않는다. 이 artifact는 request hash와 기존 Source item을 함께
+보존하고 evaluation Query 입력의 route별 `source_request_context`로 전달할 수 있다.
+기존 Route/Work union·Query anchor·Provider 인자는 변경하지 않으며, provenance를
+stable Provider identity/검색 문자열/실행 권한으로 승격하지 않는다. 직접 Source 진단과
+model-free handoff 검증은 실제 Query 판단 또는 업무 성공 증거가 아니다. Product
+State/Prompt/Node·기존 checkpoint에는 활성화하지 않는다.
+
 Source의 비활성 해석 전달 후보는 기존 FIRST 입력 전체와 출력 Schema를 보존하며,
 별도 evaluation PromptRef/input contract에서 `interpretation_candidate` 문자열 하나를
 optional로 전달할 수 있다. 같은 요청·선택 identity·기준시각으로 생성된 모델의 최종
