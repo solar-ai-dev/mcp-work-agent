@@ -16,6 +16,7 @@ from google_work_agent.application.agents.project_run_reference_time import (
 from google_work_agent.application.agents.request_understanding.contracts.request_intent import (
     AmbiguityV1,
     ConstraintProvenanceSource,
+    ConstraintV1,
     RequestedWorkDefinitionV1,
     RequestGoalCandidateV1,
     ResourceResponsibilitiesV1,
@@ -691,9 +692,6 @@ def _merge_confirmation_constraints(
     if not confirmation_text:
         return prior
     constraints = list(prior["constraints"])
-    identities = {
-        (item["kind"], item["field"], repr(item["value"])) for item in constraints
-    }
     for constraint in resolved["constraints"]:
         if constraint.get("field") == "status":
             continue
@@ -712,12 +710,18 @@ def _merge_confirmation_constraints(
         value: str | list[str] = (
             bound_values[0] if isinstance(constraint["value"], str) else bound_values
         )
-        identity = (constraint["kind"], constraint["field"], repr(value))
-        if identity in identities:
+        confirmed = cast(ConstraintV1, {**constraint, "value": value})
+        if any(_same_confirmation_constraint(item, confirmed) for item in constraints):
             continue
-        identities.add(identity)
-        constraints.append({**constraint, "value": value})
+        constraints.append(confirmed)
     return {**prior, "constraints": constraints}
+
+
+def _same_confirmation_constraint(left: ConstraintV1, right: ConstraintV1) -> bool:
+    """Only dedupe equal semantics with the same WorkUnit and provenance binding."""
+    normalized_left = {**left, "work_unit_ids": sorted(left["work_unit_ids"])}
+    normalized_right = {**right, "work_unit_ids": sorted(right["work_unit_ids"])}
+    return normalized_left == normalized_right
 
 
 def _bind_target_resource_confirmation(

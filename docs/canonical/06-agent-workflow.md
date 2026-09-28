@@ -812,6 +812,7 @@ class RequestIntentV3:
 #### Requested Work binding과 관계
 
 - WorkUnit은 사용자 요청의 독립 결과 경계와 원문 provenance만 소유한다. Constraint, Source responsibility, Output responsibility와 explicit effect prohibition의 의미 권위는 기존 atomic owner에 남는다.
+- Confirmation의 검증된 제약을 기존 후보에 병합할 때는 값뿐 아니라 적용 WorkUnit 집합·provenance·Source Resource binding까지 동일한 항목만 중복 제거한다. 다른 업무의 동일 값은 보존하고, 이미 확정된 Goal·Output·금지·source status는 다시 생성하지 않는다.
 - 동일 READ capability가 여러 WorkUnit에 필요하면 Input Route와 Provider READ를 복제하지 않고 해당 Route의 `work_unit_ids`를 stable union한다.
 - 같은 Resource/effect라도 서로 다른 사용자 결과인 Output responsibility는 별도 Output Route로 보존한다. Tool capability 선택은 공유할 수 있으나 Route 의미는 합치지 않는다.
 - `CONSUMES_WORK_PRODUCT`는 앞 업무의 same-Run 내부 파생 결과, `CONSUMES_PLANNED_SPECIFICATION`은 승인 전 외부 Action의 계획 명세를 뒤 업무가 입력으로 소비하는 관계다. WorkRelation은 Planning Action dependency, Approval, 실행 순서 또는 Write 권한이 아니다.
