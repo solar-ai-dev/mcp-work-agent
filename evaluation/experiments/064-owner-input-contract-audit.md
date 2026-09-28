@@ -114,3 +114,22 @@ DRAFT와 모든 미검증 activation flag를 유지하므로 production signed r
 기존 Core8 결과와 hash는 수정 전 조건으로 보존하고 새 모델 성공률을 소급 부여하지 않는다.
 기존 work1 금지/work2 허용 반례 및 registry/hash/release gate 검사 **34 PASS**, Ruff PASS.
 새 모델·Provider 호출은 0이다.
+
+## 실제 connected Source 입력 차이
+
+Core8와 그 continuation의 FIRST를 재대조했다. 두 arm의 Source Prompt/Schema,
+temperature0.05/seed20260923/num_ctx16384/thinkfalse, 원문·선택·Work provenance·기준시각은
+같다. Source에 전달되는 Goal은 양쪽 모두 원문이며 completion은 비어 있다.
+그러나 다음 constraints가 달라 **동일 입력의 sampling variance**로 분류할 수 없다.
+
+| Case | Production → joint 후보의 실제 Source 입력 변화 | 첫 Source 결과 |
+| --- | --- | --- |
+| 025 | 검색어 `Echo, 약관 메일`→빈 값; 업무 개념 `검토 일정`→`검토 작업`; 원문 시간 표현→절대 시작/종료; coverage `NOT_COLLECTION`→`LIMITED_ITEMS` | Thread+Task → Draft+TaskList, Task NOT_REQUIRED |
+| 009 | 검색어 `Kestrel, 공급 지연`→`Kestrel`; 업무 개념 `진행 상황`→빈 값; coverage `NOT_COLLECTION`→`LIMITED_ITEMS` | Thread → Thread+Task |
+
+025 검색어 누락은 joint FIRST부터 존재해 projector의 삭제가 아니다. 009 joint FIRST의
+업무 개념은 연속 exact span이 아니어서 `project_extractive_source_goal`에서 제거됐다.
+이 helper는 여섯 anchor 필드를 필터링하지만 period/coverage는 그대로 전달한다.
+따라서 생성 완료조건이 Source에 직접 전해졌다는 설명도, 검색어 감소 하나가 회귀의
+원인이라는 설명도 현재 근거와 맞지 않는다. 상반된 결과가 있으므로 새 Source 후보를
+선택할 때 upstream 표현 차이와 Source owner 판단을 분리해야 한다. 모델 호출 0으로 확인했다.
