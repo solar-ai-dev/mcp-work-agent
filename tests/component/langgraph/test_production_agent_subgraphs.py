@@ -70,6 +70,7 @@ from google_work_agent.application.tool_registry.load_signed_tool_registry impor
     load_development_tool_registry,
 )
 from google_work_agent.application.use_cases.run.account_provider_dispatch import (
+    account_provider_dispatch,
     provider_dispatch_execution_scope,
 )
 from google_work_agent.application.use_cases.run.guard_run_budget import (
@@ -117,6 +118,7 @@ class _ComponentInferencePort:
         cross_source_draft: bool = False,
         container_retrieval: bool = False,
         calendar_event_query: bool = False,
+        account_dispatches: bool = False,
     ) -> None:
         self.request_confirmation = request_confirmation
         self.github_retrieval = github_retrieval
@@ -130,6 +132,7 @@ class _ComponentInferencePort:
         self.cross_source_draft = cross_source_draft
         self.container_retrieval = container_retrieval
         self.calendar_event_query = calendar_event_query
+        self.account_dispatches = account_dispatches
         self.calls: list[str] = []
         self.inputs: dict[str, list[dict[str, object]]] = {}
 
@@ -141,6 +144,8 @@ class _ComponentInferencePort:
         output_schema_ref: OutputSchemaDefinition,
     ) -> StructuredInferenceResultV1:
         del requested_mode
+        if self.account_dispatches:
+            account_provider_dispatch()
         prompt_id = prompt_ref.prompt_id
         self.calls.append(prompt_id)
         base = input_projection.get("base_projection", input_projection)
@@ -1526,7 +1531,7 @@ def test_tool_routing__shared_output_capability__selects_once_without_merging_ro
         ],
     }
     state["request_intent"] = cast(Any, intent)
-    llm = _ComponentInferencePort()
+    llm = _ComponentInferencePort(account_dispatches=True)
     graph = ToolRoutingSubgraph(
         llm_runtime=llm,
         tool_catalog=load_development_tool_registry(),

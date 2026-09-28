@@ -334,3 +334,5 @@ def test_a_schema_repair__attempt_consumes_two__llm_calls_not_one() -> None:
 
     assert agent.calls == 6
     assert cast(dict[str, Any], result["retry_budget"])["llm_calls_used"] == 15
+    # Includes the fresh Work dispatch before identify_goal copies the budget.
+    assert cast(dict[str, Any], result["trace_context"])["llm_call_count"] == 12

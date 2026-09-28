@@ -35,9 +35,6 @@ from google_work_agent.application.agents.request_understanding import (
 from google_work_agent.application.agents.request_understanding import (
     identify_source_dependencies as source_dependencies,
 )
-from google_work_agent.application.agents.request_understanding.identify_temporal_scope import (
-    needs_temporal_scope,
-)
 from google_work_agent.application.prompt_runtime.prompt_registry import (
     PRODUCT_RELEASE,
     PromptExecutionScope,
@@ -218,6 +215,7 @@ class RequestUnderstandingSubgraph:
             },
         )
         working_state = cast(RequestUnderstandingStateV2, {**state, **current_run_fields})
+        llm_calls_before = state["retry_budget"]["llm_calls_used"]
         patch = identify_goal_node(
             working_state,
             llm_runtime=self._llm_runtime,
@@ -231,10 +229,7 @@ class RequestUnderstandingSubgraph:
             source_dependency_candidates=self._source_dependency_candidates,
             output_responsibility_candidates=self._output_responsibility_candidates,
         )
-        calls_used = max(
-            0,
-            patch["retry_budget"]["llm_calls_used"] - state["retry_budget"]["llm_calls_used"],
-        )
+        calls_used = patch["retry_budget"]["llm_calls_used"] - llm_calls_before
         return {
             **current_run_fields,
             **patch,
@@ -242,8 +237,8 @@ class RequestUnderstandingSubgraph:
             "trace_context": self._trace(
                 working_state,
                 node_name="identify_goal",
-                llm_call_id=f"{request.run_id}:request.identify_goal",
-                prompt_ref=self._identify_goal_prompt_ref,
+                llm_call_id=f"{request.run_id}:request.identify_goal" if calls_used else None,
+                prompt_ref=self._identify_goal_prompt_ref if calls_used else None,
                 additional_prompt_refs=(
                     self._identify_requested_work_prompt_ref,
                     self._identify_effect_prohibitions_prompt_ref,
@@ -251,7 +246,9 @@ class RequestUnderstandingSubgraph:
                     self._identify_output_responsibilities_prompt_ref,
                     self._identify_source_status_prompt_ref,
                     self._identify_work_relations_prompt_ref,
-                ),
+                )
+                if calls_used
+                else (),
                 llm_call_increment=calls_used,
                 invocation_id=invocation_id,
                 agent_invocation_increment=1 if is_first_node else 0,
@@ -264,11 +261,14 @@ class RequestUnderstandingSubgraph:
         candidate = state.get("goal_candidate")
         if candidate is None:
             raise ValueError("request-understanding goal candidate is required")
-        invokes_llm = needs_temporal_scope(candidate)
+        llm_calls_before = state["retry_budget"]["llm_calls_used"]
         patch = identify_temporal_scope_node(
             state,
             llm_runtime=self._llm_runtime,
             prompt_ref=self._identify_temporal_scope_prompt_ref,
+        )
+        calls_used = (
+            patch.get("retry_budget", state["retry_budget"])["llm_calls_used"] - llm_calls_before
         )
         return {
             **patch,
@@ -278,11 +278,11 @@ class RequestUnderstandingSubgraph:
                 llm_call_id=(
                     f"{request_from_run_input_state(cast(Any, state)).run_id}:"
                     "request.identify_temporal_scope"
-                    if invokes_llm
+                    if calls_used
                     else None
                 ),
-                prompt_ref=self._identify_temporal_scope_prompt_ref if invokes_llm else None,
-                llm_call_increment=int(invokes_llm),
+                prompt_ref=self._identify_temporal_scope_prompt_ref if calls_used else None,
+                llm_call_increment=calls_used,
                 invocation_id=self._invocation_id(state),
             ),
         }
@@ -291,11 +291,15 @@ class RequestUnderstandingSubgraph:
         self, state: RequestUnderstandingStateV2
     ) -> RequestUnderstandingStateV2:
         request = request_from_run_input_state(cast(Any, state))
+        llm_calls_before = state["retry_budget"]["llm_calls_used"]
         patch = detect_ambiguity_node(
             state,
             connector_prerequisites=self._connector_prerequisites,
             llm_runtime=self._llm_runtime,
             prompt_ref=self._detect_ambiguity_prompt_ref,
+        )
+        calls_used = (
+            patch.get("retry_budget", state["retry_budget"])["llm_calls_used"] - llm_calls_before
         )
         working_state = cast(RequestUnderstandingStateV2, {**state, **patch})
         result: RequestUnderstandingStateV2 = {
@@ -304,12 +308,10 @@ class RequestUnderstandingSubgraph:
                 state,
                 node_name="detect_ambiguity",
                 llm_call_id=None
-                if patch.get("prerequisite_message")
+                if not calls_used
                 else f"{request.run_id}:request.detect_ambiguity",
-                prompt_ref=None
-                if patch.get("prerequisite_message")
-                else self._detect_ambiguity_prompt_ref,
-                llm_call_increment=0 if patch.get("prerequisite_message") else 1,
+                prompt_ref=None if not calls_used else self._detect_ambiguity_prompt_ref,
+                llm_call_increment=calls_used,
             ),
         }
         ambiguity = working_state.get("ambiguity_candidate")

@@ -40,9 +40,6 @@ from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan
     ScopeExpansionRequiredV1,
     ToolRouteResultV1,
 )
-from google_work_agent.application.agents.tool_routing.determine_io_resources import (
-    requires_io_resource_inference,
-)
 from google_work_agent.application.agents.tool_routing.format_route_confirmation import (
     format_route_confirmation,
     format_scope_confirmation,
@@ -217,17 +214,15 @@ class ToolRoutingSubgraph:
                 ),
             }
         working_state = cast(ToolRouteStateV1, {**state, **initial_fields})
-        uses_llm = requires_io_resource_inference(
-            request_intent=_require_state_value(
-                working_state.get("request_intent"), "request_intent"
-            ),
-            request=request,
-        )
+        llm_calls_before = state["retry_budget"]["llm_calls_used"]
         patch = determine_io_resources_node(
             working_state,
             llm_runtime=self._llm_runtime,
             tool_catalog=self._tool_catalog,
             prompt_ref=self._determine_prompt_ref,
+        )
+        calls_used = (
+            patch.get("retry_budget", state["retry_budget"])["llm_calls_used"] - llm_calls_before
         )
         prompt_context = dict(cast(Mapping[str, object], state.get("prompt_context", {})))
         prompt_context.pop("confirmation_response", None)
@@ -239,9 +234,9 @@ class ToolRoutingSubgraph:
             "trace_context": self._trace(
                 working_state,
                 node_name="determine_io_resources",
-                llm_call_id=(f"{request.run_id}:route.determine_resources" if uses_llm else None),
-                prompt_ref=self._determine_prompt_ref if uses_llm else None,
-                llm_call_increment=1 if uses_llm else 0,
+                llm_call_id=(f"{request.run_id}:route.determine_resources" if calls_used else None),
+                prompt_ref=self._determine_prompt_ref if calls_used else None,
+                llm_call_increment=calls_used,
                 invocation_id=invocation_id,
                 agent_invocation_increment=1 if is_first_node else 0,
             ),
@@ -269,27 +264,22 @@ class ToolRoutingSubgraph:
         return result
 
     def _select_tool_if_needed_node(self, state: ToolRouteStateV1) -> ToolRouteStateV1:
-        candidates = state.get("registry_candidates", [])
-        llm_call_count = len(
-            {
-                candidate.selection_capability
-                for candidate in candidates
-                if len(candidate.eligible_tool_ids) > 1
-            }
-        )
         request = request_from_state(cast(Any, state))
+        llm_calls_before = state["retry_budget"]["llm_calls_used"]
+        patch = select_tool_if_needed_node(
+            state,
+            llm_runtime=self._llm_runtime,
+            prompt_ref=self._select_prompt_ref,
+        )
+        calls_used = patch["retry_budget"]["llm_calls_used"] - llm_calls_before
         return {
-            **select_tool_if_needed_node(
-                state,
-                llm_runtime=self._llm_runtime,
-                prompt_ref=self._select_prompt_ref,
-            ),
+            **patch,
             "trace_context": self._trace(
                 state,
                 node_name="select_tool_if_needed",
-                llm_call_id=(f"{request.run_id}:route.select_tool" if llm_call_count else None),
-                prompt_ref=(self._select_prompt_ref if llm_call_count else None),
-                llm_call_increment=llm_call_count,
+                llm_call_id=(f"{request.run_id}:route.select_tool" if calls_used else None),
+                prompt_ref=(self._select_prompt_ref if calls_used else None),
+                llm_call_increment=calls_used,
             ),
         }
 
