@@ -781,3 +781,9 @@ State/Node/Edge·Approval 변경은 없으며 DRAFT activation gate를 유지한
 해당 Route에서 접근 가능한 Evidence를 전달하는 계약이며, 모든 Evidence가 모든 업무의
 정답이라는 의미는 아니다. 직접 Evidence 오귀속은 이번 조사로 확정하지 않았고 실제
 모델의 업무별 관련성 판단·최종 답변 정확도는 미검증이다. 모델/Provider 호출0이다.
+
+추가 고정 회귀 확인(`e699d6a5`): `tests/unit/application/agents`,
+`tests/component/langgraph`, `tests/unit/application/prompt_runtime` 및
+Approval/ExecutionAttempt/Verification/Recovery use-case tests를 함께 실행해
+**1,583 PASS**였다. fake/unit/component 범위이며 전체 pytest 또는 모델92 점수가 아니다.
+이 집계는 앞선 부분 집계와 중복되므로 합산하지 않는다.

@@ -103,3 +103,11 @@ READ 횟수는 **fake Connector** 관측이다. 실제 Provider, 모델 및 LLM 
 실제 Source LLM의 ref 선택 품질, Gmail Thread/Message alias binding,
 Task/Calendar/GitHub의 container 연결, full compiled Production 및 Preview는 미검증이다.
 결론은 **bounded exact-selected handoff 구조 가능성 확인**이며 Product ADOPT가 아니다.
+
+추가 정보 가용성 제한: 현재 `SelectedResourceRef`는 ref/connector/type/native ID/parent만
+갖고 제목·본문 같은 업무 식별 정보를 갖지 않는다. 사용자가 제목으로 두 선택 자료를
+구분했는데 입력에는 opaque ID만 있다면 Source LLM이 어느 ID인지 추측해서는 안 된다.
+이 component는 이미 올바르게 결속된 typed 후보의 전달을 검사한 것이지, 조회 전에도
+항상 그 후보를 생성할 정보가 있다는 증명이 아니다. 선택 범위 안의 후보를 함께 읽는 것과
+각 업무의 확정 target/정답 근거로 binding하는 것을 구분해야 한다. Production 채택 전에는
+명시 binding이 있는 입력과 조회 후에만 구분 가능한 입력의 책임 경계를 별도로 검증한다.
