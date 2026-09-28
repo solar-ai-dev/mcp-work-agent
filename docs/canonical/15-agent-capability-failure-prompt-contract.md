@@ -982,6 +982,13 @@ schema / JSON 문법만 제약 / 생략 중 사전 고정한 한 후보를 비�
 유지하고 양쪽 결과를 같은 기존 schema/owner validator로 검증한다. invalid JSON이나
 의미 오류를 성공으로 덮지 않으며, 이 진단은 Product runtime·Prompt activation을 바꾸지 않는다.
 
+Source의 비활성 입력 위치 대조는 FIRST envelope에 같은 입력 JSON이 SYSTEM과 USER로
+중복된 경우, SYSTEM의 정확한 입력 사본과 그 제목만 제거하고 USER의 전체 입력·Schema·
+PromptRef를 유지할 수 있다. 역할 instruction·출력 제약·sampling은 보존하며 실제 wire
+hash와 envelope variant를 별도로 결속한다. 이는 입력 삭제나 새로운 semantic authority가
+아니며, 반대 방향의 중복 제거 및 해석 후보 추가와 결과를 구분한다. Product transport의
+기본 배치를 변경하거나 직접 Source 진단을 connected workflow 성공으로 승격하지 않는다.
+
 별도의 비활성 sampling 진단에서는 실제 backend가 소비하는 옵션 하나만 사전 고정해 비교할
 수 있다. instruction·PromptRef·입력·Schema·format·나머지 runtime 설정은 유지하며,
 미전송 옵션의 모델 기본값과 명시적 override, backend 버전·실제 소비 근거를 함께 기록한다.
