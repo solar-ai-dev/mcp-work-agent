@@ -1,7 +1,9 @@
-"""Six fixed Output FIRST wire calls; format-only ablation, no Graph or repair.
+"""Fixed Output FIRST format diagnostics; no Graph or repair.
 
 Historical inputs are provenance, not new scores. Both arms retain the schema
 inside the Prompt and use the same Product schema/owner validator afterwards.
+The omitted mode uses six new calls; JSON mode reuses three constrained records
+and performs only three new JSON-mode calls.
 """
 
 from __future__ import annotations
@@ -38,6 +40,7 @@ from google_work_agent.ports.llm.runtime_selection import OLLAMA_FIXED_LOOPBACK_
 ROOT = Path(__file__).resolve().parents[1]
 RESULTS = ROOT / "evaluation/results"
 SOURCE_ROOT = RESULTS / "064-work-span-codec-v35-connected-t1"
+BASELINE_RAW = RESULTS / "064-output-format-v36-t1/raw.json"
 PROMPT_ID = "request_understanding.identify_output_responsibilities"
 SOURCES = (
     ("CASE-CORE-005", "production"),
@@ -45,6 +48,7 @@ SOURCES = (
     ("CASE-CORE-049", "work-span-codec-v35"),
 )
 ARMS = ("schema_constrained", "format_omitted")
+CANDIDATE_ARMS = {"omitted": "format_omitted", "json": "format_json"}
 TIMEOUT_SECONDS = 180
 
 
@@ -54,6 +58,12 @@ def file_hash(path: Path) -> str:
 
 def _work_ids(call: dict[str, Any]) -> list[str]:
     return [item["unit_id"] for item in call["input"]["requested_work"]["work_units"]]
+
+
+def arms_for_mode(candidate_mode: str) -> tuple[str, str]:
+    if candidate_mode not in CANDIDATE_ARMS:
+        raise ValueError("unregistered candidate format mode")
+    return "schema_constrained", CANDIDATE_ARMS[candidate_mode]
 
 
 def reconstruct_payload(call: dict[str, Any]) -> dict[str, Any]:
@@ -111,7 +121,7 @@ def reconstruct_payload(call: dict[str, Any]) -> dict[str, Any]:
 
 
 def payload_for(case: dict[str, Any], arm: str) -> dict[str, Any]:
-    if arm not in ARMS:
+    if arm not in arms_for_mode(case.get("candidate_mode", "omitted")):
         raise ValueError("unregistered format arm")
     payload = cast(dict[str, Any], deepcopy(case["payload"]))
     if object_hash(payload) != case["source_call"]["wire_sha256"]:
@@ -125,10 +135,21 @@ def payload_for(case: dict[str, Any], arm: str) -> dict[str, Any]:
         raise ValueError("validator authority differs from actual wire input/schema")
     if arm == "format_omitted":
         del payload["format"]
+    elif arm == "format_json":
+        payload["format"] = "json"
+    if arm != "schema_constrained" and object_hash(payload) != case["candidate_wire_sha256"]:
+        raise ValueError("candidate payload differs from registered format mode/hash")
     return payload
 
 
-def make_plan(model: dict[str, Any], *, source_root: Path = SOURCE_ROOT) -> dict[str, Any]:
+def make_plan(
+    model: dict[str, Any],
+    *,
+    source_root: Path = SOURCE_ROOT,
+    candidate_mode: str = "omitted",
+    baseline_raw: Path = BASELINE_RAW,
+) -> dict[str, Any]:
+    arms = arms_for_mode(candidate_mode)
     source_plan_path = source_root / "plan.json"
     source_plan = json.loads(source_plan_path.read_text(encoding="utf-8"))
     if (
@@ -168,9 +189,13 @@ def make_plan(model: dict[str, Any], *, source_root: Path = SOURCE_ROOT) -> dict
         ):
             raise ValueError("frozen Case/Run/request/model provenance mismatch")
         payload = reconstruct_payload(call)
+        candidate_payload = {k: v for k, v in payload.items() if k != "format"}
+        if candidate_mode == "json":
+            candidate_payload["format"] = "json"
         cases.append(
             {
                 "case_id": case_id,
+                "candidate_mode": candidate_mode,
                 "case_binding": deepcopy(binding),
                 "source_arm": arm,
                 "source_calls_path": calls_path.resolve().as_posix(),
@@ -180,9 +205,7 @@ def make_plan(model: dict[str, Any], *, source_root: Path = SOURCE_ROOT) -> dict
                 "source_call": deepcopy(call),
                 "payload": payload,
                 "instruction_sha256": hashlib.sha256(payload["system"].encode()).hexdigest(),
-                "candidate_wire_sha256": object_hash(
-                    {k: v for k, v in payload.items() if k != "format"}
-                ),
+                "candidate_wire_sha256": object_hash(candidate_payload),
             }
         )
     bound_files = (
@@ -201,9 +224,10 @@ def make_plan(model: dict[str, Any], *, source_root: Path = SOURCE_ROOT) -> dict
         "src/google_work_agent/application/prompt_runtime/sources/request_understanding.identify_output_responsibilities.md",
         "src/google_work_agent/ports/llm/output_schema_validation.py",
     )
-    return {
+    plan = {
         "schema_version": 1,
         "kind": "FROZEN_OUTPUT_FIRST_FORMAT_ONLY_OWNER_DIAGNOSTIC",
+        "candidate_mode": candidate_mode,
         "head_sha": head(),
         "model": deepcopy(model),
         "source_plan_path": source_plan_path.resolve().as_posix(),
@@ -213,7 +237,8 @@ def make_plan(model: dict[str, Any], *, source_root: Path = SOURCE_ROOT) -> dict
         "source_hashes": {path: file_hash(ROOT / path) for path in bound_files},
         "policy": {
             "trials_per_case_arm": 1,
-            "max_http_generation_calls": 6,
+            "max_http_generation_calls": 3 if candidate_mode == "json" else 6,
+            "reused_baseline_calls": 3 if candidate_mode == "json" else 0,
             "http_calls_per_arm": 1,
             "timeout_seconds_per_arm": TIMEOUT_SECONDS,
             "schema_repairs": 0,
@@ -226,13 +251,91 @@ def make_plan(model: dict[str, Any], *, source_root: Path = SOURCE_ROOT) -> dict
             "runtime_options": "EXACT_HISTORICAL_WIRE_UNCHANGED",
             "semantic_verdict": "UNREVIEWED",
         },
-        "arms": list(ARMS),
+        "arms": list(arms),
         "cases": cases,
         "execution_order": [
             {"case_id": case["case_id"], "arm": arm}
             for index, case in enumerate(cases)
-            for arm in (ARMS if index % 2 == 0 else tuple(reversed(ARMS)))
+            for arm in (arms if index % 2 == 0 else tuple(reversed(arms)))
+            if candidate_mode != "json" or arm == "format_json"
         ],
+    }
+    if candidate_mode == "json":
+        plan["reused_baseline"] = load_reused_baseline(baseline_raw, plan)
+    return plan
+
+
+def load_reused_baseline(path: Path, plan: dict[str, Any]) -> dict[str, Any]:
+    """Bind existing constrained FIRSTs; never create replacement baseline calls."""
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    binding = raw["binding"]
+    if not raw["completed"] or raw["actual_http_calls"] != 6:
+        raise ValueError("reused baseline must be the completed six-call comparison")
+    for field in (
+        "model",
+        "source_plan_path",
+        "source_plan_sha256",
+        "dataset_sha256",
+        "fixture_sha256",
+    ):
+        if binding[field] != plan[field]:
+            raise ValueError(f"reused baseline binding changed: {field}")
+    if binding.get("candidate_mode", "omitted") != "omitted" or binding["arms"] != list(ARMS):
+        raise ValueError("only the original constrained/omitted comparison can supply baseline")
+    for source_path, digest in plan["source_hashes"].items():
+        if source_path == "scripts/evaluate_output_format_ablation.py":
+            continue
+        if binding["source_hashes"].get(source_path) != digest:
+            raise ValueError(f"reused baseline Product/dependency code changed: {source_path}")
+    origins = {case["case_id"]: case for case in binding["cases"]}
+    rows = []
+    for case in plan["cases"]:
+        prior = origins[case["case_id"]]
+        for field in (
+            "case_binding",
+            "source_call",
+            "payload",
+            "source_calls_sha256",
+            "source_raw_sha256",
+        ):
+            if prior[field] != case[field]:
+                raise ValueError(f"reused baseline input/wire provenance changed: {field}")
+        matches = [
+            row
+            for row in raw["results"]
+            if row["case_id"] == case["case_id"] and row["arm"] == "schema_constrained"
+        ]
+        if len(matches) != 1:
+            raise ValueError("exactly one constrained result per fixed Case required")
+        row = matches[0]
+        if (
+            row["state"] != "RETURNED"
+            or row["wire_request_count"] != 1
+            or row["wire_sha256"] != case["source_call"]["wire_sha256"]
+            or row["input_sha256"] != case["source_call"]["input_sha256"]
+            or row["wire_options"] != case["payload"]["options"]
+            or row["wire_think"] != case["payload"]["think"]
+            or row["format_present"] is not True
+            or row["schema_repairs"] != 0
+            or row["http_retries"] != 0
+            or row["validation"] != validate_response(row["content"], case)
+        ):
+            raise ValueError(
+                "reused baseline result/validator/runtime differs from frozen authority"
+            )
+        rows.append(
+            {
+                "case_id": case["case_id"],
+                "row_sha256": object_hash(row),
+                "new_call": False,
+                "record": deepcopy(row),
+            }
+        )
+    return {
+        "path": path.resolve().as_posix(),
+        "sha256": file_hash(path),
+        "source_head_sha": binding["head_sha"],
+        "records": rows,
     }
 
 
@@ -277,6 +380,8 @@ def run_arm(
         "wire_options": deepcopy(payload["options"]),
         "wire_think": payload["think"],
         "format_present": "format" in payload,
+        "candidate_mode": case.get("candidate_mode", "omitted"),
+        "new_call": True,
         "input_sha256": case["source_call"]["input_sha256"],
         "semantic_verdict": "UNREVIEWED",
         "business_success": "NOT_EVALUATED",
@@ -328,22 +433,52 @@ def execute_plan(plan: dict[str, Any], output: Path, *, plan_sha256: str) -> dic
     output = output.resolve()
     if not output.is_relative_to(RESULTS.resolve()) or output == RESULTS.resolve():
         raise ValueError("dedicated evaluation/results directory required")
+    candidate_mode = plan.get("candidate_mode", "omitted")
+    arms = arms_for_mode(candidate_mode)
     expected_order = [
         {"case_id": case_id, "arm": arm}
         for index, (case_id, _) in enumerate(SOURCES)
-        for arm in (ARMS if index % 2 == 0 else tuple(reversed(ARMS)))
+        for arm in (arms if index % 2 == 0 else tuple(reversed(arms)))
+        if candidate_mode != "json" or arm == "format_json"
     ]
     if (
         plan["execution_order"] != expected_order
+        or plan["arms"] != list(arms)
+        or any(case.get("candidate_mode", "omitted") != candidate_mode for case in plan["cases"])
         or tuple(item["case_id"] for item in plan["cases"]) != tuple(row[0] for row in SOURCES)
-        or plan["policy"]["max_http_generation_calls"] != 6
+        or plan["policy"]["max_http_generation_calls"] != (3 if candidate_mode == "json" else 6)
     ):
-        raise ValueError("only the registered three inputs and six one-shot arms are allowed")
+        raise ValueError(
+            "only the registered three inputs and mode-bound one-shot arms are allowed"
+        )
+    reused = []
+    if candidate_mode == "json":
+        authority = plan["reused_baseline"]
+        if load_reused_baseline(Path(authority["path"]), plan) != authority:
+            raise ValueError("reused baseline file/row hashes changed after registration")
+        reused = [
+            {
+                **deepcopy(row["record"]),
+                "new_call": False,
+                "origin_path": authority["path"],
+                "origin_raw_sha256": authority["sha256"],
+                "origin_row_sha256": row["row_sha256"],
+            }
+            for row in authority["records"]
+        ]
+    for case in plan["cases"]:
+        for arm in arms:
+            payload_for(case, arm)
     if output.exists() and any(path.name != "preregistered-plan.json" for path in output.iterdir()):
         raise ValueError("execution output must be new; prior partial/failed trial is preserved")
     claim = RESULTS / ".output-format-trials" / f"{plan_sha256}.json"
     write_json(claim, {"output": output.as_posix()}, exclusive=True)
-    raw: dict[str, Any] = {"binding": plan, "results": [], "completed": False}
+    raw: dict[str, Any] = {
+        "binding": plan,
+        "results": [],
+        "reused_results": reused,
+        "completed": False,
+    }
     path = output / "raw.json"
     write_json(path, raw, exclusive=True)
     by_id = {case["case_id"]: case for case in plan["cases"]}
@@ -358,9 +493,12 @@ def execute_plan(plan: dict[str, Any], output: Path, *, plan_sha256: str) -> dic
     raw.update(
         completed=True,
         actual_http_calls=sum(row["wire_request_count"] for row in raw["results"]),
+        reused_http_calls=len(reused),
         metrics_by_arm={
-            arm: metrics([r for r in raw["results"] if r["arm"] == arm]) for arm in ARMS
+            arm: metrics([r for r in [*raw["results"], *reused] if r["arm"] == arm]) for arm in arms
         },
+        new_call_metrics=metrics(raw["results"]),
+        reused_call_metrics=metrics(reused),
         semantic_verdict="UNREVIEWED",
         provider_calls=0,
     )
@@ -373,11 +511,17 @@ def main() -> None:
     parser.add_argument("--result-dir", type=Path, required=True)
     parser.add_argument("--execute-plan", type=Path)
     parser.add_argument("--expected-plan-sha256")
+    parser.add_argument("--candidate-mode", choices=tuple(CANDIDATE_ARMS), default="omitted")
+    parser.add_argument("--reuse-baseline-raw", type=Path, default=BASELINE_RAW)
     args = parser.parse_args()
     output = args.result_dir.resolve()
     if not output.is_relative_to(RESULTS.resolve()) or output == RESULTS.resolve():
         raise ValueError("dedicated evaluation/results directory required")
-    current = make_plan(inspect_model(transport.OllamaHTTPClient()))
+    current = make_plan(
+        inspect_model(transport.OllamaHTTPClient()),
+        candidate_mode=args.candidate_mode,
+        baseline_raw=args.reuse_baseline_raw,
+    )
     if args.execute_plan is None:
         path = output / "preregistered-plan.json"
         write_json(path, current, exclusive=True)
@@ -393,6 +537,7 @@ def main() -> None:
         json.dumps(
             {
                 "actual_http_calls": raw["actual_http_calls"],
+                "reused_http_calls": raw["reused_http_calls"],
                 "semantic_verdict": "UNREVIEWED",
                 "metrics_by_arm": raw["metrics_by_arm"],
             }

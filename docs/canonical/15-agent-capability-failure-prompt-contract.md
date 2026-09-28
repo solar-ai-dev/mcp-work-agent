@@ -915,8 +915,9 @@ Source 판단의 개발 구조 비교는 기존 요청 원문·선택 identity·
 의미 통과로 취급하지 않는다. 비활성 후보의 직접 모델 호출은 Production budget,
 Prompt activation 또는 release evidence를 대체하지 않는다.
 
-Output owner의 decoding 경계는 동일한 실제 요청 payload에서 top-level `format` 유무만
-바꾸는 비활성 EVALUATION 비교를 허용한다. instruction·본문 schema·입력·sampling은
+Output owner의 decoding 경계는 동일한 실제 요청 payload에서 top-level `format`의 전체
+schema / JSON 문법만 제약 / 생략 중 사전 고정한 한 후보를 비교하는 비활성 EVALUATION을
+허용한다. instruction·본문 schema·입력·sampling은
 유지하고 양쪽 결과를 같은 기존 schema/owner validator로 검증한다. invalid JSON이나
 의미 오류를 성공으로 덮지 않으며, 이 진단은 Product runtime·Prompt activation을 바꾸지 않는다.
 

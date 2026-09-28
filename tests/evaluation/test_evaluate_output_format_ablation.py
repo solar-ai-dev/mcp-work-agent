@@ -312,7 +312,7 @@ def test_cli_drift_rejects_before_http(
     _dump(saved, plan)
     monkeypatch.setattr(runner, "RESULTS", tmp_path)
     monkeypatch.setattr(runner, "inspect_model", lambda _: model)
-    monkeypatch.setattr(runner, "make_plan", lambda _: {**plan, "head_sha": "changed"})
+    monkeypatch.setattr(runner, "make_plan", lambda _, **_kwargs: {**plan, "head_sha": "changed"})
     monkeypatch.setattr(
         "sys.argv",
         [
@@ -339,9 +339,172 @@ def test_extra_trial_and_validator_input_drift_reject_before_dispatch(
     monkeypatch.setattr(runner, "RESULTS", tmp_path)
     changed = deepcopy(plan)
     changed["execution_order"].append(changed["execution_order"][0])
-    with pytest.raises(ValueError, match="six one-shot"):
+    with pytest.raises(ValueError, match="mode-bound one-shot"):
         runner.execute_plan(changed, tmp_path / "extra", plan_sha256=runner.object_hash(changed))
     case = plan["cases"][0]
     case["source_call"]["input"]["effect_prohibitions"] = []
     with pytest.raises(ValueError, match="validator authority"):
         runner.payload_for(case, "format_omitted")
+
+
+def _write_baseline(plan: dict[str, Any], path: Path) -> None:
+    rows = []
+    for entry in plan["execution_order"]:
+        case = next(item for item in plan["cases"] if item["case_id"] == entry["case_id"])
+        content = '{"output_responsibilities":[]}'
+        rows.append(
+            {
+                "case_id": entry["case_id"],
+                "arm": entry["arm"],
+                "state": "RETURNED",
+                "wire_request_count": 1,
+                "wire_sha256": runner.object_hash(runner.payload_for(case, entry["arm"])),
+                "input_sha256": case["source_call"]["input_sha256"],
+                "wire_options": case["payload"]["options"],
+                "wire_think": case["payload"]["think"],
+                "format_present": entry["arm"] == "schema_constrained",
+                "schema_repairs": 0,
+                "http_retries": 0,
+                "input_tokens": 100,
+                "output_tokens": 10,
+                "latency_ms": 20,
+                "content": content,
+                "validation": runner.validate_response(content, case),
+                "semantic_verdict": "UNREVIEWED",
+            }
+        )
+    _dump(path, {"binding": plan, "results": rows, "completed": True, "actual_http_calls": 6})
+
+
+@pytest.fixture
+def json_plan(
+    frozen: tuple[Path, dict[str, Any]],
+    tmp_path: Path,
+) -> tuple[dict[str, Any], Path]:
+    root, model = frozen
+    baseline = tmp_path / "baseline.json"
+    _write_baseline(runner.make_plan(model, source_root=root), baseline)
+    return runner.make_plan(
+        model, source_root=root, candidate_mode="json", baseline_raw=baseline
+    ), baseline
+
+
+def test_json_mode_changes_only_format_value_and_reuses_bound_baseline(
+    json_plan: tuple[dict[str, Any], Path],
+) -> None:
+    plan, baseline = json_plan
+    assert plan["candidate_mode"] == "json"
+    assert plan["policy"]["max_http_generation_calls"] == 3
+    assert plan["policy"]["reused_baseline_calls"] == 3
+    assert plan["arms"] == ["schema_constrained", "format_json"]
+    assert [entry["arm"] for entry in plan["execution_order"]] == ["format_json"] * 3
+    assert plan["reused_baseline"]["sha256"] == runner.file_hash(baseline)
+    for case, reused in zip(plan["cases"], plan["reused_baseline"]["records"], strict=True):
+        original = runner.payload_for(case, "schema_constrained")
+        candidate = runner.payload_for(case, "format_json")
+        assert candidate == {**original, "format": "json"}
+        assert runner.object_hash(candidate) == case["candidate_wire_sha256"]
+        assert json.loads(candidate["prompt"])["output_schema"] == original["format"]
+        assert reused["new_call"] is False
+        assert reused["row_sha256"] == runner.object_hash(reused["record"])
+        with pytest.raises(ValueError, match="unregistered format arm"):
+            runner.payload_for(case, "format_omitted")
+
+
+def test_json_executes_only_three_new_calls_and_keeps_reused_usage_separate(
+    json_plan: tuple[dict[str, Any], Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan, baseline = json_plan
+    before = runner.file_hash(baseline)
+    monkeypatch.setattr(runner, "RESULTS", tmp_path)
+    sent = []
+
+    def post(**kwargs: Any) -> dict[str, Any]:
+        assert kwargs["payload"]["format"] == "json" and kwargs["timeout_seconds"] == 180
+        sent.append(kwargs)
+        return {"response": '{"output_responsibilities":[]}', "eval_count": 4}
+
+    monkeypatch.setattr(runner.transport, "_post_json", post)
+    result = runner.execute_plan(plan, tmp_path / "json-run", plan_sha256=runner.object_hash(plan))
+    assert len(sent) == result["actual_http_calls"] == 3
+    assert result["reused_http_calls"] == 3
+    assert result["new_call_metrics"]["output_tokens"] == 12
+    assert result["reused_call_metrics"]["output_tokens"] == 30
+    assert all(row["new_call"] is False for row in result["reused_results"])
+    assert all(row["new_call"] is True for row in result["results"])
+    assert result["metrics_by_arm"]["schema_constrained"]["calls"] == 3
+    assert result["metrics_by_arm"]["format_json"]["calls"] == 3
+    assert runner.file_hash(baseline) == before
+
+
+@pytest.mark.parametrize(
+    "content,expected",
+    [
+        ('{"output_responsibilities":[]}', "VALIDATED"),
+        ('```json\n{"output_responsibilities":[]}\n```', "INVALID_JSON"),
+        ('{"output_responsibilities":[{"resource_type":"TASK"}]}', "INVALID_SCHEMA"),
+        (
+            '{"output_responsibilities":[{"resource_type":"TASK","effect":"CREATE",'
+            '"work_unit_ids":["work-1"]}]}',
+            "OWNER_REJECTED",
+        ),
+    ],
+)
+def test_json_mode_keeps_identical_strict_postvalidation_without_repair(
+    json_plan: tuple[dict[str, Any], Path],
+    monkeypatch: pytest.MonkeyPatch,
+    content: str,
+    expected: str,
+) -> None:
+    plan, _ = json_plan
+    calls = []
+
+    def post(**kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs)
+        return {"response": content}
+
+    monkeypatch.setattr(runner.transport, "_post_json", post)
+    record = runner.run_arm(plan["cases"][0], "format_json", persist=lambda _: None)
+    assert len(calls) == 1 and record["validation"]["structural_result"] == expected
+    assert record["content"] == content and record["semantic_verdict"] == "UNREVIEWED"
+    assert record["schema_repairs"] == 0
+
+
+@pytest.mark.parametrize("changed", ["wire", "code", "model", "rowhash"])
+def test_json_reuse_rejects_drift_in_original_authority_before_any_new_call(
+    json_plan: tuple[dict[str, Any], Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    changed: str,
+) -> None:
+    plan, path = json_plan
+    monkeypatch.setattr(runner, "RESULTS", tmp_path)
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if changed == "wire":
+        raw["results"][0]["wire_sha256"] = "changed"
+    elif changed == "code":
+        raw["binding"]["source_hashes"][
+            "src/google_work_agent/adapters/llm/ollama/transport.py"
+        ] = "changed"
+    elif changed == "model":
+        raw["binding"]["model"]["model_digest"] = "changed"
+    else:
+        raw["results"][0]["output_tokens"] += 1
+    runner.write_json(path, raw)
+    with pytest.raises(ValueError, match="reused baseline"):
+        runner.execute_plan(plan, tmp_path / "no-run", plan_sha256=runner.object_hash(plan))
+    assert not (tmp_path / "no-run").exists()
+
+
+def test_json_mode_cannot_reintroduce_three_new_baseline_calls(
+    json_plan: tuple[dict[str, Any], Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan, _ = json_plan
+    monkeypatch.setattr(runner, "RESULTS", tmp_path)
+    plan["execution_order"].append({"case_id": "CASE-CORE-005", "arm": "schema_constrained"})
+    with pytest.raises(ValueError, match="mode-bound"):
+        runner.execute_plan(plan, tmp_path / "extra", plan_sha256=runner.object_hash(plan))
