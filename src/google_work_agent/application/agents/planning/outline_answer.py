@@ -116,6 +116,7 @@ def outline_answer(
     invoke: PlanningSemanticInvoker,
     confirmation_response: Mapping[str, object] | None = None,
     retrieval_result: Mapping[str, object] | None = None,
+    source_snapshots: Mapping[str, Mapping[str, object]] | None = None,
 ) -> AnswerOutlineV1 | PlanningAnswerConfirmationV1:
     """Return an evidence-bounded outline without assuming policy or action authority."""
     if not user_request.strip():
@@ -158,6 +159,7 @@ def outline_answer(
         user_request=user_request,
         request_intent=request_intent,
         evidence=evidence,
+        source_snapshots=source_snapshots,
     )
     if task_projection is not None:
         return task_projection.outline

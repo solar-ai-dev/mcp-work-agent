@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import Any, cast
 
 import pytest
+from tests.support.task_calendar_evidence import bind_task_calendar_snapshots
 
 from google_work_agent.application.agents.planning.contracts.planning_semantics import (
     PlanningAnswerConfirmationV1,
@@ -233,6 +234,15 @@ def test_outline__does_not_replace__invalid_evidence_identity() -> None:
 
 def test_outline_task_read__concrete_task__selects_without_llm() -> None:
     invoked = False
+    evidence: list[dict[str, object]] = [
+        {"evidence_id": "e-task", "resource_handle": "task:1", "excerpt": "보고서 제출"},
+        {
+            "evidence_id": "e-list",
+            "resource_handle": "task_list:default",
+            "excerpt": "내 할 일 목록",
+        },
+    ]
+    snapshots = bind_task_calendar_snapshots(evidence, {"e-task": {"title": "보고서 제출"}})
 
     def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
         del prompt_id, prompt_input
@@ -248,18 +258,8 @@ def test_outline_task_read__concrete_task__selects_without_llm() -> None:
             "analysis_requirement": "NONE",
         },
         work_analysis=None,
-        evidence=[
-            {
-                "evidence_id": "e-task",
-                "resource_handle": "task:1",
-                "excerpt": "보고서 제출",
-            },
-            {
-                "evidence_id": "e-list",
-                "resource_handle": "task_list:default",
-                "excerpt": "내 할 일 목록",
-            },
-        ],
+        evidence=evidence,
+        source_snapshots=snapshots,
         invoke=invoke,
     )
 
@@ -404,9 +404,7 @@ def test_gmail_read__with_required_information__uses_semantic_outline() -> None:
 def test_gmail_lookup__unrequested_timeline__does_not_require_analysis() -> None:
     invoked = False
 
-    def invoke(
-        _prompt_id: str, _prompt_input: Mapping[str, object]
-    ) -> Mapping[str, object]:
+    def invoke(_prompt_id: str, _prompt_input: Mapping[str, object]) -> Mapping[str, object]:
         nonlocal invoked
         invoked = True
         return {"sections": ["찾은 메일"], "evidence_refs": ["e-mail"]}

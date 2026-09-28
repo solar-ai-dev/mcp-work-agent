@@ -5,6 +5,9 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 
+from google_work_agent.application.agents.planning.resolve_task_calendar_snapshot import (
+    resolve_unique_task_calendar_snapshots,
+)
 from google_work_agent.application.agents.task_calendar_draft_source import (
     is_task_calendar_draft_source_target,
     project_draft_recipients,
@@ -17,6 +20,7 @@ def materialize_task_calendar_draft_payload(
     route: Mapping[str, object],
     request_intent: Mapping[str, object] | None,
     evidence: Sequence[Mapping[str, object]],
+    source_snapshots: Mapping[str, Mapping[str, object]] | None = None,
 ) -> dict[str, object] | None:
     if (
         not isinstance(request_intent, Mapping)
@@ -38,16 +42,13 @@ def materialize_task_calendar_draft_payload(
         return None
     tasks: list[dict[str, str]] = []
     events: list[dict[str, str]] = []
-    for item in evidence:
-        handle = item.get("resource_handle")
-        if handle is None:
-            continue
-        if not isinstance(handle, str):
-            return None
-        excerpt = item.get("excerpt")
-        if not isinstance(excerpt, str):
-            return None
-        facts = _fact_lines(excerpt)
+    observations = resolve_unique_task_calendar_snapshots(
+        [item for item in evidence if item.get("resource_handle") is not None], source_snapshots
+    )
+    if observations is None:
+        return None
+    for handle, snapshot in observations:
+        facts = {key: value for key, value in snapshot.items() if isinstance(value, str) and value}
         if handle.startswith("task:"):
             if not {"title", "status", "due"}.issubset(facts):
                 return None
@@ -77,24 +78,6 @@ def materialize_task_calendar_draft_payload(
         ),
         "body": body,
     }
-
-
-def _fact_lines(excerpt: str) -> dict[str, str]:
-    result: dict[str, str] = {}
-    current: str | None = None
-    for raw_line in excerpt.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        if ":" in line:
-            key, value = line.split(":", 1)
-            current = key.strip().casefold()
-            if value.strip():
-                result[current] = value.strip()
-            continue
-        if current is not None:
-            result[current] = " ".join(filter(None, [result.get(current), line]))
-    return result
 
 
 def _original_request_texts(request_intent: Mapping[str, object]) -> list[str]:

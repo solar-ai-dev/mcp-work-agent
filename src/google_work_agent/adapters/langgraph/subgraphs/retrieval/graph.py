@@ -138,6 +138,7 @@ from google_work_agent.application.agents.retrieval.match_person_mention import 
     resolve_supported_person_identities,
 )
 from google_work_agent.application.agents.retrieval.normalize_segments import (
+    DEFAULT_CONTEXT_BUDGET,
     rehydrate_normalized_segments,
 )
 from google_work_agent.application.agents.retrieval.plan_query import (
@@ -155,6 +156,9 @@ from google_work_agent.application.agents.retrieval.project_detail_candidate_ref
 )
 from google_work_agent.application.agents.retrieval.project_gmail_draft_source_snapshots import (
     project_gmail_draft_source_snapshots,
+)
+from google_work_agent.application.agents.retrieval.project_task_calendar_source_snapshots import (
+    project_task_calendar_source_snapshots,
 )
 from google_work_agent.application.agents.retrieval.project_task_review_candidates import (
     project_task_review_candidates,
@@ -773,7 +777,14 @@ class RetrievalSubgraph:
         acquisition_result = _require_state_value(
             working_state["acquisition_result"], "acquisition_result"
         )
-        for observation in project_gmail_draft_source_snapshots(acquisition_result):
+        observations = [
+            *project_gmail_draft_source_snapshots(acquisition_result),
+            *project_task_calendar_source_snapshots(
+                acquisition_result,
+                max_snapshot_chars=DEFAULT_CONTEXT_BUDGET.max_segment_chars,
+            ),
+        ]
+        for observation in observations:
             self._evidence_store.put_resource_snapshot(
                 run_id=state["run_id"],
                 resource_handle=observation["resource_handle"],

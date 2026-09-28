@@ -10,6 +10,9 @@ from google_work_agent.application.agents.planning.contracts.planning_semantics 
     AnswerDraftCandidateV2,
     AnswerOutlineV1,
 )
+from google_work_agent.application.agents.planning.resolve_task_calendar_snapshot import (
+    resolve_unique_task_calendar_snapshots,
+)
 
 
 class TaskReadAnswerProjection(NamedTuple):
@@ -22,6 +25,7 @@ def project_task_read_answer(
     user_request: str,
     request_intent: Mapping[str, object],
     evidence: Sequence[Mapping[str, object]],
+    source_snapshots: Mapping[str, Mapping[str, object]] | None = None,
 ) -> TaskReadAnswerProjection | None:
     """Return one grounded projection only for non-analytical Tasks READs."""
     if (
@@ -41,24 +45,24 @@ def project_task_read_answer(
     if requested_fields is None:
         return None
     if task_items:
+        observations = resolve_unique_task_calendar_snapshots(task_items, source_snapshots)
+        if observations is None:
+            return None
+        task_fields = [fields for _handle, fields in observations]
         lead = (
-            f"Google Tasks에서 확인된 현재 할 일은 {len(task_items)}개입니다."
+            f"Google Tasks에서 확인된 현재 할 일은 {len(task_fields)}개입니다."
             if korean
-            else f"I found {len(task_items)} current item(s) in Google Tasks."
+            else f"I found {len(task_fields)} current item(s) in Google Tasks."
         )
-        unavailable_title = (
-            "제목을 표시할 수 없는 할 일"
-            if korean
-            else "Task title unavailable"
-        )
+        unavailable_title = "제목을 표시할 수 없는 할 일" if korean else "Task title unavailable"
         answer = f"{lead}\n\n" + "\n".join(
             _task_line(
-                item,
+                fields,
                 requested_fields=requested_fields,
                 unavailable_title=unavailable_title,
                 korean=korean,
             )
-            for item in task_items
+            for fields in task_fields
         )
         section = "현재 Google Tasks 할 일" if korean else "Current Google Tasks items"
     else:
@@ -118,13 +122,12 @@ def _requested_task_fields(request_intent: Mapping[str, object]) -> frozenset[st
 
 
 def _task_line(
-    item: Mapping[str, object],
+    fields: Mapping[str, str | None],
     *,
     requested_fields: frozenset[str],
     unavailable_title: str,
     korean: bool,
 ) -> str:
-    fields = _task_fields(item)
     title = fields.get("title") or unavailable_title
     details: list[str] = []
     if "status" in requested_fields:
@@ -159,33 +162,6 @@ def _scheduled_date(value: str | None) -> str | None:
         return date.fromisoformat(candidate).isoformat()
     except ValueError:
         return None
-
-
-def _task_fields(item: Mapping[str, object]) -> dict[str, str]:
-    excerpt = item.get("excerpt")
-    if not isinstance(excerpt, str):
-        return {}
-    lines = [line.strip() for line in excerpt.splitlines() if line.strip()]
-    metadata_keys = {
-        "completed",
-        "due",
-        "notes",
-        "position",
-        "status",
-        "task_id",
-        "task_list_id",
-        "title",
-        "updated",
-    }
-    structured_fields: dict[str, str] = {
-        key.strip(): value.strip()
-        for line in lines
-        for key, separator, value in (line.partition(":"),)
-        if separator and key.strip() in metadata_keys
-    }
-    if structured_fields:
-        return structured_fields
-    return {"title": lines[0]} if lines else {}
 
 
 __all__ = ["TaskReadAnswerProjection", "project_task_read_answer"]

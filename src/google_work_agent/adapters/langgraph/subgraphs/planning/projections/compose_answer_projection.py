@@ -18,6 +18,7 @@ class ComposeAnswerInputV1(TypedDict):
     work_analysis: NotRequired[dict[str, object]]
     confirmation_response: NotRequired[dict[str, object]]
     retrieval_result: NotRequired[dict[str, object]]
+    source_snapshots: NotRequired[dict[str, dict[str, object]]]
 
 
 def project_compose_answer_input(state: Mapping[str, object]) -> ComposeAnswerInputV1:
@@ -56,6 +57,17 @@ def project_compose_answer_input(state: Mapping[str, object]) -> ComposeAnswerIn
         result["confirmation_response"] = dict(confirmation_response)
     if retrieval_result is not None:
         result["retrieval_result"] = dict(retrieval_result)
+    snapshots = state.get("source_snapshots")
+    if snapshots is not None:
+        if not isinstance(snapshots, Mapping) or not all(
+            isinstance(ref, str) and isinstance(snapshot, Mapping)
+            for ref, snapshot in snapshots.items()
+        ):
+            raise ValueError("source_snapshots must be an object map")
+        result["source_snapshots"] = {
+            str(ref): dict(cast(Mapping[str, object], snapshot))
+            for ref, snapshot in snapshots.items()
+        }
     return result
 
 

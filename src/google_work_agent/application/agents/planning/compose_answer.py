@@ -193,6 +193,7 @@ def compose_answer(
     invoke: PlanningSemanticInvoker,
     confirmation_response: Mapping[str, object] | None = None,
     retrieval_result: Mapping[str, object] | None = None,
+    source_snapshots: Mapping[str, Mapping[str, object]] | None = None,
 ) -> AnswerDraftCandidateV2:
     if not user_request.strip():
         raise ValueError("user_request is required")
@@ -275,6 +276,7 @@ def compose_answer(
         user_request=user_request,
         request_intent=request_intent,
         evidence=evidence,
+        source_snapshots=source_snapshots,
     )
     if task_projection is not None:
         if not set(task_projection.draft["evidence_refs"]).issubset(approved_refs):

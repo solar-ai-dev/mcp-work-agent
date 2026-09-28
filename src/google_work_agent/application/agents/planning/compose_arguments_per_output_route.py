@@ -228,6 +228,7 @@ def compose_arguments_per_output_route(
                 allowed_refs=allowed_refs,
                 objective=objective,
                 evidence=route_evidence,
+                source_snapshots=source_snapshots,
             )
         )
         if candidate is None:
@@ -377,12 +378,14 @@ def requires_argument_inference(
     *,
     request_intent: Mapping[str, object] | None,
     evidence: Sequence[Mapping[str, object]] = (),
+    source_snapshots: Mapping[str, Mapping[str, object]] | None = None,
 ) -> bool:
     return (
         materialize_task_calendar_draft_payload(
             route=route,
             request_intent=request_intent,
             evidence=evidence,
+            source_snapshots=source_snapshots,
         )
         or _deterministic_create_payload(route=route, request_intent=request_intent)
     ) is None
@@ -443,11 +446,13 @@ def _deterministic_argument_candidate(
     allowed_refs: set[str],
     objective: ActionObjectiveCandidateV1,
     evidence: Sequence[Mapping[str, object]],
+    source_snapshots: Mapping[str, Mapping[str, object]] | None,
 ) -> ToolArgumentCandidateV1 | None:
     payload = materialize_task_calendar_draft_payload(
         route=route,
         request_intent=request_intent,
         evidence=evidence,
+        source_snapshots=source_snapshots,
     ) or _deterministic_create_payload(route=route, request_intent=request_intent)
     route_id = route.get("route_id")
     if payload is None or not isinstance(route_id, str):

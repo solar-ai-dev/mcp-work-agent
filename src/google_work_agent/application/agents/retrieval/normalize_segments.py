@@ -22,6 +22,9 @@ from google_work_agent.application.agents.retrieval.format_calendar_freebusy_evi
 from google_work_agent.application.agents.retrieval.project_gmail_draft_source_snapshots import (
     gmail_draft_source_version_ref,
 )
+from google_work_agent.application.agents.retrieval.project_task_calendar_source_snapshots import (
+    task_calendar_source_snapshot,
+)
 from google_work_agent.application.use_cases.resource.strip_resource_recovery_marker import (
     strip_resource_recovery_marker,
 )
@@ -94,6 +97,9 @@ def normalize_segments(
             if not isinstance(handle, str) or not handle:
                 raise ValueError("resource_handle must be non-empty string")
             resource_type = str(raw.get("resource_type", ""))
+            field_snapshot = task_calendar_source_snapshot(
+                raw, max_snapshot_chars=context_budget.max_segment_chars
+            )
             text = _resource_text(raw, resource_type=resource_type)
             if not text.strip() or (handle, text) in seen:
                 continue
@@ -145,10 +151,10 @@ def normalize_segments(
                             "chunk_index": index,
                             "chunk_count": len(chunks),
                             **(
-                                {
-                                    "source_version_ref": gmail_draft_source_version_ref(raw)
-                                }
+                                {"source_version_ref": gmail_draft_source_version_ref(raw)}
                                 if resource_type == "gmail_draft"
+                                else {"source_version_ref": field_snapshot["source_version_ref"]}
+                                if field_snapshot is not None
                                 else {}
                             ),
                             **cast(dict[str, object], raw.get("_message_locator", {})),

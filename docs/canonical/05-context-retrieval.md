@@ -574,6 +574,29 @@ class EvidenceSelectionResultV2:
 
 기존 Gmail Draft의 UPDATE를 준비할 때 원본 필드 snapshot은 Evidence locator나 LLM 입력에 넣지 않는다. Retrieval은 같은 Run의 기존 Evidence 저장 경계에 exact source snapshot을 Resource identity로 보관하고, Planning의 결정적 binder만 이를 해석한다. Provider 응답에서 생략된 필드와 명시적 `null`·빈 문자열·빈 목록은 서로 다른 값으로 보존한다.
 
+Task/Calendar의 결정적 답변·Draft materialization도 excerpt를 필드 authority로
+재파싱하지 않는다. Retrieval은 기존 Run-scoped snapshot 저장 경계에 Task의
+`title/status/due/notes`, Calendar Event의
+`title/start/end/timezone/status/location/description`만 exact 값으로 보관한다.
+Resource type/handle/parent/Provider version과 이 필드들의 canonical content hash를
+`source_version_ref`로 결속한다. Task notes에는 기존 normalization과 동일한 recovery marker
+제거를 적용하고 그 visible 값에 hash를 결속한다. 생략·`null`·빈 문자열을 구별하며 기존 normalization의
+`max_segment_chars` 예산을 넘거나 필드 타입이 잘못된 snapshot은 일부만 잘라 저장하지 않는다.
+본문의 `status:` 같은 문자열은 새로운 Provider metadata가 아니다.
+
+Snapshot 원문은 Evidence locator나 LLM Prompt에 추가하지 않는다. Locator에는
+`source_version_ref`만 additive하게 붙이고, Planning은 같은 Run의 exact Resource/version을
+선택된 Evidence ID에 연결하여 결정적 consumer에만 전달한다. 기존 normalized text,
+chunk schema version, SourceSegment ID는 변경하지 않는다. 새 locator를 가진 신규 Evidence의
+ID는 기존 Evidence hash 규칙을 따르되, persisted Evidence/Checkpoint의 ID나 내용을 변환하지
+않는다. 과거 Evidence에 version binding이 없거나 같은 Run snapshot이 없으면 excerpt나
+가장 최근 snapshot에서 값을 추정하지 않고 결정적 경로가 `None`을 반환하여 기존 LLM 경로를
+사용한다. 과거 segment ID는 기존 raw cache로 그대로 rehydrate할 수 있으며, 재생성된 locator만으로
+누락된 snapshot을 복구·승인한 것으로 취급하지 않는다.
+같은 Resource/version의 여러 Evidence chunk는 한 객체로 materialize하되 선택된 citation refs는
+보존한다. 같은 Resource의 다른 version들이 함께 선택됐으면 최신 값을 임의로 고르거나 필드를
+섞지 않고 해당 결정적 경로 전체를 기존 LLM 경로로 돌린다.
+
 `excluded_segment_ids`는 Retrieval의 selection 결과다. Browser가 직접 수정하지 않으며 사용자 제외·추가 검색은 기존 `run.adjust_context → ContextAdjustmentV1`을 통해 같은 Run의 Retrieval에만 전달한다. Browser·Agent의 Main State/Evidence row 직접 변경은 금지한다. 사용자 제외의 수명은 §4.2를 따른다.
 
 ### 5.8 `retrieval.assess_sufficiency`

@@ -5,6 +5,7 @@ from copy import deepcopy
 from typing import Any, cast
 
 import pytest
+from tests.support.task_calendar_evidence import bind_task_calendar_snapshots
 
 from google_work_agent.application.agents.planning.compose_answer import (
     MAX_USER_VISIBLE_ANSWER_CHARS,
@@ -55,6 +56,17 @@ def test_task_formatter_completeness__through_outline_and_compose__preserves_own
             ),
         }
     ]
+    snapshots = bind_task_calendar_snapshots(
+        cast(list[dict[str, object]], evidence),
+        {
+            "e-task": {
+                "title": "준비 사항 확인",
+                "status": "needsAction",
+                "due": "2026-08-10T00:00:00.000Z",
+                "notes": "장비 수령 항목을 확인할 것.",
+            },
+        },
+    )
     original = deepcopy((intent, evidence))
     calls: list[str] = []
 
@@ -62,6 +74,7 @@ def test_task_formatter_completeness__through_outline_and_compose__preserves_own
         calls.append(prompt_id)
         assert prompt_input["request_intent"] == original[0]
         assert prompt_input["evidence"] == original[1]
+        assert "source_snapshots" not in prompt_input
         return {
             "schema_version": 2,
             "answer": (
@@ -77,6 +90,7 @@ def test_task_formatter_completeness__through_outline_and_compose__preserves_own
         request_intent=intent,
         work_analysis=None,
         evidence=evidence,
+        source_snapshots=snapshots,
         invoke=invoke,
     )
     answer = compose_answer(
@@ -85,6 +99,7 @@ def test_task_formatter_completeness__through_outline_and_compose__preserves_own
         answer_outline=cast(AnswerOutlineV1, outline),
         work_analysis=None,
         evidence=evidence,
+        source_snapshots=snapshots,
         invoke=invoke,
     )
 
@@ -275,8 +290,7 @@ def test_compose_answer__confirmed_exact_calendar_event__bypasses_model_regenera
     )
 
     assert result["answer"] == (
-        "프로젝트 검토 회의 일정은 2026년 8월 18일 오전 10시부터 "
-        "오전 11시까지입니다. (Asia/Seoul)"
+        "프로젝트 검토 회의 일정은 2026년 8월 18일 오전 10시부터 오전 11시까지입니다. (Asia/Seoul)"
     )
     assert result["evidence_refs"] == ["e1", "e2"]
 
@@ -1066,9 +1080,7 @@ def test_compose_answer__structured_repair__reuses_evidence_scope_validation() -
             }
         return {
             "schema_version": 1,
-            "sections": [
-                {"heading": "", "items": [{"label": "", "value": "요약 내용"}]}
-            ],
+            "sections": [{"heading": "", "items": [{"label": "", "value": "요약 내용"}]}],
             "evidence_refs": ["outside"],
         }
 
@@ -1159,6 +1171,10 @@ def test_compose_answer__over_visible_limit__rejects() -> None:
 
 def test_compose_task_read__concrete_evidence__projects_without_llm() -> None:
     invoked = False
+    evidence: list[dict[str, object]] = [
+        {"evidence_id": "e1", "resource_handle": "task:1", "excerpt": "보고서 제출"}
+    ]
+    snapshots = bind_task_calendar_snapshots(evidence, {"e1": {"title": "보고서 제출"}})
 
     def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
         del prompt_id, prompt_input
@@ -1175,13 +1191,8 @@ def test_compose_task_read__concrete_evidence__projects_without_llm() -> None:
         },
         answer_outline={"sections": ["현재 Google Tasks 할 일"], "evidence_refs": ["e1"]},
         work_analysis=None,
-        evidence=[
-            {
-                "evidence_id": "e1",
-                "resource_handle": "task:1",
-                "excerpt": "보고서 제출",
-            }
-        ],
+        evidence=evidence,
+        source_snapshots=snapshots,
         invoke=invoke,
     )
 

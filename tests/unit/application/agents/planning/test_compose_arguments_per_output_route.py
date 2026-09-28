@@ -3,6 +3,7 @@ from copy import deepcopy
 from typing import Any, cast
 
 import pytest
+from tests.support.task_calendar_evidence import bind_task_calendar_snapshots
 
 from google_work_agent.application.agents.planning.compose_arguments_per_output_route import (
     compose_arguments_per_output_route as _compose_arguments_per_output_route,
@@ -458,9 +459,7 @@ def test_exact_calendar_create__preserves_all_constraints__in_arguments(
             {key: value for key, value in item.items() if key != "work_unit_ids"}
             for item in cast(list[dict[str, object]], projected_intent["constraints"])
         ] == request_intent["constraints"]
-        assert cast(dict[str, object], projected_intent["requested_work"])[
-            "work_relations"
-        ] == []
+        assert cast(dict[str, object], projected_intent["requested_work"])["work_relations"] == []
         calls.append(prompt_id)
         return {
             "schema_version": 1,
@@ -566,12 +565,13 @@ def test_source_derived_task_create__with_evidence__uses_semantic_argument_compo
     def invoke(prompt_id: str, prompt_input: Mapping[str, object]) -> Mapping[str, object]:
         calls.append(prompt_id)
         projected_intent = cast(dict[str, object], prompt_input["request_intent"])
-        assert projected_intent["requested_effect_hints"] == request_intent[
-            "requested_effect_hints"
-        ]
-        assert projected_intent["requested_resource_hints"] == request_intent[
-            "requested_resource_hints"
-        ]
+        assert (
+            projected_intent["requested_effect_hints"] == request_intent["requested_effect_hints"]
+        )
+        assert (
+            projected_intent["requested_resource_hints"]
+            == request_intent["requested_resource_hints"]
+        )
         assert [
             {key: value for key, value in item.items() if key != "work_unit_ids"}
             for item in cast(list[dict[str, object]], projected_intent["constraints"])
@@ -761,8 +761,7 @@ def test_bound_repository__frozen_resource_identity__cannot_change() -> None:
         )
 
 
-def test_compose_arguments_per_output_route__with_task_calendar_evidence__materializes_preview(
-) -> None:
+def test_compose_arguments__with_task_calendar_evidence__materializes_preview() -> None:
     route = {
         "route_id": "draft-route",
         "resource_type": "GMAIL_DRAFT",
@@ -832,6 +831,23 @@ def test_compose_arguments_per_output_route__with_task_calendar_evidence__materi
         },
         {"evidence_id": "user-message", "origin_type": "USER_MESSAGE"},
     ]
+    snapshots = bind_task_calendar_snapshots(
+        evidence,
+        {
+            "e-task": {
+                "title": "Orion QR 문구 확정",
+                "status": "needsAction",
+                "due": "2026-09-16T00:00:00Z",
+                "notes": "담당 수진",
+            },
+            "e-event": {
+                "title": "Orion 제작소 일정",
+                "start": "2026-09-13T14:00:00+09:00",
+                "end": "2026-09-13T15:00:00+09:00",
+                "status": "confirmed",
+            },
+        },
+    )
     objective = {
         "schema_version": 1,
         "route_id": "draft-route",
@@ -852,6 +868,7 @@ def test_compose_arguments_per_output_route__with_task_calendar_evidence__materi
         bound_tool_schemas=[bound],
         request_intent=intent,
         evidence=evidence,
+        source_snapshots=snapshots,
         invoke=cast(PlanningSemanticInvoker, invoke),
     )[0]
 
@@ -862,7 +879,10 @@ def test_compose_arguments_per_output_route__with_task_calendar_evidence__materi
     assert "상태: 확정 (confirmed)" in str(payload["body"])
     assert "2026-09-13T14:00+09:00" in str(payload["body"])
     assert result["evidence_refs"] == ["e-task", "e-event", "user-message"]
-    assert not requires_argument_inference(route, request_intent=intent, evidence=evidence)
+    assert not requires_argument_inference(
+        route, request_intent=intent, evidence=evidence, source_snapshots=snapshots
+    )
+    assert requires_argument_inference(route, request_intent=intent, evidence=evidence)
 
 
 def _github_route(tool_id: str, effect: str) -> dict[str, object]:

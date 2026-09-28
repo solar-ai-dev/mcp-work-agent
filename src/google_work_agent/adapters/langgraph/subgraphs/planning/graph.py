@@ -75,6 +75,7 @@ from google_work_agent.adapters.langgraph.subgraphs.planning.state import (
     PlanningLocalState,
 )
 from google_work_agent.adapters.system.memory.retrieval_evidence_store import (
+    EvidenceResolutionError,
     RunScopedEvidenceStore,
     resolve_evidence_projection,
 )
@@ -477,6 +478,7 @@ class PlanningSubgraph:
                     else None
                 ),
                 evidence=cast(list[Mapping[str, object]], working.get("evidence", [])),
+                source_snapshots=working.get("source_snapshots"),
             )
             for route in typed_routes
         )
@@ -946,6 +948,26 @@ class PlanningSubgraph:
                     resource_handle=handle,
                     source_version_ref=source_version_ref,
                 )
+            if (
+                isinstance(handle, str)
+                and handle.startswith(("task:", "calendar_event:"))
+                and isinstance(evidence_ref, str)
+                and evidence_ref
+                and isinstance(locator, Mapping)
+                and isinstance(locator.get("source_version_ref"), str)
+                and locator["source_version_ref"]
+                and self._evidence_store is not None
+            ):
+                # Old Evidence and unavailable Run-memory snapshots retain the LLM path.
+                # In particular, do not resolve the store's unversioned/latest shortcut.
+                try:
+                    snapshots[evidence_ref] = self._evidence_store.resolve_resource_snapshot(
+                        run_id=state["run_id"],
+                        resource_handle=handle,
+                        source_version_ref=cast(str, locator["source_version_ref"]),
+                    )
+                except EvidenceResolutionError:
+                    snapshots.pop(evidence_ref, None)
             projected.append(item)
         return projected, snapshots
 

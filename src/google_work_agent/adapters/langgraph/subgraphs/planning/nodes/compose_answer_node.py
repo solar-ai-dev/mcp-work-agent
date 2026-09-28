@@ -27,5 +27,6 @@ def compose_answer_node(
             invoke=invoke,
             confirmation_response=projected.get("confirmation_response"),
             retrieval_result=projected.get("retrieval_result"),
+            source_snapshots=projected.get("source_snapshots"),
         )
     }

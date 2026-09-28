@@ -1,4 +1,5 @@
 import pytest
+from tests.support.task_calendar_evidence import bind_task_calendar_snapshots
 
 from google_work_agent.application.agents.planning.materialize_task_calendar_draft_payload import (
     materialize_task_calendar_draft_payload,
@@ -17,8 +18,31 @@ from google_work_agent.application.agents.planning.materialize_task_calendar_dra
     ],
 )
 def test_materialize_task_calendar_draft_payload__with_exact_typed_evidence__returns_payload(
-    korean: bool, task_status: str, expected_label: str,
+    korean: bool,
+    task_status: str,
+    expected_label: str,
 ) -> None:
+    evidence: list[dict[str, object]] = [
+        {"evidence_id": "e-task", "resource_handle": "task:t1", "excerpt": "Task text"},
+        {"evidence_id": "e-event", "resource_handle": "calendar_event:e1", "excerpt": "Event text"},
+    ]
+    snapshots = bind_task_calendar_snapshots(
+        evidence,
+        {
+            "e-task": {
+                "title": "Atlas QR 문구 확정",
+                "status": task_status,
+                "due": "2026-08-16T00:00:00Z",
+                "notes": "담당 지민",
+            },
+            "e-event": {
+                "title": "Atlas 인쇄소 슬롯",
+                "start": "2026-08-13T14:00:00+09:00",
+                "end": "2026-08-13T15:00:00+09:00",
+                "status": "confirmed",
+            },
+        },
+    )
     payload = materialize_task_calendar_draft_payload(
         route={
             "resource_type": "GMAIL_DRAFT",
@@ -66,22 +90,8 @@ def test_materialize_task_calendar_draft_payload__with_exact_typed_evidence__ret
                 "outputs": [{"resource_type": "GMAIL_DRAFT", "effect": "CREATE"}],
             },
         },
-        evidence=[
-            {
-                "resource_handle": "task:t1",
-                "excerpt": (
-                    f"title: Atlas QR 문구 확정\nstatus: {task_status}\n"
-                    "due: 2026-08-16T00:00:00Z\nnotes:\n담당 지민"
-                ),
-            },
-            {
-                "resource_handle": "calendar_event:e1",
-                "excerpt": (
-                    "title: Atlas 인쇄소 슬롯\nstart: 2026-08-13T14:00:00+09:00\n"
-                    "end: 2026-08-13T15:00:00+09:00\nstatus: confirmed"
-                ),
-            },
-        ],
+        evidence=evidence,
+        source_snapshots=snapshots,
     )
 
     assert payload is not None
