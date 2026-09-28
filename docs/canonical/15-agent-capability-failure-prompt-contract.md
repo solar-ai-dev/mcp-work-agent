@@ -934,6 +934,12 @@ membership을 다시 고르거나 코드가 누락된 판정을 추측하지 않
 Product State/Graph·호출 예산·활성 Prompt를 변경하지 않는다. 합성 경계 control은
 Canonical Case/실제 upstream/업무 성공 점수와 분리한다.
 
+Source의 비활성 contrastive 비교는 기존 one-call role·실제 Run input·Schema·sampling을
+유지한 채 일반적인 입력→출력 예시만 분리된 후보 artifact로 추가할 수 있다. 예시 출력도
+현재 Source owner 계약으로 검증하며, 현재 평가 Case/Gold/Fixture 정답을 예시로 복사하지
+않는다. 실제 후보 출력의 누락이나 잘못된 판단을 예시로 보정하지 않는다. 합성 role+예시의
+PromptRef/hash를 결속하고 Product 활성화·호출 예산·안전 경계는 변경하지 않는다.
+
 Source 지시량 비교는 기존 책임·원문/선택/Work binding·입력·출력 Schema·sampling·format을
 유지한 채 중첩 설명만 축소할 수 있다. candidate source와 PromptRef/hash를 별도로 결속하고
 기존 strict schema/owner validation을 그대로 적용한다. 다른 Source 표현 변경과 섞거나

@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "examples": [
+    {
+      "input": {
+        "user_request": "받는 사람 editor@example.test, 제목 '원고 접수', 본문 '원고를 접수했습니다.'로 새 메일 초안을 준비해줘.",
+        "selected_resource_refs": [],
+        "requested_work": {
+          "work_units": [
+            {
+              "unit_id": "work-1",
+              "request_provenance": [
+                {
+                  "source": "USER_REQUEST",
+                  "start_offset": 0,
+                  "end_offset": 71,
+                  "source_text": "받는 사람 editor@example.test, 제목 '원고 접수', 본문 '원고를 접수했습니다.'로 새 메일 초안을 준비해줘."
+                }
+              ]
+            }
+          ],
+          "work_relations": []
+        }
+      },
+      "output": {
+        "source_dependencies": [
+          {"resource_type": "GMAIL_THREAD", "dependency": "SOURCE_NOT_REQUIRED"},
+          {"resource_type": "GMAIL_MESSAGE", "dependency": "SOURCE_NOT_REQUIRED"},
+          {"resource_type": "GMAIL_DRAFT", "dependency": "SOURCE_NOT_REQUIRED"},
+          {"resource_type": "GMAIL_ATTACHMENT", "dependency": "SOURCE_NOT_REQUIRED"},
+          {"resource_type": "TASK_LIST", "dependency": "SOURCE_NOT_REQUIRED"},
+          {"resource_type": "TASK", "dependency": "SOURCE_NOT_REQUIRED"},
+          {"resource_type": "CALENDAR", "dependency": "SOURCE_NOT_REQUIRED"},
+          {"resource_type": "CALENDAR_EVENT", "dependency": "SOURCE_NOT_REQUIRED"},
+          {"resource_type": "CALENDAR_FREEBUSY", "dependency": "SOURCE_NOT_REQUIRED"},
+          {"resource_type": "GITHUB_ISSUE", "dependency": "SOURCE_NOT_REQUIRED"}
+        ]
+      }
+    },
+    {
+      "input": {
+        "user_request": "선택한 메일 초안 본문 끝에 '검토 의견은 이 문서에 남겨 주세요.'를 덧붙이고, 기존 본문과 제목, 받는 사람, 첨부는 유지해줘.",
+        "selected_resource_refs": [
+          {
+            "resource_ref_id": "00000000-0000-4000-8000-000000000044",
+            "connector_id": "google_workspace",
+            "resource_type": "gmail_draft",
+            "resource_id": "example-draft",
+            "parent_resource_id": null
+          }
+        ],
+        "requested_work": {
+          "work_units": [
+            {
+              "unit_id": "work-1",
+              "request_provenance": [
+                {
+                  "source": "USER_REQUEST",
+                  "start_offset": 0,
+                  "end_offset": 73,
+                  "source_text": "선택한 메일 초안 본문 끝에 '검토 의견은 이 문서에 남겨 주세요.'를 덧붙이고, 기존 본문과 제목, 받는 사람, 첨부는 유지해줘."
+                }
+              ]
+            }
+          ],
+          "work_relations": []
+        }
+      },
+      "output": {
+        "source_dependencies": [
+          {"resource_type": "GMAIL_THREAD", "dependency": "SOURCE_NOT_REQUIRED"},
+          {"resource_type": "GMAIL_MESSAGE", "dependency": "SOURCE_NOT_REQUIRED"},
+          {
+            "resource_type": "GMAIL_DRAFT",
+            "dependency": "SOURCE_REQUIRED",
+            "required_information": ["현재 본문", "현재 제목", "현재 받는 사람", "현재 첨부"],
+            "target_scope": "SINGULAR",
+            "work_unit_ids": ["work-1"]
+          },
+          {"resource_type": "GMAIL_ATTACHMENT", "dependency": "SOURCE_NOT_REQUIRED"},
+          {"resource_type": "TASK_LIST", "dependency": "SOURCE_NOT_REQUIRED"},
+          {"resource_type": "TASK", "dependency": "SOURCE_NOT_REQUIRED"},
+          {"resource_type": "CALENDAR", "dependency": "SOURCE_NOT_REQUIRED"},
+          {"resource_type": "CALENDAR_EVENT", "dependency": "SOURCE_NOT_REQUIRED"},
+          {"resource_type": "CALENDAR_FREEBUSY", "dependency": "SOURCE_NOT_REQUIRED"},
+          {"resource_type": "GITHUB_ISSUE", "dependency": "SOURCE_NOT_REQUIRED"}
+        ]
+      }
+    },
+    {
+      "input": {
+        "user_request": "현재 작업들의 제목과 완료 상태, 기한을 확인하고 캘린더 일정들의 제목과 시작·종료 시각을 함께 정리해서 coordinator@example.test에게 새 메일 초안을 준비해줘.",
+        "selected_resource_refs": [],
+        "requested_work": {
+          "work_units": [
+            {
+              "unit_id": "work-1",
+              "request_provenance": [
+                {
+                  "source": "USER_REQUEST",
+                  "start_offset": 0,
+                  "end_offset": 100,
+                  "source_text": "현재 작업들의 제목과 완료 상태, 기한을 확인하고 캘린더 일정들의 제목과 시작·종료 시각을 함께 정리해서 coordinator@example.test에게 새 메일 초안을 준비해줘."
+                }
+              ]
+            }
+          ],
+          "work_relations": []
+        }
+      },
+      "output": {
+        "source_dependencies": [
+          {"resource_type": "GMAIL_THREAD", "dependency": "SOURCE_NOT_REQUIRED"},
+          {"resource_type": "GMAIL_MESSAGE", "dependency": "SOURCE_NOT_REQUIRED"},
+          {"resource_type": "GMAIL_DRAFT", "dependency": "SOURCE_NOT_REQUIRED"},
+          {"resource_type": "GMAIL_ATTACHMENT", "dependency": "SOURCE_NOT_REQUIRED"},
+          {"resource_type": "TASK_LIST", "dependency": "SOURCE_NOT_REQUIRED"},
+          {
+            "resource_type": "TASK",
+            "dependency": "SOURCE_REQUIRED",
+            "required_information": ["작업들의 제목", "작업들의 완료 상태", "작업들의 기한"],
+            "target_scope": "CRITERIA",
+            "work_unit_ids": ["work-1"]
+          },
+          {"resource_type": "CALENDAR", "dependency": "SOURCE_NOT_REQUIRED"},
+          {
+            "resource_type": "CALENDAR_EVENT",
+            "dependency": "SOURCE_REQUIRED",
+            "required_information": ["일정들의 제목", "일정들의 시작 시각", "일정들의 종료 시각"],
+            "target_scope": "CRITERIA",
+            "work_unit_ids": ["work-1"]
+          },
+          {"resource_type": "CALENDAR_FREEBUSY", "dependency": "SOURCE_NOT_REQUIRED"},
+          {"resource_type": "GITHUB_ISSUE", "dependency": "SOURCE_NOT_REQUIRED"}
+        ]
+      }
+    }
+  ]
+}
