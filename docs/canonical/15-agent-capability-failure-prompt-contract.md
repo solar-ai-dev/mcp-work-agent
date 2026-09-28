@@ -892,6 +892,18 @@ Source 판단의 개발 구조 비교는 기존 요청 원문·선택 identity·
 의미 통과로 취급하지 않는다. 비활성 후보의 직접 모델 호출은 Production budget,
 Prompt activation 또는 release evidence를 대체하지 않는다.
 
+Work provenance의 개발 후보는 LLM의 `request_spans` 선택 표현과 최종 provenance를
+구분해 비교할 수 있다. 현 Product의 exact-string-only admission은 유지한다. 비활성
+EVALUATION 후보에 한해 exact match가 없을 때 공백 이외의 모든 codepoint가 동일한
+유일한 연속 원문 구간으로 결속하는 selector codec을 비교할 수 있다. exact match가
+여러 개인 경우, 공백 비교 view에서도 여러 구간인 경우, 문자·대소문자·문장부호·Unicode
+정규화가 달라지는 경우는 거절한다. 다른 Work의 위치나 업무 의미로 대상을 추정하지 않는다.
+이는 LLM selector admission의 계약 확장이지 기존 검사와 동일하다는 주장이 아니다.
+최종 `source_text`는 반드시 현재 Run 원문 slice이며 offset·겹침·closed Work binding
+검사는 유지한다. 이 codec을 Resource identity, Constraint 값, Evidence 또는 Confirmation
+provenance 검증으로 확대하지 않는다. 업무 분해·금지·Source/Output 의미 정확도와 connected
+handoff는 별도 검증하고, Product 적용에는 해당 owner·테스트와 호환성 검토가 필요하다.
+
 #### Activation evidence
 
 `RUNTIME_ACTIVE`/`RETIRED` entry는 다음 metadata를 포함한다.
