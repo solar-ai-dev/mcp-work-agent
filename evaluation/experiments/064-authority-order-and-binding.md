@@ -683,3 +683,20 @@ v26의3/6→v27의4/6: 불필요 필터(NONE·CORE005)는 없어졌지만 서로
 rerun0/Provider0/activation0. raw:
 `evaluation/results/064-status-explicit-slot-owner6-v27-reuse-t1/raw.json`, SHA256
 `855a7c51e331652afdb87d1e15ad9d93986a5956eff0104e915a54a17546161d`.
+
+### v28 실제 owner 비교 사전 고정
+
+Core001/013/023은 `064-source-paired-baseline-v22-t1/raw.json`의 실제 첫 Source 입력과
+모든 기존 attempt4개를 재사용한다. 023은 현재 Canonical의 지연 메일·대체 일정 Task를
+참고한 점검 Event 생성 요청이며, Task/Calendar 요약으로 잘못 표기하지 않는다.
+001 upstream이 금지 문장을 별도 WorkUnit으로 분해한 상태도 변경하지 않는다.
+013의 과거 repair는 현재 보호 guard에서 거절됨을 원기록과 별도로 표시하고,
+이를 requirements 표현 후보의 개선으로 계산하지 않는다.
+
+추가 합성2건은 같은 Source Resource의 서로 다른 정보/scope 요구와 READ/독립 WRITE
+책임 구별을 검증한다. Source 후보 판단을 정답으로 강제하지 않는다. 각각 baseline/후보
+1회, Core3은 후보만1회: 신규 first최대7, 각 schema repair최대1, semantic revision0이다.
+새 schema/payload 형상 설명만 바꾸며 원문·Goal·Work·candidate catalog 입력은 양쪽 같다.
+실제 기존 Source sampler0.05/seed20260923/ctx16384/thinkfalse/180s와 모델 digest를 결속한다.
+구조 검증과 정보·범위·업무 귀속·Source 누락/과선택·금지 보존은 별도로 검토한다.
+새 runner18+prototype19=37 PASS; 모델 실행 전의 준비 결과이며 Product activation0이다.
