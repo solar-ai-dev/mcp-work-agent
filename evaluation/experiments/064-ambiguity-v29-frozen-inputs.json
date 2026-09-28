@@ -1,0 +1,344 @@
+[
+  {
+    "case_id": "CASE-CORE-005",
+    "user_request": "선택한 Ion 온보딩 작업의 상태와 기한만 알려줘. 새 작업은 만들지 마.",
+    "goal_candidate": {
+      "goal": "선택된 Ion 온보딩 작업의 현재 상태와 기한을 조회한다.",
+      "completion_conditions": [
+        "Ion 온보딩 작업이 선택된 상태여야 함"
+      ],
+      "constraints": [
+        {
+          "kind": "USER_REQUIREMENT",
+          "field": "search_terms",
+          "value": [
+            "Ion",
+            "온보딩"
+          ],
+          "work_unit_ids": [
+            "work-1"
+          ]
+        },
+        {
+          "kind": "USER_REQUIREMENT",
+          "field": "business_concepts",
+          "value": [
+            "온보딩",
+            "작업"
+          ],
+          "work_unit_ids": [
+            "work-1"
+          ]
+        },
+        {
+          "kind": "USER_REQUIREMENT",
+          "field": "required_information",
+          "value": [
+            "task_identity",
+            "title",
+            "notes",
+            "due",
+            "completion_status",
+            "task_list_identity"
+          ],
+          "work_unit_ids": [
+            "work-1"
+          ]
+        },
+        {
+          "kind": "RESOURCE",
+          "field": "selected_resource_id",
+          "value": [
+            "Vnc5YTNfYVI4cGtOQjNPOA"
+          ],
+          "work_unit_ids": [
+            "work-1"
+          ]
+        }
+      ],
+      "resource_responsibilities": {
+        "source_reads": [
+          {
+            "resource_type": "TASK",
+            "required_information": [
+              "task_identity",
+              "title",
+              "notes",
+              "due",
+              "completion_status",
+              "task_list_identity"
+            ],
+            "target_scope": "SINGULAR",
+            "work_unit_ids": [
+              "work-1"
+            ]
+          }
+        ],
+        "outputs": []
+      },
+      "requested_work": {
+        "work_units": [
+          {
+            "unit_id": "work-1",
+            "request_provenance": [
+              {
+                "source": "USER_REQUEST",
+                "start_offset": 0,
+                "end_offset": 28,
+                "source_text": "선택한 Ion 온보딩 작업의 상태와 기한만 알려줘."
+              }
+            ]
+          }
+        ],
+        "work_relations": []
+      }
+    },
+    "selected_resource_refs": [
+      {
+        "resource_ref_id": "eval-CASE-CORE-005-0",
+        "connector_id": "google_workspace",
+        "resource_type": "task",
+        "resource_id": "Vnc5YTNfYVI4cGtOQjNPOA",
+        "parent_resource_id": "a2YzbGhEU0psMnlHY1B4ag"
+      }
+    ],
+    "reference_time": null,
+    "fault_profile": null,
+    "origin": {
+      "kind": "OBSERVED_ATOMIC_PRODUCER_REPROJECTED_CURRENT_CODE_NOT_FRESH_UPSTREAM",
+      "raw_path": "evaluation/results/ru-tool-route-canonical92-20260924-50ff0879/raw.json",
+      "raw_sha256": "3ef3f0f07defd12b8a068e121ed5a517befad4facc716d72dc61219b0a20e938",
+      "binding": {
+        "product_sha": "50ff0879c1cbdbdde0fd0b6969c664e9670b2404",
+        "dataset_sha256": "f92603216a7f0a214bc72ce1f0301b64299e1ed2dbc59c6d20359ee053daa9d8",
+        "fixture_sha256": "59438f4fdd10d1037907f99d3445aac585857320774f89843b578b47c78fb37f",
+        "prompt_manifest_sha256": "29161dcc93325b50655571c91b7e7cebc0eac07214f4617216ba541009ed2ea9",
+        "model_id": "qwen3.5:9b",
+        "model_digest": "6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7",
+        "temperature": 0,
+        "seed": 20260923,
+        "graph_version": "resume-contract-v3",
+        "trials_per_case": 1,
+        "provider_reads": 0,
+        "provider_writes": 0,
+        "scope": "COMPILED_RU_TO_TOOL_ROUTE_ONLY",
+        "case_count": 92,
+        "split_counts": {
+          "CORE": 60,
+          "HOLDOUT": 12,
+          "STRESS": 20
+        }
+      },
+      "record_sha256": "6553a78135d788093df69a5d859b2e0a6e7a0234f1760ee8089e035e3093fbf5",
+      "old_ambiguity_input_sha256": "22023c3a2e9437c49790008f574df0f355d16c85c308b142514d4aff39bdaf15",
+      "work_authority_input_sha256": "eceb405fcd27ff7201c0bff015831d409cdd7ec72c12d9a663498c7a6bcbc896",
+      "source_authority_input_sha256": "7d6a2840bfefa452f4cbd2df75ae3ca0e6b1598bfcd150043ca895773aa2a181",
+      "old_response_reused": false,
+      "changes": [
+        "carry already-observed Work and Source work_unit_ids through current projector"
+      ]
+    },
+    "expected_owners": [
+      "CONNECTOR"
+    ],
+    "expectation_basis": "선택 Task 상태/기한은 Connector 조회이며 새 사용자 대상 선택이 아니다."
+  },
+  {
+    "case_id": "CASE-CORE-019",
+    "user_request": "Fjord 고객 워크숍을 다음 주 화요일 오후에 일정으로 잡고 고객에게 보낼 일정 안내 메일 초안도 준비해줘.",
+    "goal_candidate": {
+      "goal": "Fjord 고객 워크숍을 다음 주 화요일 오후에 일정으로 설정하고, 고객에게 보낼 안내 메일의 초안을 작성한다.",
+      "completion_conditions": [
+        "다음 주 화요일 오후의 캘린더 일정이 생성되거나 업데이트된다.",
+        "고객에게 보내는 메일 초안이 생성된다."
+      ],
+      "constraints": [
+        {
+          "kind": "USER_REQUIREMENT",
+          "field": "business_concepts",
+          "value": [
+            "Fjord 고객 워크숍"
+          ],
+          "work_unit_ids": [
+            "work-1"
+          ]
+        },
+        {
+          "kind": "USER_REQUIREMENT",
+          "field": "required_information",
+          "value": [
+            "draft_identity",
+            "recipients",
+            "subject",
+            "body",
+            "attachments",
+            "event_identity",
+            "title",
+            "start",
+            "end",
+            "location",
+            "description",
+            "attendees",
+            "status"
+          ],
+          "work_unit_ids": [
+            "work-1"
+          ]
+        },
+        {
+          "kind": "DATE",
+          "field": "scheduled_date",
+          "value": "다음 주 화요일 오후",
+          "work_unit_ids": [
+            "work-1"
+          ]
+        },
+        {
+          "kind": "RESOURCE",
+          "field": "title",
+          "value": "Fjord 고객 워크숍 안내",
+          "work_unit_ids": [
+            "work-1"
+          ]
+        },
+        {
+          "kind": "USER_REQUIREMENT",
+          "field": "original_search_request",
+          "value": [
+            "Fjord 고객 워크숍을 다음 주 화요일 오후에 일정으로 잡고 고객에게 보낼 일정 안내 메일 초안도 준비해줘."
+          ],
+          "work_unit_ids": [
+            "work-1"
+          ]
+        },
+        {
+          "kind": "DATE",
+          "field": "period",
+          "value": [
+            "다음 주"
+          ],
+          "work_unit_ids": [
+            "work-1"
+          ]
+        }
+      ],
+      "resource_responsibilities": {
+        "source_reads": [
+          {
+            "resource_type": "GMAIL_DRAFT",
+            "required_information": [
+              "draft_identity",
+              "recipients",
+              "subject",
+              "body",
+              "attachments"
+            ],
+            "target_scope": "SINGULAR",
+            "work_unit_ids": [
+              "work-1"
+            ]
+          },
+          {
+            "resource_type": "CALENDAR",
+            "required_information": [
+              "event_identity",
+              "title",
+              "start",
+              "end",
+              "location",
+              "description",
+              "attendees",
+              "status"
+            ],
+            "target_scope": "CRITERIA",
+            "work_unit_ids": [
+              "work-1"
+            ]
+          }
+        ],
+        "outputs": [
+          {
+            "resource_type": "CALENDAR_EVENT",
+            "effect": "CREATE",
+            "work_unit_ids": [
+              "work-1"
+            ]
+          },
+          {
+            "resource_type": "GMAIL_DRAFT",
+            "effect": "CREATE",
+            "work_unit_ids": [
+              "work-1"
+            ]
+          }
+        ]
+      },
+      "requested_work": {
+        "work_units": [
+          {
+            "unit_id": "work-1",
+            "request_provenance": [
+              {
+                "source": "USER_REQUEST",
+                "start_offset": 0,
+                "end_offset": 61,
+                "source_text": "Fjord 고객 워크숍을 다음 주 화요일 오후에 일정으로 잡고 고객에게 보낼 일정 안내 메일 초안도 준비해줘."
+              }
+            ]
+          }
+        ],
+        "work_relations": []
+      }
+    },
+    "selected_resource_refs": [],
+    "reference_time": "2026-08-07T09:00:00+09:00",
+    "fault_profile": null,
+    "origin": {
+      "kind": "OBSERVED_ATOMIC_PRODUCER_REPROJECTED_CURRENT_CODE_NOT_FRESH_UPSTREAM",
+      "raw_path": "evaluation/results/ru-goal-output-modality-v4-core21-trial1-20260924/raw.json",
+      "raw_sha256": "bab383c19b2cdfca57ece3fcd0a8f1e09a7e589ce1f0bb6549ad4f20813fc18b",
+      "binding": {
+        "product_sha": "7056682a4aa755aec05e1d50e8292e9992d4769f",
+        "dataset_sha256": "f92603216a7f0a214bc72ce1f0301b64299e1ed2dbc59c6d20359ee053daa9d8",
+        "fixture_sha256": "59438f4fdd10d1037907f99d3445aac585857320774f89843b578b47c78fb37f",
+        "prompt_manifest_sha256": "29161dcc93325b50655571c91b7e7cebc0eac07214f4617216ba541009ed2ea9",
+        "model_id": "qwen3.5:9b",
+        "model_digest": "6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7",
+        "temperature": 0,
+        "seed": 20260923,
+        "graph_version": "resume-contract-v3",
+        "trials_per_case": 1,
+        "provider_reads": 0,
+        "provider_writes": 0,
+        "scope": "COMPILED_RU_TO_TOOL_ROUTE_ONLY",
+        "semantic_candidate": {
+          "candidate_id": "ru-goal-output-modality-authority-v4",
+          "candidate_source_sha256": "32544323c342715d198a6915d370d424c3df91ba67987c95f417fb5cea6ccea2",
+          "work_prompt_sha256": "cd4035548f0d8de99d74dcd5a7fd2b84a25f8cb9e3cf21c84a1adcf669b3fe14",
+          "goal_output_prompt_sha256": "0128decdd42484fd95268843f81d8408c15471c363f7368b6e7dd8dcf667cabe",
+          "work_schema_version": "evaluation-requested-work-ref-v1",
+          "goal_output_schema_version": "evaluation-goal-output-modality-authority-v4"
+        },
+        "case_count": 21,
+        "split_counts": {
+          "CORE": 21,
+          "HOLDOUT": 0,
+          "STRESS": 0
+        }
+      },
+      "record_sha256": "e1b94e2c8c5c140756f551e7a304564a2c04f8cd7b227820e9edcce6f6d9bdfb",
+      "old_ambiguity_input_sha256": "419809d1f007bf1a309cf4574161e914a459d6c8ed6c98af8b42494f1964e279",
+      "work_authority_input_sha256": "72cdccee9c2cec93ec9eed277393507140262809179939d1957c3b28bc512dcd",
+      "source_authority_input_sha256": "0783c65214c69f3f871e270098bbbb6d4e107918461da79deb62f7a08615bd8e",
+      "old_response_reused": false,
+      "changes": [
+        "carry already-observed Work and Source work_unit_ids through current projector"
+      ]
+    },
+    "expected_owners": [
+      "CONNECTOR",
+      "USER"
+    ],
+    "expectation_basis": "관련 READ 후 시간/소요시간 확인 또는 현재 필요한 구체적 시간 확인 모두 허용. 원래 Source 오판은 고치지 않으며 target/수신자 재확인은 별도 수동 의미 검수."
+  }
+]
