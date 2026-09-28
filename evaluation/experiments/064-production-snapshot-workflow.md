@@ -28,3 +28,29 @@
 - Context의 외부 연결 차단은 worker drain까지 유지하고, wall timeout이면 격리 child 전체를 종료한다.
 - 원 LLM 응답, repair, owner 입력/실효 sampler, snapshot READ 결과, 영속 Evidence와 최종 답변을 로컬에 보존한다. 실패 Trial을 덮어쓰거나 성공할 때까지 반복하지 않는다.
 - 실행 전 현재 Product 관련 unit/component 회귀 1,583건 PASS(9.32초). 기존 1,583건을 같은 묶음으로 재확인한 수치이며 누적 합산하지 않는다. 업무 성공률/92 평가 점수가 아니다.
+
+## T1 관측 — 전체 업무 PASS가 아님
+
+- HEAD `76f5fa2e8c74beb95c5f4e7a448f34d6dee73b0d`, Trial `69263034-2fef-4243-9f41-be48b0efe7a5`, Run `4c21c473-ac90-4e0d-8d0b-bf2c6e1fe5f9`.
+- 실행 전후 Product tree/HEAD 동일. 모델 digest `6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7`.
+- 실제 LLM 7회, FIRST 7회, repair 0회, input 18,349 / output 588 tokens, provider reported latency 합계 37,105ms. Connector READ/WRITE 0, 승인/resume 0, 실험 cap 미도달.
+- RU → Tool Route까지 실행됐고 Retrieval의 첫 query 준비에서 `RETRIEVAL_ROUTE_SCOPE_VIOLATION`으로 BLOCKED. 답변/Planning/Evidence 품질은 검증하지 못했다.
+- 별개 의미 오류: prohibition owner는 원문 전체와 `새 작업은 만들지 마`를 실제 입력받았지만 CREATE를 `NOT_FORBIDDEN`으로 생성했다. Goal은 조회로 남았고 Output은 빈 목록이라 미요청 WRITE가 생성되지는 않았다. **안전한 최종 Route와 금지 의미 보존은 같은 판정이 아니다.**
+- Source는 선택 Task의 상태/due를 보존했으나 title/notes/identity도 함께 요구했다. 이는 required fields handoff와 사용자 표시 field authority의 차이까지 따로 볼 필요가 있으며, 이번 관측만으로 추가 Resource 조회 오류라고 부르지 않는다.
+- 새 격리 runtime Settings에서 `google_resource_account_id`, `selected_tasklist_ids`가 비어 있었다. 실제 차단 producer/checkpoint를 대조하여 평가 준비 누락과 제품 Scope guard를 구분한다. Scope guard를 완화하지 않는다.
+- 원본은 `evaluation/results/064-core005-main-graph-t1/`에 보존했다. raw SHA256 `dfa62d7060356500caec2de7d4dc6ca7ccc472a319fc47e05ad33c6bc0db27a3`, calls `4d6534e7fd35270b970b7faf633fb48fa4924c9541fd6ce7fff6f0b7ab3ebcfb`, plan `fa08b26490d9fc00778dc3fba4a6fda1add908314019990bfc29795cfb486a5b`.
+- 동일 Trial 재실행/덮어쓰기 없음. 이후 준비/코드를 수정해 비교할 경우 새 SHA/설정/Trial을 명시하고 이번 7회 결과를 제외하거나 성공으로 바꾸지 않는다.
+
+### 실효 sampler 확인
+
+T1 wire에는 Work 분해 / effect prohibition / source status의 temperature option이 **없다**. Goal은 0.1, Source는 0.05, Output과 ambiguity는 0.0을 명시한다. 설치된 동일 digest의 Ollama `/api/show` parameters는 temperature=1, top_k=20, top_p=0.95, presence_penalty=1.5다. 미전송을 0으로 기록하지 않는다. [Ollama Modelfile 계약](https://docs.ollama.com/modelfile)에 따라 모델 설정을 사용하며, 모든 호출의 num_ctx=16384/seed20260923/think=false는 실제 wire로 확인했다.
+
+과거 owner 실험의 temperature=0 결과를 현재 T1과 같은 Runtime의 baseline 점수로 승계하지 않는다. Goal 입력 제거 후보보다 먼저 금지 owner의 동일 frozen 입력에서 현행 미전송과 명시적 0을 소규모로 비교할 예정이다. 이는 아직 효과가 검증되거나 Production sampler를 변경했다는 뜻이 아니다.
+
+## T1 환경 원인 확정 및 T2 사전 범위
+
+실제 checkpoint의 Task ID/parent와 TASK/work-1 Route는 온전했다. Product `resolve_route_container_scopes`에 당시 빈 허용 목록을 넣으면 같은 reason과 `$.selected_resources[?(@.resource_type=='TASK')].parent_resource_id` 위반이 재현된다. 실제 선택 parent를 허용하면 exact ref 결속과 초기 DETAIL_FETCH 계획까지 모델 없이 통과한다. 따라서 **전체 연결 중단은 ENV_NOT_PROVISIONED**, 원문을 받았던 prohibition owner의 의미 오류는 **별도 유효한 실패**다. 원 raw의 BLOCKED 기록을 변경하지 않는다.
+
+평가 runner plan v2에는 실제 Case의 계정, 선택 Task parent 한 개, Task/parent snapshot hash를 결속한다. 기존 SettingsPatch로 그 범위만 준비하고 실제 Product account/selection guard 및 저장된 signed selection의 container resolver를 Graph schedule 전에 검증한다. 환경 검사용 capability는 Graph 입력이나 의미 정답으로 주입하지 않는다. 환경 불일치는 모델 호출 전에 거절한다. 관련 30 직접 검사 및 Ruff/mypy PASS.
+
+T2는 이 준비 수정과 별도로 이미 채택한 Task formatter completeness 수정 `ac648105`가 포함된 현재 HEAD에서 **CORE-005 1회**만 실행한다. sampler/모델/seed/Prompt/20회·600초 외부 상한은 T1과 같다. T1과 같은 SHA의 반복이나 성공 Trial 대체가 아니다. 환경 준비 변경과 Product formatter 변경을 구분하여, 결과 차이를 어느 하나의 모델 품질 개선으로 단정하지 않는다. 새 Trial/실행 HEAD/hash는 별도 plan에 고정한다.

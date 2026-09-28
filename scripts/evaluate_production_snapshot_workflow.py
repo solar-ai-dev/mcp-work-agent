@@ -32,11 +32,17 @@ from scripts.production_snapshot_runtime import (
     snapshot_production_runtime,
 )
 from scripts.ru_observation import metrics, object_hash
-from scripts.serve_canonical_v8_product import PROVIDER_SNAPSHOT
+from scripts.serve_canonical_v8_product import PROVIDER_SNAPSHOT, _case_resources
 
 from google_work_agent.adapters.llm.ollama import transport as ollama_transport
 from google_work_agent.adapters.llm.ollama.transport import OllamaHTTPClient
 from google_work_agent.api import composition
+from google_work_agent.application.agents.retrieval.resolve_route_container_scopes import (
+    resolve_route_container_scopes,
+)
+from google_work_agent.application.agents.tool_routing.contracts.tool_route_plan import (
+    InputToolRouteV1,
+)
 from google_work_agent.application.prompt_runtime.prompt_registry import (
     default_prompt_manifest_path,
 )
@@ -46,10 +52,16 @@ from google_work_agent.application.use_cases.conversation.create_conversation im
 from google_work_agent.application.use_cases.resource.issue_selection_handle import (
     IssueSelectionHandleCommand,
 )
+from google_work_agent.application.use_cases.resource.require_resource_selection import (
+    RequireResourceSelectionHandler,
+)
 from google_work_agent.application.use_cases.resource.resolve_selection_handle import (
     ResolveSelectionHandleQuery,
 )
-from google_work_agent.application.use_cases.run.get_run_snapshot import GetRunSnapshotQuery
+from google_work_agent.application.use_cases.run.get_run_snapshot import (
+    GetExecutionContextQuery,
+    GetRunSnapshotQuery,
+)
 from google_work_agent.application.use_cases.run.schedule_run_execution import (
     ScheduleRunExecutionCommand,
 )
@@ -80,6 +92,118 @@ STOP_STATUSES = frozenset(
 )
 
 
+class SnapshotProvisioningError(RuntimeError):
+    """The preregistered local account/selection is not ready for this trial."""
+
+
+def selected_task_scope(case: Mapping[str, Any], resources: list[dict[str, Any]]) -> dict[str, Any]:
+    """Bind only the selected Task's real snapshot parent, not other pack resources."""
+    selections = case.get("selected_resource_bindings", [])
+    if case.get("case_id") != CASE_ID or len(selections) != 1:
+        raise SnapshotProvisioningError("this fixed trial requires one selected CORE-005 Task")
+    selected = selections[0]
+    if (
+        selected.get("resource_type") != "task"
+        or selected.get("authority") != "PROVIDER_REREAD"
+        or not selected.get("account_email")
+        or not selected.get("parent_id")
+    ):
+        raise SnapshotProvisioningError("selected Task account/parent authority is missing")
+    tasks = [
+        item
+        for item in resources
+        if item["resource_type"] == "task"
+        and item["resource_id"] == selected["resource_id"]
+        and item.get("parent_id") == selected["parent_id"]
+    ]
+    parents = [
+        item
+        for item in resources
+        if item["resource_type"] == "task_list" and item["resource_id"] == selected["parent_id"]
+    ]
+    if len(tasks) != 1 or len(parents) != 1 or not parents[0].get("payload"):
+        raise SnapshotProvisioningError("selected Task/parent snapshot is missing or ambiguous")
+    return {
+        "google_resource_account_id": selected["account_email"],
+        "selected_tasklist_ids": [selected["parent_id"]],
+        "selected_calendar_ids": None,
+        "selected_resource_binding": deepcopy(selected),
+        "selected_task_snapshot_sha256": object_hash(tasks[0]),
+        "selected_container_snapshot_sha256": object_hash(parents[0]),
+    }
+
+
+def _selection_guard(container: Any) -> RequireResourceSelectionHandler:
+    return RequireResourceSelectionHandler(
+        settings=container.settings_port.get_settings,
+        current_account_id=lambda connector_id: (
+            container.current_account_id_provider() if connector_id == "google_workspace" else None
+        ),
+    )
+
+
+def verify_prepared_scope(container: Any, scope: Mapping[str, Any]) -> None:
+    """Check the same account-bound allowlist consumer used by Product READs."""
+    settings = container.settings_port.get_settings()
+    if (
+        container.current_account_id_provider() != scope["google_resource_account_id"]
+        or settings.google_resource_account_id != scope["google_resource_account_id"]
+        or settings.selected_tasklist_ids != tuple(scope["selected_tasklist_ids"])
+        or settings.selected_calendar_ids is not None
+    ):
+        raise SnapshotProvisioningError("prepared scope differs from registered account/selection")
+    selected = scope["selected_resource_binding"]
+    _selection_guard(container)(
+        "google_workspace",
+        "tasks_get_task",
+        {"task_list_id": selected["parent_id"], "task_id": selected["resource_id"]},
+    )
+
+
+def preflight_admitted_selection(
+    container: Any, boundary: Any, run_id: str, scope: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Resolve persisted selection scope before scheduling; never inject a semantic route."""
+    verify_prepared_scope(container, scope)
+    context = container.get_execution_context_handler(GetExecutionContextQuery(run_id))
+    if context is None or len(context.selected_resources) != 1:
+        raise SnapshotProvisioningError("admitted selected resource projection is missing")
+    selected = context.selected_resources[0]
+    expected = scope["selected_resource_binding"]
+    if (
+        selected.connector_id != "google_workspace"
+        or selected.resource_type != expected["resource_type"]
+        or selected.resource_id != expected["resource_id"]
+        or selected.parent_resource_id != expected["parent_id"]
+    ):
+        raise SnapshotProvisioningError("admitted selected identity differs from snapshot binding")
+    binding = boundary.registry.bind_required("google_workspace", "tasks_get_task", "READ")
+    # This isolated capability probe is not a ToolRoutePlan or a WorkUnit decision.
+    route: InputToolRouteV1 = {
+        "route_id": selected.resource_ref_id,
+        "resource_type": "TASK",
+        "connector_id": binding.connector_id,
+        "allowed_read_tool_ids": [binding.tool_id],
+        "required": True,
+        "reason_codes": ["RESOURCE_SELECTED"],
+        "work_unit_ids": [],
+    }
+    guard = _selection_guard(container)
+    containers = resolve_route_container_scopes(
+        frozen_routes=[route],
+        selected_resources=context.selected_resources,
+        authorized_tasklist_ids=guard.authorized_targets("tasks"),
+        authorized_calendar_ids=guard.authorized_targets("calendar"),
+    )
+    return {
+        "status": "READY",
+        "kind": "ENVIRONMENT_SELECTION_PROBE_NOT_SEMANTIC_ROUTE",
+        "selected_resources": [asdict(selected)],
+        "validated_container_refs": containers,
+        "provider_dispatches": 0,
+    }
+
+
 def file_hash(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -107,6 +231,7 @@ def build_plan(model_digest: str, *, trial_id: str | None = None) -> dict[str, A
     if len(normalized_digest) != 64 or any(c not in "0123456789abcdef" for c in normalized_digest):
         raise ValueError("actual model SHA-256 digest required")
     identifier = str(UUID(trial_id)) if trial_id is not None else str(uuid4())
+    case = load_case(CASE_ID)
     manifest = default_prompt_manifest_path()
     dependencies = (
         Path(__file__),
@@ -119,15 +244,16 @@ def build_plan(model_digest: str, *, trial_id: str | None = None) -> dict[str, A
         manifest.parent / "prompt_runtime_input_contract_v1.json",
     )
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": "PRODUCTION_SNAPSHOT_SINGLE_TRIAL",
         "trial_id": identifier,
         "case_id": CASE_ID,
         "trials": 1,
         "head_sha": _head(),
         "dataset_sha256": file_hash(DATASET),
-        "case_sha256": object_hash(load_case(CASE_ID)),
+        "case_sha256": object_hash(case),
         "snapshot_sha256": file_hash(PROVIDER_SNAPSHOT),
+        "resource_scope": selected_task_scope(case, _case_resources(case)),
         "product_tree_sha256": _tree_hash(PROJECT_ROOT / "src"),
         "prompt_tree_sha256": _tree_hash(manifest.parent),
         "tool_registry_sha256": composition.load_development_tool_registry().entries_hash,
@@ -333,7 +459,14 @@ def drain_before_guard_release(container: Any) -> Iterator[None]:
             pass
 
 
-def start_case(container: Any, boundary: Any, case: Mapping[str, Any]) -> Any:
+def start_case(
+    container: Any,
+    boundary: Any,
+    case: Mapping[str, Any],
+    *,
+    scope: Mapping[str, Any],
+    report: dict[str, Any],
+) -> Any:
     conversation_id, session_digest = str(uuid4()), hashlib.sha256(uuid4().bytes).hexdigest()
     container.create_conversation_handler(
         CreateConversationCommand(
@@ -387,6 +520,10 @@ def start_case(container: Any, boundary: Any, case: Mapping[str, Any]) -> Any:
     )
     if not result.applied:
         raise RuntimeError(f"StartRun rejected:{result.result_code}")
+    report.update(run_id=result.run_id, start_result=asdict(result), state="ADMISSION_PREPARED")
+    report["selection_preflight"] = preflight_admitted_selection(
+        container, boundary, result.run_id, scope
+    )
     accepted = container.schedule_run_execution(ScheduleRunExecutionCommand(result.handoff_id))
     if not accepted.accepted:
         raise RuntimeError("durable workflow admission rejected")
@@ -420,21 +557,31 @@ def run_trial(plan: dict[str, Any], output: Path) -> None:
             ) as (container, boundary),
             drain_before_guard_release(container),
         ):
-            models = OllamaHTTPClient().list_installed_models()
-            observed = [model for model in models if model.model_id == MODEL_ID]
-            if len(observed) != 1 or observed[0].digest != plan["model"]["digest"]:
-                raise RuntimeError("installed model digest differs from preregistration")
+            case = load_case(CASE_ID)
+            scope = selected_task_scope(case, boundary.resources)
+            if (
+                scope != plan["resource_scope"]
+                or boundary.account_id != scope["google_resource_account_id"]
+            ):
+                raise SnapshotProvisioningError("runtime snapshot scope differs from registration")
             report["settings_before"] = asdict(container.settings_port.get_settings())
             settings = container.settings_port.update_settings(
                 SettingsPatchV1(
                     1,
                     preferred_local_model_id=MODEL_ID,
                     preferred_llm_mode="LOCAL_GPU",
+                    selected_tasklist_ids=tuple(scope["selected_tasklist_ids"]),
+                    google_resource_account_id=scope["google_resource_account_id"],
                 ),
                 operation_ref=plan["trial_id"],
             )
             report["settings"] = asdict(settings)
-            result = start_case(container, boundary, load_case(CASE_ID))
+            verify_prepared_scope(container, scope)
+            models = OllamaHTTPClient().list_installed_models()
+            observed = [model for model in models if model.model_id == MODEL_ID]
+            if len(observed) != 1 or observed[0].digest != plan["model"]["digest"]:
+                raise RuntimeError("installed model digest differs from preregistration")
+            result = start_case(container, boundary, case, scope=scope, report=report)
             report.update(run_id=result.run_id, start_result=asdict(result), state="RUNNING")
             write_json(output / "raw.json", report)
             while True:
@@ -485,6 +632,13 @@ def run_trial(plan: dict[str, Any], output: Path) -> None:
                 boundary_events=deepcopy(boundary.events),
             )
             write_json(output / "raw.json", report)
+    except SnapshotProvisioningError as error:
+        report.update(
+            state_before_environment_error=report["state"],
+            state="ENV_NOT_PROVISIONED",
+            error_type=type(error).__name__,
+            error=str(error),
+        )
     except Exception as error:
         report.update(
             state_before_harness_error=report["state"],
