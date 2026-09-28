@@ -1636,7 +1636,7 @@ def _removable_constraint_kinds_by_route(
     return {
         route_id: frozenset(
             {item["kind"] for item in plan["effective_constraints"]}
-            - route_policies[route_id].required_kinds
+            - route_policies[route_id].protected_kinds
         )
         for route_id, plan in (prior_plans or {}).items()
         if route_id in route_policies

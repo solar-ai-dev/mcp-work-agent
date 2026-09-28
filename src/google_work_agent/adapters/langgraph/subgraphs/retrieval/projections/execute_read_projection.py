@@ -123,11 +123,12 @@ def project_connector_call(
     elif resource == "TASK_LIST":
         arguments = {"page_size": page_size}
     elif resource == "TASK":
+        include_completed = _includes_status(plan, "ANY") or _includes_status(plan, "COMPLETED")
         arguments = {
             "task_list_id": _single_container(plan),
             "page_size": page_size,
-            "show_completed": _includes_status(plan, "COMPLETED"),
-            "show_hidden": False,
+            "show_completed": include_completed,
+            "show_hidden": include_completed,
             "show_deleted": False,
         }
     elif resource == "GITHUB_ISSUE":

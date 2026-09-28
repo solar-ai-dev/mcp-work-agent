@@ -756,6 +756,21 @@ Retrieval Core는 `connector_id + resource_type + allowed_read_tool_ids`에 따�
 
 ### Tasks 시간 의미
 
+Task collection READ의 상태 범위는 Sidebar Browse의 기본 미완료 필터와 구분한다.
+업무 Source에 상태 제한이 없으면 완료·숨김 완료 항목을 포함하여 수집하며 삭제 항목은 제외한다.
+`TASK + CREATE`의 Policy 전용 READ는 기존 미완료 범위를 유지한다.
+하나의 READ를 여러 WorkUnit이 공유하면 현재 Task Source 책임에 결속된 각 WorkUnit의
+typed `SCOPE.status`를 소비한다. 모든 업무 Source 소비자가 `INCOMPLETE`로 제한된 때만
+미완료로 좁히며, 하나라도 무제한·완료 포함이면 공통 수집 범위에서 완료 항목을 누락하지 않는다.
+다른 WorkUnit의 조건이나 Policy reason code가 업무 Source의 범위를 덮어쓰면 안 된다.
+
+이 수집 범위는 Query LLM의 새 의미 판단이 아니라 Builder가 소유한 실행 범위다.
+`SourceFetchPlanV1.effective_constraints`의 `STATUS_SCOPE`와 query identity에 함께 결속하고
+페이지·캐시는 같은 범위를 이어받는다. 과거 checkpoint에 상태 범위가 없는 페이지는 기존
+미완료 범위로만 이어가며 새 전체 범위의 조회 결과로 재사용하지 않는다.
+완료 항목 포함 수집을 완료 전용 필터 지원·정답 선택·Task 업무 충족 판정으로 간주하지 않는다.
+현재 Task 상태와 전체 관측 개수는 그대로 보존하고 업무 충족 판단은 기존 Work Analysis에 둔다.
+
 | 항목 | 구분 |
 | --- | --- |
 | `TASK + CREATE` 필수 조회 | 기존 미완료 Task의 bounded 후보와 Evidence를 Work Analysis에 제공한다. 중복 검토 후보는 최종 답변용 selected Evidence와 독립된 현재 조회 projection이며, 정상 0건·무관 후보·후보 정보 유실을 구분한다. Retrieval이 최종 중복 여부나 실행 필요성을 확정하지 않는다. |

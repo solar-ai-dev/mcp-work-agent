@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from copy import deepcopy
 from itertools import count
 from typing import Any, cast
 
@@ -11,6 +12,8 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
 from google_work_agent.adapters.langgraph.main.state import (
+    CONTEXT_QUERY_ATTEMPTS_KEY,
+    CONTEXT_READ_BINDINGS_KEY,
     GraphState,
     WorkflowPhase,
     initial_graph_state,
@@ -55,6 +58,9 @@ from google_work_agent.adapters.system.memory.run_retrieval_cache import (
 from google_work_agent.application.agents.planning.contracts.planning_semantics import (
     PlanningSemanticInvoker,
 )
+from google_work_agent.application.agents.request_understanding.validate_intent import (
+    validate_intent,
+)
 from google_work_agent.application.agents.review.contracts.review_findings import (
     ReviewSemanticInvoker,
 )
@@ -79,6 +85,9 @@ from google_work_agent.application.use_cases.run.guard_run_budget import (
     validate_run_budget_v2,
 )
 from google_work_agent.ports.connector.connector_read_port import ConnectorReadResultV1, JsonValue
+from google_work_agent.ports.connector.contracts.validated_connector_tool_binding import (
+    ValidatedConnectorToolBindingV1,
+)
 from google_work_agent.ports.llm.output_schema_validation import validate_output_schema
 from google_work_agent.ports.llm.structured_inference_contracts import (
     LLMInvocationError,
@@ -3961,3 +3970,209 @@ def test_retrieval__invalid_repository_authority__stops_before_connector_read(
         graph.invoke(state)
 
     assert connector.call_count == 0
+
+
+class _TaskScopeReader:
+    """Apply actual Connector flags to a fixed synthetic Provider inventory."""
+
+    def __init__(self) -> None:
+        self.arguments: list[dict[str, JsonValue]] = []
+
+    def execute_read(
+        self,
+        binding: ValidatedConnectorToolBindingV1,
+        tool_arguments: dict[str, JsonValue],
+    ) -> ConnectorReadResultV1:
+        assert binding.tool_id == "tasks_list_tasks"
+        self.arguments.append(deepcopy(tool_arguments))
+        assert tool_arguments["task_list_id"] == "container-a"
+        items: list[JsonValue] = []
+        for task_id, status, hidden in (
+            ("task-open", "needsAction", False),
+            ("task-done", "completed", True),
+        ):
+            if status == "completed" and not tool_arguments.get("show_completed", False):
+                continue
+            if hidden and not tool_arguments.get("show_hidden", False):
+                continue
+            items.append(
+                {
+                    "resource_type": "task",
+                    "resource_id": task_id,
+                    "parent_id": "container-a",
+                    "version": "v1",
+                    "related_resource_ids": [],
+                    "payload": {
+                        "title": task_id,
+                        "status": status,
+                        "due": None,
+                        "notes": "",
+                    },
+                }
+            )
+        return ConnectorReadResultV1(
+            1, binding.tool_id, "task-scope-read-1", {"items": items}, None, len(items)
+        )
+
+
+def _task_collection_scope_inputs(
+    mode: str,
+) -> tuple[str, dict[str, Any], dict[str, Any], list[str]]:
+    business = "작업 목록과 각 상태를 알려줘."
+    create = "새 후속 검토 작업을 만들어줘."
+    parts = [business, create] if mode == "shared" else [create if mode == "policy" else business]
+    request = " ".join(parts)
+    work_ids = [f"work-{index + 1}" for index in range(len(parts))]
+    intent = cast(dict[str, Any], _intent())
+    intent["goal"] = request
+    intent["completion_conditions"] = ["요청한 업무를 처리한다."]
+    intent["requested_effect_hints"] = (
+        ["READ", "CREATE"] if mode == "shared" else ["CREATE" if mode == "policy" else "READ"]
+    )
+    intent["requested_resource_hints"] = ["TASK"]
+    units = []
+    offset = 0
+    for work_id, part in zip(work_ids, parts, strict=True):
+        units.append(
+            {
+                "unit_id": work_id,
+                "request_provenance": [
+                    {
+                        "source": "USER_REQUEST",
+                        "start_offset": offset,
+                        "end_offset": offset + len(part),
+                        "source_text": part,
+                    }
+                ],
+            }
+        )
+        offset += len(part) + 1
+    intent["requested_work"] = {"work_units": units, "work_relations": []}
+    # Mirror the established Source fact contract without adding any status filter.
+    intent["constraints"] = (
+        []
+        if mode == "policy"
+        else [
+            {
+                "kind": "USER_REQUIREMENT",
+                "field": "required_information",
+                "value": ["title", "completion_status"],
+                "work_unit_ids": ["work-1"],
+            }
+        ]
+    )
+    intent["resource_responsibilities"] = {
+        "source_reads": []
+        if mode == "policy"
+        else [
+            {
+                "resource_type": "TASK",
+                "required_information": ["title", "completion_status"],
+                "target_scope": "CRITERIA",
+                "work_unit_ids": ["work-1"],
+            }
+        ],
+        "outputs": []
+        if mode == "business"
+        else [{"resource_type": "TASK", "effect": "CREATE", "work_unit_ids": [work_ids[-1]]}],
+    }
+    validate_intent(intent, require_meta=True, provenance_sources={"USER_REQUEST": request})
+    route_plan = cast(dict[str, Any], _container_read_route_plan("TASK"))
+    route = route_plan["input_plan"]["input_routes"][0]
+    route["work_unit_ids"] = work_ids
+    route["reason_codes"] = (
+        ["REQUESTED_INPUT", "POLICY_TASK_DUPLICATE_CHECK"]
+        if mode == "shared"
+        else ["POLICY_TASK_DUPLICATE_CHECK" if mode == "policy" else "REQUESTED_INPUT"]
+    )
+    if mode != "business":
+        output = deepcopy(cast(dict[str, Any], _task_create_route_plan())["output_plan"])
+        output["output_routes"][0]["work_unit_ids"] = [work_ids[-1]]
+        route_plan["output_plan"] = output
+    return request, intent, route_plan, work_ids
+
+
+@pytest.mark.parametrize("mode", ["business", "policy", "shared"])
+def test_task_collection_scope__compiled_read__preserves_business_and_policy_coverage(
+    mode: str,
+) -> None:
+    """Real READ handoff; fake sufficiency is not model semantic validation."""
+    request, intent, routes, work_ids = _task_collection_scope_inputs(mode)
+    original_intent, original_routes = deepcopy(intent), deepcopy(routes)
+    state = _state(initial_target="context_retriever", request_text=request)
+    state["request_intent"] = cast(Any, intent)
+    state["tool_route_plan"] = cast(Any, routes)
+    reader, cache, evidence = (
+        _TaskScopeReader(),
+        InMemoryRunRetrievalCache(),
+        RunScopedEvidenceStore(),
+    )
+    graph = RetrievalSubgraph(
+        now_ms=lambda: 1_000,
+        should_stop_for_cancel=lambda _run_id: False,
+        timezone_provider=lambda: "Asia/Seoul",
+        llm_runtime=_ComponentInferencePort(container_retrieval=True),
+        prompt_manifest_path=None,
+        prompt_execution_scope=DEVELOPMENT_SMOKE,
+        id_factory=_IdFactory(),
+        graph_profile=GraphProfile.SIX_ROLE_BASELINE,
+        transition_run=lambda _run_id, _transition: None,
+        merge_decision=cast(Any, _merge_decision),
+        evidence_store=evidence,
+        connector_reader=reader,
+        tool_catalog=load_development_tool_registry(),
+        read_result_cache=cache,
+        confirm_inline=cast(Any, _confirm_early),
+        authorized_tasklist_ids_provider=lambda: ("container-a",),
+    ).build()
+
+    with provider_dispatch_execution_scope():
+        result = graph.invoke(state)
+
+    expected_ids = {"task-open"} if mode == "policy" else {"task-open", "task-done"}
+    assert len(reader.arguments) == 1
+    retrieval = result["retrieval_result"]
+    collection = retrieval["collection_results"][0]
+    assert collection["route_id"] == "route-1"
+    assert {item["resource_ref"] for item in collection["items"]} == {
+        f"task:{task_id}" for task_id in expected_ids
+    }
+    assert collection["continuation_status"] == "EXHAUSTED"
+    assert reader.arguments[0]["show_completed"] is (mode != "policy")
+    assert reader.arguments[0]["show_hidden"] is (mode != "policy")
+    assert reader.arguments[0]["show_deleted"] is False
+
+    statuses = retrieval["source_statuses"]
+    assert len(statuses) == 1
+    assert statuses[0]["route_id"] == "route-1"
+    assert statuses[0]["work_unit_ids"] == work_ids
+    assert statuses[0]["status"] == "COMPLETE"
+    assert statuses[0]["observed_resource_count"] == len(expected_ids)
+    assert statuses[0]["checked_read_count"] == 1
+    assert statuses[0]["known_scope_count"] == 1
+    assert statuses[0]["scope_complete"] is True
+    assert statuses[0]["continuation_status"] == "EXHAUSTED"
+    for task_id in expected_ids:
+        snapshot = evidence.resolve_resource_snapshot(
+            run_id=state["run_id"], resource_handle=f"task:{task_id}"
+        )
+        assert snapshot["parent_id"] == "container-a"
+        assert snapshot["status"] == ("completed" if task_id == "task-done" else "needsAction")
+
+    bindings = result[CONTEXT_READ_BINDINGS_KEY]
+    assert len(bindings) == 1
+    handle, binding = next(iter(bindings.items()))
+    resolution = cache.resolve_read_result(
+        handle, state["run_id"], binding["route_id"], binding["query_identity_hash"]
+    )
+    assert resolution.status == "EXHAUSTED"
+    assert resolution.entry is not None
+    assert resolution.entry.read_result.total_count == len(expected_ids)
+    assert resolution.entry.read_result.next_page_token is None
+    assert retrieval["retrieval_rounds"] == 1
+    assert result["retry_budget"]["source_page_calls_used"] == 1
+    assert result["retry_budget"]["detail_fetches_used"] == 0
+    assert result["retry_budget"]["additional_retrieval_rounds_used"] == 0
+    assert {attempt["round_no"] for attempt in result[CONTEXT_QUERY_ATTEMPTS_KEY]} == {0}
+    assert intent == original_intent
+    assert routes == original_routes

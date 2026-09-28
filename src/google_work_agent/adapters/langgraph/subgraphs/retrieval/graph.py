@@ -160,6 +160,9 @@ from google_work_agent.application.agents.retrieval.project_gmail_draft_source_s
 from google_work_agent.application.agents.retrieval.project_task_calendar_source_snapshots import (
     project_task_calendar_source_snapshots,
 )
+from google_work_agent.application.agents.retrieval.project_task_collection_scope import (
+    project_task_collection_scope,
+)
 from google_work_agent.application.agents.retrieval.project_task_review_candidates import (
     project_task_review_candidates,
 )
@@ -333,6 +336,7 @@ def _resolve_availability_from_reads(
 
 def _runtime_route_constraint_policies(
     routes: list[InputToolRouteV1],
+    request_intent: Mapping[str, object] | None = None,
 ) -> dict[str, RouteConstraintPolicy]:
     """Current read executor capability projection, kept outside planner authority.
 
@@ -360,6 +364,11 @@ def _runtime_route_constraint_policies(
     )
     return {
         route["route_id"]: RouteConstraintPolicy(
+            task_collection_scope=(
+                project_task_collection_scope(request_intent, route)
+                if request_intent is not None and route["resource_type"] == "TASK"
+                else None
+            ),
             supported_kinds=cast(
                 frozenset[RetrievalConstraintKindV1],
                 (
@@ -1089,7 +1098,7 @@ class RetrievalSubgraph:
         deterministic_followup = deterministic_query_plan(
             prompt_input={"request_intent": request_intent, **followup_projection},
             frozen_routes=frozen_routes,
-            route_policies=_runtime_route_constraint_policies(frozen_routes),
+            route_policies=_runtime_route_constraint_policies(frozen_routes, request_intent),
             validated_resource_refs=None,
             validated_container_refs=None,
             detail_candidate_refs=detail_candidate_refs,
@@ -1128,7 +1137,9 @@ class RetrievalSubgraph:
                     or has_retrieval_followup_path(
                         request_intent=request_intent,
                         tool_route_plan=tool_route_plan,
-                        route_policies=_runtime_route_constraint_policies(frozen_routes),
+                        route_policies=_runtime_route_constraint_policies(
+                            frozen_routes, request_intent
+                        ),
                         unresolved_sufficiency_issues=cast(
                             list[Mapping[str, object]], sufficiency_result["issues"]
                         ),
@@ -1277,7 +1288,9 @@ class RetrievalSubgraph:
             state = self._initialize_state(state)
         tool_route_plan = _require_state_value(state.get("tool_route_plan"), "tool_route_plan")
         frozen_routes = tool_route_plan["input_plan"]["input_routes"]
-        route_policies = _runtime_route_constraint_policies(frozen_routes)
+        route_policies = _runtime_route_constraint_policies(
+            frozen_routes, state.get("request_intent")
+        )
         exact_resource_bindings = self._exact_resource_bindings(state, frozen_routes)
         validated_resource_refs = exact_resource_bindings["refs_by_route"]
         validated_container_refs = self._validated_container_refs(state, frozen_routes)
@@ -1706,7 +1719,9 @@ class RetrievalSubgraph:
     def _build_query_node(self, state: ContextRetrievalLocalState) -> ContextRetrievalLocalState:
         tool_route_plan = _require_state_value(state.get("tool_route_plan"), "tool_route_plan")
         frozen_routes = tool_route_plan["input_plan"]["input_routes"]
-        route_policies = _runtime_route_constraint_policies(frozen_routes)
+        route_policies = _runtime_route_constraint_policies(
+            frozen_routes, state.get("request_intent")
+        )
         exact_resource_bindings = self._exact_resource_bindings(state, frozen_routes)
         validated_resource_refs = exact_resource_bindings["refs_by_route"]
         validated_container_refs = self._validated_container_refs(state, frozen_routes)

@@ -7,7 +7,7 @@ import json
 from collections.abc import Collection, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import cast
+from typing import Literal, cast
 
 from google_work_agent.application.agents.retrieval.contracts.query_attempt import QueryAttemptV1
 from google_work_agent.application.agents.retrieval.contracts.query_plan import (
@@ -37,6 +37,13 @@ class QueryUnchangedAfterFailureError(RetrievalV2ValidationError):
 class RouteConstraintPolicy:
     supported_kinds: frozenset[RetrievalConstraintKindV1]
     required_kinds: frozenset[RetrievalConstraintKindV1] = frozenset()
+    task_collection_scope: Literal["ANY", "INCOMPLETE"] | None = None
+
+    @property
+    def protected_kinds(self) -> frozenset[RetrievalConstraintKindV1]:
+        return self.required_kinds | (
+            frozenset({"STATUS_SCOPE"}) if self.task_collection_scope is not None else frozenset()
+        )
 
 
 def build_query(
@@ -286,22 +293,40 @@ def _effective_constraints(
             raise RetrievalV2ValidationError("CHANGED SEARCH requires a prior query")
         delta = spec["constraint_delta"]
         removed = set(delta["remove_constraint_kinds"])
-        if policy.required_kinds.intersection(removed):
+        if policy.protected_kinds.intersection(removed):
             raise RetrievalV2ValidationError("CHANGED SEARCH removes a required constraint")
         merged = {c["kind"]: c for c in prior_plan["effective_constraints"]}
         for kind in removed:
             merged.pop(kind, None)
         for constraint in delta["upsert_constraints"]:
             merged[constraint["kind"]] = constraint
-        effective = list(merged.values())
+        effective = _bind_task_collection_scope(list(merged.values()), policy=policy)
+        prior_constraints = list(prior_plan["effective_constraints"])
+        if policy.task_collection_scope is not None and not any(
+            item["kind"] in {"STATUS_SCOPE", "RESOURCE_REF"} for item in prior_constraints
+        ):
+            # Historical Task collections had an implicit incomplete-only scope.
+            prior_constraints.append({"kind": "STATUS_SCOPE", "values": ["INCOMPLETE"]})
         if _canonical_constraints(effective) == _canonical_constraints(
-            prior_plan["effective_constraints"]
+            prior_constraints
         ):
             raise QueryUnchangedAfterFailureError("QUERY_UNCHANGED_AFTER_FAILURE")
     kinds = {constraint["kind"] for constraint in effective}
     if not policy.required_kinds.issubset(kinds):
         raise RetrievalV2ValidationError("effective constraints omit a required kind")
-    return effective
+    return _bind_task_collection_scope(effective, policy=policy)
+
+
+def _bind_task_collection_scope(
+    constraints: list[SemanticRetrievalConstraintV1], *, policy: RouteConstraintPolicy
+) -> list[SemanticRetrievalConstraintV1]:
+    if policy.task_collection_scope is None or any(
+        item["kind"] == "RESOURCE_REF" for item in constraints
+    ):
+        return constraints
+    return [item for item in constraints if item["kind"] != "STATUS_SCOPE"] + [
+        {"kind": "STATUS_SCOPE", "values": [policy.task_collection_scope]}
+    ]
 
 
 def _validate_route_materializability(
@@ -366,7 +391,7 @@ def _validate_changed_removals(
         raise RetrievalV2ValidationError("CHANGED SEARCH requires a prior query")
     removals = set(spec["constraint_delta"]["remove_constraint_kinds"])
     prior_kinds = {item["kind"] for item in prior_plan["effective_constraints"]}
-    removable = prior_kinds - policy.required_kinds
+    removable = prior_kinds - policy.protected_kinds
     if not removals.issubset(removable):
         raise RetrievalV2ValidationError(
             "CHANGED SEARCH removes a constraint that is not removable",
@@ -433,6 +458,13 @@ def _validate_policies(
     if set(routes) != set(policies):
         raise RetrievalV2ValidationError("each frozen route requires exactly one constraint policy")
     for route_id, policy in policies.items():
+        if policy.task_collection_scope is not None and (
+            routes[route_id]["resource_type"] != "TASK"
+            or "STATUS_SCOPE" in policy.supported_kinds
+        ):
+            raise RetrievalV2ValidationError(
+                "Task collection scope must have one code-owned authority"
+            )
         if not policy.required_kinds.issubset(policy.supported_kinds):
             raise RetrievalV2ValidationError(f"route {route_id} requires an unsupported constraint")
 
