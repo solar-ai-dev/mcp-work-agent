@@ -558,3 +558,25 @@ LangGraph adapter, PromptRuntime, Approval/ExecutionAttempt/Verification/Recover
 manifest/입력 버전 동기화3건은 동결 후 같은 집합에서 재검증했으며 모델 trial이 아니다.
 실제 모델·Provider0. Source 의미 품질이나 전체92 업무 PASS로 합산하지 않는다.
 남은 수평 감사는 concept/지원 constraint kind의 work binding과 SourceStatus 생성 계약이다.
+
+## v26 WorkUnit-bound SourceStatus — 실행 전 고정
+
+현재 status output은 Resource당 한 항목만 허용하고 normalize가 같은 Resource의 모든
+WorkUnit으로 적용 범위를 넓힌다. 두 Task 업무가 서로 다른 현재 상태를 요청하면 표현
+자체가 막히거나 한쪽 조건이 다른 업무에 적용된다. 비활성 후보는 기존 status 호출에
+확정 WorkUnit provenance를 전달하고 항목이 해당 Resource의 확정 Source WorkUnit subset을
+명시하도록 한다. 의미 owner·호출 수·원문 provenance·현재 상태 enum은 그대로다.
+Main State는 기존 ConstraintV1이며 status input v2/output v3 후보는 Product에 활성화하지 않는다.
+
+직접 component는 Schema→normalize→finalized V3→Planning local projection과 실제 compiled
+ToolRoute(shared Task route1/Work2)까지 닫았다. Task union query는 typed fixture이고
+Query LLM의 올바른 관계 판단을 증명하지 않는다. 신규17/기존 관련 포함23 PASS.
+
+모델 owner 비교는 합성4(서로 다른 Task 상태, 서로 다른 Gmail 상태, 공통 상태 제한,
+상태 제한 없는 두 업무) 및 Canonical CORE005/060 원문 control로 고정한다. 각6건을
+baseline/후보 각각1회, schema repair최대1회, semantic revision0으로 실행한다.
+확정 WorkUnit·Source·Output fixture는 status 판단 입력일 뿐 분해 성적이나 새로운 Gold가
+아니다. Core control과 합성 진단을 구분하고 Canonical92 점수에 합산하지 않는다.
+동일 Product Prompt 원문·qwen3.5:9b digest·temperature0/seed20260923/ctx16384/thinkfalse/
+timeout180으로 계약 표현만 비교한다. first/repair와 calls/tokens/latency, 잘못된 binding 및
+상태 과잉/누락을 각각 기록한다. 실제 Provider 연결0, Production activation0이다.
