@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 
 type PathToken = str | int
 type JsonPath = tuple[PathToken, ...]
-type StableGroup = tuple[int, Mapping[object, object], int]
+type StableGroup = tuple[int, Mapping[object, object] | None, int]
 
 _PATH_TOKEN = re.compile(r"\.([A-Za-z_][A-Za-z0-9_]*)|\[(\d+)\]")
 _STABLE_ARRAY_KEYS = ("route_id", "resource_type")
@@ -75,7 +75,7 @@ def _changes(
     if isinstance(before, list) and isinstance(after, list):
         stable_key = _stable_array_key(schema)
         if stable_key is not None:
-            stable_changes = _stable_array_changes(
+            return _stable_array_changes(
                 before,
                 after,
                 schema=schema,
@@ -84,8 +84,6 @@ def _changes(
                 value_scopes=value_scopes,
                 membership_scopes=membership_scopes,
             )
-            if stable_changes is not None:
-                return stable_changes
         return _positional_array_changes(
             before,
             after,
@@ -106,19 +104,40 @@ def _stable_array_changes(
     stable_key: str,
     value_scopes: tuple[JsonPath, ...],
     membership_scopes: tuple[JsonPath, ...],
-) -> list[JsonPath] | None:
-    before_groups = _stable_groups(before, stable_key)
-    after_groups = _stable_groups(after, stable_key)
-    if before_groups is None or after_groups is None:
-        return None
+) -> list[JsonPath]:
+    before_groups, before_complete = _stable_groups(before, stable_key)
+    after_groups, after_complete = _stable_groups(after, stable_key)
+    identities_complete = before_complete and after_complete
     item_schema = schema.get("items")
     item_schema = item_schema if isinstance(item_schema, Mapping) else {}
     item_scopes = tuple(scope for scope in value_scopes if scope != path)
-    changes: list[JsonPath] = []
+    # Unidentifiable entries retain the prior positional repair restrictions;
+    # identifiable peers still retain their independent value authority.
+    changes = (
+        []
+        if identities_complete
+        else _positional_array_changes(
+            before,
+            after,
+            schema=schema,
+            path=path,
+            value_scopes=value_scopes,
+            membership_scopes=membership_scopes,
+        )
+    )
     common = set(before_groups).intersection(after_groups)
     for identity in sorted(common, key=str):
         before_index, before_item, before_count = before_groups[identity]
         _, after_item, after_count = after_groups[identity]
+        if before_item is None:
+            # Conflicting duplicates have no single value authority. Their repair
+            # does not grant permission to rewrite independently identified peers.
+            if after_item is None or not _membership_allowed(path, membership_scopes):
+                changes.append((*path, before_index))
+            continue
+        if after_item is None:
+            changes.append((*path, before_index))
+            continue
         changes.extend(
             _changes(
                 before_item,
@@ -136,6 +155,8 @@ def _stable_array_changes(
             changes.append(path)
     for identity in sorted(set(before_groups) - common, key=str):
         changes.append((*path, before_groups[identity][0]))
+    if not identities_complete:
+        return changes
     required_additions = _required_stable_keys(schema, stable_key) - set(before_groups)
     for identity in sorted(set(after_groups) - common, key=str):
         if (
@@ -174,19 +195,25 @@ def _positional_array_changes(
     return changes
 
 
-def _stable_groups(values: list[object], stable_key: str) -> dict[object, StableGroup] | None:
+def _stable_groups(
+    values: list[object], stable_key: str
+) -> tuple[dict[object, StableGroup], bool]:
     groups: dict[object, StableGroup] = {}
+    complete = True
     for index, item in enumerate(values):
         if not isinstance(item, Mapping):
-            return None
+            complete = False
+            continue
         identity = item.get(stable_key)
         if not isinstance(identity, str | int) or isinstance(identity, bool):
-            return None
+            complete = False
+            continue
         existing = groups.get(identity)
         if existing is not None and existing[1] != item:
-            return None
+            groups[identity] = (existing[0], None, existing[2] + 1)
+            continue
         groups[identity] = (index, item, 1 if existing is None else existing[2] + 1)
-    return groups
+    return groups, complete
 
 
 def _stable_array_key(schema: Mapping[str, object]) -> str | None:

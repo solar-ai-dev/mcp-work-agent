@@ -600,6 +600,10 @@ LAUNCHER_SHUTDOWN_TIMEOUT
 | Schema Repair | Goal·Evidence·Action 의미 변경 |
 | Runtime에서 차단된 Prompt Injection 결과 | Revision Prompt를 통한 우회 |
 
+Schema Repair에서 stable identity 배열의 중복·누락·식별 불가 항목은 다른 식별 가능한
+항목의 의미를 다시 생성할 권한을 주지 않는다. 모순된 중복값을 deterministic하게 선택하지
+않으며, 기존 Validator가 지정한 수정 범위와 최종 Schema 검증을 함께 유지한다.
+
 ## 8. Retry Decision Contract
 
 ```yaml

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from copy import deepcopy
+
+import pytest
+
 from google_work_agent.adapters.llm.runtime.schema_repair_scope import (
     find_out_of_scope_schema_repair_changes,
 )
@@ -179,3 +183,287 @@ def test_route_query_reorder__route_id_identity__is_stable() -> None:
         )
         == ()
     )
+
+
+@pytest.mark.parametrize("chosen_dependency", ["SOURCE_REQUIRED", "SOURCE_NOT_REQUIRED"])
+def test_conflicting_duplicate__repair_decides_only_ambiguous_group(
+    chosen_dependency: str,
+) -> None:
+    failed = {
+        "source_dependencies": [
+            _required("TASK", "title"),
+            {"resource_type": "TASK", "dependency": "SOURCE_NOT_REQUIRED"},
+            _required("GMAIL_DRAFT", "body"),
+        ]
+    }
+    task = (
+        _required("TASK", "title")
+        if chosen_dependency == "SOURCE_REQUIRED"
+        else {"resource_type": "TASK", "dependency": "SOURCE_NOT_REQUIRED"}
+    )
+    repaired = {
+        "source_dependencies": [
+            _required("CALENDAR_EVENT", "start"),
+            _required("GMAIL_DRAFT", "body"),
+            task,
+        ]
+    }
+
+    assert (
+        find_out_of_scope_schema_repair_changes(
+            failed_output=failed,
+            repaired_output=repaired,
+            affected_field_paths=["$.source_dependencies"],
+            output_schema=_source_schema(),
+        )
+        == ()
+    )
+
+
+def test_conflicting_duplicate__unambiguous_sibling_cannot_be_dropped() -> None:
+    failed = {
+        "source_dependencies": [
+            _required("TASK", "title"),
+            {"resource_type": "TASK", "dependency": "SOURCE_NOT_REQUIRED"},
+            _required("GMAIL_DRAFT", "body"),
+            _required("CALENDAR_EVENT", "start"),
+        ]
+    }
+    repaired = {
+        "source_dependencies": [
+            {"resource_type": name, "dependency": "SOURCE_NOT_REQUIRED"}
+            for name in ("TASK", "CALENDAR_EVENT", "GMAIL_DRAFT")
+        ]
+    }
+
+    assert find_out_of_scope_schema_repair_changes(
+        failed_output=failed,
+        repaired_output=repaired,
+        affected_field_paths=["$.source_dependencies"],
+        output_schema=_source_schema(),
+    ) == tuple(
+        f"$.source_dependencies[{index}].{field}"
+        for index in (2, 3)
+        for field in ("dependency", "required_information", "target_scope", "work_unit_ids")
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("required_information", ["subject"]), ("target_scope", "SINGULAR")],
+)
+def test_conflicting_duplicate__valid_sibling_values_remain_frozen(
+    field: str, value: object
+) -> None:
+    failed = {
+        "source_dependencies": [
+            _required("TASK", "title"),
+            {"resource_type": "TASK", "dependency": "SOURCE_NOT_REQUIRED"},
+            _required("GMAIL_DRAFT", "body"),
+        ]
+    }
+    repaired_draft = {**_required("GMAIL_DRAFT", "body"), field: value}
+    repaired = {
+        "source_dependencies": [
+            repaired_draft,
+            _required("CALENDAR_EVENT", "start"),
+            _required("TASK", "title"),
+        ]
+    }
+
+    changes = find_out_of_scope_schema_repair_changes(
+        failed_output=failed,
+        repaired_output=repaired,
+        affected_field_paths=["$.source_dependencies"],
+        output_schema=_source_schema(),
+    )
+    assert changes
+    assert all(path.startswith(f"$.source_dependencies[2].{field}") for path in changes)
+
+
+def test_conflicting_duplicate__does_not_expand_narrow_reported_scope() -> None:
+    failed = {
+        "source_dependencies": [
+            _required("TASK", "title"),
+            {"resource_type": "TASK", "dependency": "SOURCE_NOT_REQUIRED"},
+            _required("GMAIL_DRAFT", "body"),
+        ]
+    }
+    repaired = {
+        "source_dependencies": [
+            _required("TASK", "title"),
+            _required("GMAIL_DRAFT", "body"),
+            _required("CALENDAR_EVENT", "start"),
+        ]
+    }
+
+    assert find_out_of_scope_schema_repair_changes(
+        failed_output=failed,
+        repaired_output=repaired,
+        affected_field_paths=["$.source_dependencies[2].required_information"],
+        output_schema=_source_schema(),
+    ) == ("$.source_dependencies", "$.source_dependencies[0]")
+
+
+def test_conflicting_route_duplicate__cannot_rewrite_other_route_operation() -> None:
+    schema = {
+        "type": "object",
+        "properties": {
+            "route_queries": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["route_id", "operation"],
+                    "properties": {
+                        "route_id": {"type": "string"},
+                        "operation": {"type": "string"},
+                    },
+                },
+            }
+        },
+    }
+    failed = {
+        "route_queries": [
+            {"route_id": "route-a", "operation": "SEARCH"},
+            {"route_id": "route-a", "operation": "NEXT_PAGE"},
+            {"route_id": "route-b", "operation": "DETAIL_FETCH"},
+        ]
+    }
+    repaired = {
+        "route_queries": [
+            {"route_id": "route-b", "operation": "DETAIL_FETCH"},
+            {"route_id": "route-a", "operation": "SEARCH"},
+        ]
+    }
+    assert (
+        find_out_of_scope_schema_repair_changes(
+            failed_output=failed,
+            repaired_output=repaired,
+            affected_field_paths=["$.route_queries"],
+            output_schema=schema,
+        )
+        == ()
+    )
+
+    changed = deepcopy(repaired)
+    changed["route_queries"][0]["operation"] = "SEARCH"
+    assert find_out_of_scope_schema_repair_changes(
+        failed_output=failed,
+        repaired_output=changed,
+        affected_field_paths=["$.route_queries"],
+        output_schema=schema,
+    ) == ("$.route_queries[2].operation",)
+
+
+@pytest.mark.parametrize(
+    "unidentified",
+    [
+        None,
+        "invalid-item",
+        {},
+        {"resource_type": None},
+        {"resource_type": []},
+        {"resource_type": True},
+    ],
+)
+def test_unidentifiable_item__does_not_remove_known_peer_authority(
+    unidentified: object,
+) -> None:
+    failed = {"source_dependencies": [_required("TASK", "title"), unidentified]}
+    repaired = {
+        "source_dependencies": [
+            _required("CALENDAR_EVENT", "start"),
+            _required("GMAIL_DRAFT", "body"),
+            _required("TASK", "title"),
+        ]
+    }
+    assert find_out_of_scope_schema_repair_changes(
+        failed_output=failed,
+        repaired_output=repaired,
+        affected_field_paths=["$.source_dependencies"],
+        output_schema=_source_schema(),
+    ) == ()
+
+    changed = deepcopy(repaired)
+    changed["source_dependencies"][2] = {
+        "resource_type": "TASK",
+        "dependency": "SOURCE_NOT_REQUIRED",
+    }
+    assert find_out_of_scope_schema_repair_changes(
+        failed_output=failed,
+        repaired_output=changed,
+        affected_field_paths=["$.source_dependencies"],
+        output_schema=_source_schema(),
+    ) == tuple(
+        f"$.source_dependencies[0].{field}"
+        for field in ("dependency", "required_information", "target_scope", "work_unit_ids")
+    )
+
+
+def test_unidentifiable_route__retains_prior_positional_scope_restrictions() -> None:
+    schema = {
+        "type": "object",
+        "properties": {
+            "route_queries": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["route_id", "operation"],
+                    "properties": {
+                        "route_id": {"type": "string"},
+                        "operation": {"type": "string"},
+                    },
+                },
+            }
+        },
+    }
+    failed = {
+        "route_queries": [
+            {"route_id": None, "operation": "SEARCH"},
+            {"route_id": "route-b", "operation": "DETAIL_FETCH"},
+        ]
+    }
+    repaired = {
+        "route_queries": [
+            {"route_id": "route-a", "operation": "SEARCH"},
+            {"route_id": "route-b", "operation": "DETAIL_FETCH"},
+        ]
+    }
+    assert find_out_of_scope_schema_repair_changes(
+        failed_output=failed,
+        repaired_output=repaired,
+        affected_field_paths=["$.route_queries[0].route_id"],
+        output_schema=schema,
+    ) == ()
+
+    changed = deepcopy(repaired)
+    changed["route_queries"][0]["operation"] = "NEXT_PAGE"
+    assert find_out_of_scope_schema_repair_changes(
+        failed_output=failed,
+        repaired_output=changed,
+        affected_field_paths=["$.route_queries[0].route_id"],
+        output_schema=schema,
+    ) == ("$.route_queries[0].operation",)
+
+    assert find_out_of_scope_schema_repair_changes(
+        failed_output=failed,
+        repaired_output={"route_queries": repaired["route_queries"][:1]},
+        affected_field_paths=["$.route_queries"],
+        output_schema=schema,
+    ) == ("$.route_queries[1]",)
+
+
+def test_identified_array__still_rejects_unrequired_new_identity() -> None:
+    failed = {"source_dependencies": [_required("TASK", "title")]}
+    repaired = {
+        "source_dependencies": [
+            _required("TASK", "title"),
+            _required("GITHUB_ISSUE", "body"),
+        ]
+    }
+    assert find_out_of_scope_schema_repair_changes(
+        failed_output=failed,
+        repaired_output=repaired,
+        affected_field_paths=["$.source_dependencies"],
+        output_schema=_source_schema(),
+    ) == ("$.source_dependencies",)
