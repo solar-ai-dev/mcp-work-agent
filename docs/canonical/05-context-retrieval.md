@@ -604,6 +604,13 @@ ID는 기존 Evidence hash 규칙을 따르되, persisted Evidence/Checkpoint의
 보존한다. 같은 Resource의 다른 version들이 함께 선택됐으면 최신 값을 임의로 고르거나 필드를
 섞지 않고 해당 결정적 경로 전체를 기존 LLM 경로로 돌린다.
 
+비활성 개발 평가에서는 snapshot 전체 대신 검증된 Task 완료 여부만 typed fact로
+ANSWER 작성 입력에 전달하는 후보를 비교할 수 있다. 같은 Run의 approved Evidence와
+exact Resource/version에 결속하고, `needsAction`은 미완료, `completed`는 완료로만 표현한다.
+이는 착수·진행률이나 현재 Run의 WRITE 성공을 뜻하지 않는다. 누락·미지 enum·version 충돌·
+hash 불일치는 fact를 생성하지 않으며 excerpt나 검색 status 조건에서 보충하지 않는다.
+Product의 기존 snapshot 비노출 계약은 유지하고 후보 input/활성화 경계는15를 따른다.
+
 `excluded_segment_ids`는 Retrieval의 selection 결과다. Browser가 직접 수정하지 않으며 사용자 제외·추가 검색은 기존 `run.adjust_context → ContextAdjustmentV1`을 통해 같은 Run의 Retrieval에만 전달한다. Browser·Agent의 Main State/Evidence row 직접 변경은 금지한다. 사용자 제외의 수명은 §4.2를 따른다.
 
 ### 5.8 `retrieval.assess_sufficiency`

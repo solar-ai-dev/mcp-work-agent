@@ -934,6 +934,14 @@ Prompt 실행 Scope는 다음 closed vocabulary만 사용한다.
 
 Offline candidate evaluation 전용이다. Product user runtime과 분리하고 Gold·Grader·expected output·evaluation identity를 Product Prompt input에 넣지 않는다.
 
+ANSWER의 비활성 Task completion 입력 후보는 기존 `planning.compose_answer` 본문·출력
+Schema를 유지하고 별도 evaluation PromptRef/input contract에서 `task_completion_facts`만
+optional로 허용한다. 각 항목은 `evidence_ref/resource_handle/source_version_ref/provider_status/
+task_status`로 닫고05의 same-Run/version 검증 결과만 전달한다. 미승인 Evidence나
+원 snapshot 전체를 추가하지 않는다. 기존 사용자 원문·RequestIntent·Evidence·개요는 변경하지
+않고 상태 의미를 후처리하거나 답변을 강제하지 않는다. Production registry/Prompt activation,
+State·Graph·Approval·Execution 계약은 이 개발 후보에 의해 변경되지 않는다.
+
 Source 판단의 개발 구조 비교는 기존 요청 원문·선택 identity·WorkUnit binding을 보존한
 채 출력 표현, Source/Output 역할 조립, provider 입력 envelope를 분리 비교할 수 있다.
 확정 의미의 결정적 handoff와 실제 consumer 계약 검증을 포함하며, 출력 형식 통과를
