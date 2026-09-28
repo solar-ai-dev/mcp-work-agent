@@ -50,6 +50,7 @@ from google_work_agent.application.agents.retrieval.plan_candidate_detail import
 from google_work_agent.application.agents.retrieval.plan_query_expansion import plan_query_expansion
 from google_work_agent.application.agents.retrieval.project_route_constraints import (
     project_route_constraints,
+    project_route_work_constraint_sets,
 )
 from google_work_agent.application.agents.retrieval.resolve_calendar_query_periods import (
     resolve_calendar_query_periods,
@@ -250,7 +251,12 @@ def _exact_gmail_metadata_collection_plan(
         or route_operation_tool_id(route, "SEARCH") is None
     ):
         return None
-    terms = _current_run_search_prefix(request_intent.get("constraints"))
+    literals = _common_route_search_literals(
+        prompt_input,
+        route,
+        provenance_sources=frozenset({"USER_REQUEST", "CONFIRMATION_RESPONSE"}),
+    )
+    terms = _current_run_search_prefix(literals)
     if not terms:
         return None
     return {
@@ -305,12 +311,26 @@ def _trusted_search_literals(
     return tuple(dict.fromkeys(literals))
 
 
-def _current_run_search_prefix(value: object) -> list[str]:
+def _common_route_search_literals(
+    prompt_input: Mapping[str, object],
+    route: InputToolRouteV1,
+    *,
+    provenance_sources: frozenset[str],
+) -> tuple[str, ...]:
+    """Use a shared lookup only when every applicable work has the same anchors."""
+    work_literals = [
+        _trusted_search_literals(constraints, provenance_sources=provenance_sources)
+        for constraints in project_route_work_constraint_sets(prompt_input, route)
+    ]
+    first = work_literals[0] if work_literals else ()
+    if not first or any(frozenset(literals) != frozenset(first) for literals in work_literals):
+        return ()
+    return first
+
+
+def _current_run_search_prefix(literals: Sequence[str]) -> list[str]:
     tokens: list[str] = []
-    for literal in _trusted_search_literals(
-        value,
-        provenance_sources=frozenset({"USER_REQUEST", "CONFIRMATION_RESPONSE"}),
-    ):
+    for literal in literals:
         tokens.extend(part for part in literal.split() if part)
     return list(dict.fromkeys(tokens))[:2]
 
@@ -331,16 +351,17 @@ def _confirmed_target_search_plan(
     request_intent = prompt_input.get("request_intent")
     if not isinstance(request_intent, Mapping):
         return None
-    confirmation_literals = _trusted_search_literals(
-        request_intent.get("constraints"),
-        provenance_sources=frozenset({"CONFIRMATION_RESPONSE"}),
-    )
-    if len(confirmation_literals) != 1:
-        return None
     routes = business_required_source_routes(frozen_routes)
     if len(routes) != 1:
         return None
     route = routes[0]
+    confirmation_literals = _common_route_search_literals(
+        prompt_input,
+        route,
+        provenance_sources=frozenset({"CONFIRMATION_RESPONSE"}),
+    )
+    if len(confirmation_literals) != 1:
+        return None
     route_id = route["route_id"]
     if (validated_resource_refs or {}).get(route_id):
         return None
@@ -404,7 +425,12 @@ def _exact_gmail_draft_source_plan(
     effects = _string_collection(request_intent.get("requested_effect_hints"))
     if "UPDATE" not in effects or not effects.issubset({"READ", "UPDATE"}):
         return None
-    lookup_literal = _one_current_run_search_literal(request_intent.get("constraints"))
+    literals = _common_route_search_literals(
+        prompt_input,
+        route,
+        provenance_sources=frozenset({"USER_REQUEST", "CONFIRMATION_RESPONSE"}),
+    )
+    lookup_literal = literals[0] if len(literals) == 1 else None
     policy = route_policies.get(route["route_id"])
     if (
         lookup_literal is None
@@ -431,14 +457,6 @@ def _exact_gmail_draft_source_plan(
             }
         ],
     }
-
-
-def _one_current_run_search_literal(value: object) -> str | None:
-    literals = _trusted_search_literals(
-        value,
-        provenance_sources=frozenset({"USER_REQUEST", "CONFIRMATION_RESPONSE"}),
-    )
-    return literals[0] if len(literals) == 1 else None
 
 
 def _exact_task_calendar_source_plan(

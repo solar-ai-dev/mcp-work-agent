@@ -228,6 +228,11 @@ Route 전체에 적용할 결정적 기간으로 결속한다. 필수 slot 여�
 코드가 하나를 선택·합성하지 않고 기존 planner의 typed 입력에 원래 제약을 유지한다.
 같은 WorkUnit 안의 Source 조회 시각과 Output 생성 시각을 새로 구별하는 의미 판단은 이
 projection의 책임이 아니다.
+초기 exact-label/prefix 검색의 결정적 shortcut도 적용 WorkUnit별로 검증된 검색 literal
+집합을 비교한다. 모든 적용 업무에 동일한 전체 literal 집합이 있을 때만 공유 READ에
+사용한다. 일부 업무만 anchor가 있거나 집합이 다르면 `ANY`/`ALL`을 코드가 대신 정하지
+않고 기존 planner로 전달한다. 검색 literal과 무관한 필요 정보·Output 편집값 차이는
+이 shortcut을 해제하는 근거가 아니다.
 `business_concepts`, 시스템 유래 값, 정규식·사전 추측으로 새 anchor를 만들지
 않는다. 이 projection은 새 요청 권위가 아니라 기존 typed 의미의 bounded 전달 형식이다.
 초기 Gmail KEYWORD의 `ANY | ALL | PHRASE`는 원문 의미와 후보 발견 목적에 맞춰 선택하며
